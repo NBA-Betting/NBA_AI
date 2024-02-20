@@ -1,0 +1,8 @@
+.navbar-text {
+    font-size: 56px;
+    /* Start with this and adjust as needed */
+    line-height: 60px;
+    /* Try to match the image height */
+    margin-left: 10px;
+    /* Adds some space between the image and the text */
+}

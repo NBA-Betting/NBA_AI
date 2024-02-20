@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NBA AI</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Include your custom CSS file -->
+    <link href="{{ url_for('static', filename='css/custom.css') }}" rel="stylesheet">
+</head>
+
+<body>
+
+    <!--HEADER and NAVBAR-->
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <div class="container">
+            <a class="navbar-brand d-flex align-items-center" href="{{ url_for('home') }}">
+                <img src="{{ url_for('static', filename='img/nba_ai_logo.png') }}" alt="NBA AI Logo" width="60"
+                    height="60">
+                <span class="navbar-text">NBA AI</span>
+            </a>
+        </div>
+    </nav>
+
+
+
+    <!--MAIN GAMES TABLE-->
+    <div class="container mt-4">
+        <div id="noGamesAlert" class="alert alert-info" style="display: none;">No Games for this date.</div>
+        <table class="table custom-table">
+            <thead>
+                <tr>
+                    <th rowspan="2"></th> <!-- Placeholder for Time Display -->
+                    <th rowspan="2">Home</th>
+                    <th rowspan="2">Away</th>
+                    <th colspan="2" class="text-center">Current Score</th>
+                    <th colspan="2" class="text-center">Predicted Score</th>
+                    <th rowspan="2" class="text-center">Predicted Winner</th>
+                </tr>
+                <tr>
+                    <!-- Subheaders for Current Score -->
+                    <th class="text-center">Home</th>
+                    <th class="text-center">Away</th>
+
+                    <!-- Subheaders for Predicted Score -->
+                    <th class="text-center">Home</th>
+                    <th class="text-center">Away</th>
+                </tr>
+            </thead>
+            <tbody id="gamesTableBody">
+                <!-- Games will be loaded here dynamically -->
+            </tbody>
+        </table>
+    </div>
+
+
+    <!-- Simplified Pagination Controls -->
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            <li class="page-item">
+                <a class="page-link" href="/?date={{ prev_date }}">&lt;&lt;</a>
+            </li>
+            <li class="page-item active">
+                <span class="page-link">{{ query_date_display_str }}</span>
+            </li>
+            <li class="page-item">
+                <a class="page-link" href="/?date={{ next_date }}">&gt;&gt;</a>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- GAME DETAILS MODAL -->
+    <div class="modal fade" id="gameDetailsModal" tabindex="-1" aria-labelledby="gameDetailsModalLabel"
+        aria-hidden="true">
+        <div class="modal-dialog modal-xl"> <!-- Change modal-dialog class to modal-xl -->
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="gameDetailsModalLabel">Game Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Game details will be loaded here dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Template for Game Details Modal Body -->
+    <template id="gameDetailsTemplate">
+        <div class="row flex-column-reverse flex-lg-row">
+            <!-- Play By Play -->
+            <div class="col-lg-5" id="play_by_play">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th></th> <!-- Assuming the first column is for time or similar -->
+                            <th></th> <!-- Assuming the second column is for the action or event description -->
+                            <th id="homeTeamHeader">Home</th> <!-- Placeholder for Home Team Name -->
+                            <th id="awayTeamHeader">Away</th> <!-- Placeholder for Away Team Name -->
+                        </tr>
+                    </thead>
+                    <tbody id="playByPlayBody">
+                        <!-- Dynamic play-by-play rows will be added here -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Live Predictions -->
+            <div class="col-lg-7" id="live_predictions">
+                <div class="row justify-content-center" id="live_predictions_title">
+                    <div class="col">
+                        <h1 class="text-center">Live Predictions</h1>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col">
+                        <div class="row">
+                            <div class="col text-center">
+                                <h4 id="templateHomeTeam"></h4>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col text-center">
+                                <h1 id="templatePredictedHomeScore"></h1>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="row align-items-center">
+                            <div class="col text-center d-flex justify-content-center align-items-center">
+                                <!-- Left SVG icon -->
+                                <i class="bi bi-caret-left-fill me-0 text-success" id="winnerLeftIcon"
+                                    style="display: none; font-size: 2rem;"></i>
+                                <!-- Winner Text and Percentage -->
+                                <div>
+                                    <h5 class="mb-0">Winner</h5>
+                                    <p id="templatePredictedWinPct" class="mb-0"></p>
+                                </div>
+
+                                <!-- Right SVG icon -->
+                                <i class="bi bi-caret-right-fill ms-0 text-success" id="winnerRightIcon"
+                                    style="display: none; font-size: 2rem;"></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="row">
+                            <div class="col text-center">
+                                <h4 id="templateAwayTeam"></h4>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col text-center">
+                                <h1 id="templatePredictedAwayScore"></h1>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Container for Player Information (third row in the right column) -->
+                <div class="row" id="playerInfoContainer">
+                    <!-- Home Team Players -->
+                    <div class="col" id="homeTeamPlayers">
+                        <!-- Dynamic home team players will be added here -->
+                    </div>
+
+                    <!-- Road Team Players -->
+                    <div class="col" id="roadTeamPlayers">
+                        <!-- Dynamic road team players will be added here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+
+
+
+    <!-- Bootstrap 5 JS bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+
+
+    <!-- Custom JS to fetch and display games -->
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            function fetchAndUpdateGames() {
+                // Fetch games for the current or selected date
+                const queryDate = "{{ query_date_str }}"; // Adjust as needed for dynamic date selection
+                fetch(`/get-games?date=${queryDate}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.json();
+                    })
+                    .then(games => {
+                        const tableBody = document.querySelector('#gamesTableBody');
+                        tableBody.innerHTML = ''; // Clear existing table rows
+
+                        if (games.length > 0) {
+                            games.forEach(game => {
+                                const row = document.createElement('tr');
+                                row.className = 'game-row';
+                                row.setAttribute('data-game-id', game.game_id);
+                                row.innerHTML = `
+                                    <td class="text-left" style="vertical-align: middle;">${game.time_display.split('-').join('<br>')}</td>
+                                    <td style="vertical-align: middle;">
+                                        <div style="display: flex; align-items: center;">
+                                            <img src="${game.home_logo_url}" alt="Logo of ${game.home_team_display}" style="width: 50px; height: auto; margin-right: 10px;">
+                                            <div style="text-align: left;">${game.home_team_display}</div>
+                                        </div>
+                                    </td>
+                                    <td style="vertical-align: middle;">
+                                        <div style="display: flex; align-items: center;">
+                                            <img src="${game.away_logo_url}" alt="Logo of ${game.away_team_display}" style="width: 50px; height: auto; margin-right: 10px;">
+                                            <div style="text-align: left;">${game.away_team_display}</div>
+                                        </div>
+                                    </td>
+                                    <td class="text-center" style="vertical-align: middle;">${game.current_score_home}</td>
+                                    <td class="text-center" style="vertical-align: middle;">${game.current_score_away}</td>
+                                    <td class="text-center" style="vertical-align: middle;">${game.predicted_score_home}</td>
+                                    <td class="text-center" style="vertical-align: middle;">${game.predicted_score_away}</td>
+                                    <td class="text-center" style="vertical-align: middle;">${game.predicted_winner_abbr} ${game.predicted_win_pct_str}</td>
+                                `;
+                                tableBody.appendChild(row);
+                            });
+                        } else {
+                            tableBody.innerHTML = '<tr><td colspan="8" class="text-center">No Games for the selected date</td></tr>';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching games:', error);
+                    });
+            }
+
+            // Initial fetch and update for the games table
+            fetchAndUpdateGames();
+
+        });
+    </script>
+
+
+    <!-- Custom JS to fetch and display game details -->
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            function populatePlayerDetails(teamPrefix, data, container) {
+                container.innerHTML = ''; // Clear previous content
+
+                // Loop through player details, assuming up to 5 players for simplicity, adjust as needed
+                for (let i = 1; i <= 5; i++) {
+                    const playerNameKey = `player_${i}${teamPrefix}_name`;
+                    const playerHeadshotUrlKey = `player_${i}${teamPrefix}_headshot_url`;
+                    const playerPtsKey = `player_${i}${teamPrefix}_pts`;
+
+                    if (data[playerNameKey]) { // If player data exists
+                        const playerDetailDiv = document.createElement('div');
+                        playerDetailDiv.className = 'player-detail d-flex align-items-center mb-3';
+                        playerDetailDiv.innerHTML = `
+                        <img src="${data[playerHeadshotUrlKey]}" alt="${data[playerNameKey]}" class="img-fluid mb-2" style="width: 50px; height: auto;">
+                        <div class="ms-3">
+                            <p class="mb-0"><strong>${data[playerNameKey]}</strong></p>
+                            <p class="mb-0">${data[playerPtsKey]} PTS</p>
+                        </div>
+                    `;
+                        container.appendChild(playerDetailDiv);
+                    }
+                }
+            }
+
+            function populatePlayByPlay(game_details = gameDetails, pbp = playByPlay, limit = 10) {
+                const homeTeamHeader = document.getElementById('homeTeamHeader');
+                const awayTeamHeader = document.getElementById('awayTeamHeader');
+                const playByPlayBody = document.getElementById('playByPlayBody');
+
+                // Set team names in headers
+                homeTeamHeader.textContent = game_details.home; // Assuming 'data.home' holds the home team name
+                awayTeamHeader.textContent = game_details.away; // Assuming 'data.away' holds the away team name
+
+                // Clear existing content
+                playByPlayBody.innerHTML = '';
+
+                // Add rows to the table, adjusting for the updated structure
+                pbp.slice(0, limit).forEach((record) => {
+                    // Format time, remove leading "0:" if present
+                    const formattedTime = record.remaining_time.replace(/^0:/, "") + ` Q${record.period}`;
+                    const description = record.description; // Assuming 'description' holds the play's description
+                    const homeScore = record.home_score || ''; // Display empty string if no score
+                    const awayScore = record.away_score || ''; // Display empty string if no score
+
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${formattedTime}</td>
+                        <td>${description}</td>
+                        <td>${homeScore}</td>
+                        <td>${awayScore}</td>
+                    `;
+                    playByPlayBody.appendChild(row);
+                });
+            }
+
+
+            function showGameDetails(gameId) {
+                fetch(`/game-details/${gameId}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        const gameDetails = data.game_detail;
+                        const playByPlay = data.play_by_play;
+
+                        // Construct the modal header content
+                        const modalTitle = document.querySelector('#gameDetailsModalLabel');
+                        modalTitle.innerHTML = `
+                            ${gameDetails.home} <img src="${gameDetails.home_logo_url}" alt="${gameDetails.home}" style="width: 30px; height: auto;"> 
+                            ${gameDetails.current_score_home} - ${gameDetails.current_score_away} 
+                            <img src="${gameDetails.away_logo_url}" alt="${gameDetails.away}" style="width: 30px; height: auto;"> ${gameDetails.away} - 
+                            ${gameDetails.time_display}
+                        `;
+
+                        // Use the template for the modal body
+                        const template = document.querySelector('#gameDetailsTemplate').content.cloneNode(true);
+                        template.querySelector('#templateHomeTeam').textContent += `${gameDetails.home}`;
+                        template.querySelector('#templateAwayTeam').textContent += `${gameDetails.away}`;
+                        template.querySelector('#templatePredictedHomeScore').textContent += `${gameDetails.predicted_score_home}`;
+                        template.querySelector('#templatePredictedAwayScore').textContent += `${gameDetails.predicted_score_away}`;
+                        const predictedWinPct = Math.round(gameDetails.predicted_win_pct * 100);
+                        template.querySelector('#templatePredictedWinPct').textContent += `${predictedWinPct}%`;
+
+                        // Populate player details for both teams
+                        const homePlayersContainer = template.querySelector('#homeTeamPlayers');
+                        const roadPlayersContainer = template.querySelector('#roadTeamPlayers');
+                        populatePlayerDetails('H', gameDetails, homePlayersContainer);
+                        populatePlayerDetails('R', gameDetails, roadPlayersContainer);
+
+                        const modalBody = document.querySelector('#gameDetailsModal .modal-body');
+                        modalBody.innerHTML = ''; // Clear existing content
+                        modalBody.appendChild(template);
+
+                        // Determine which icon to show based on the predicted winner
+                        const winnerLeftIcon = document.getElementById('winnerLeftIcon');
+                        const winnerRightIcon = document.getElementById('winnerRightIcon');
+
+                        if (gameDetails.predicted_winner === gameDetails.home) {
+                            winnerLeftIcon.style.display = 'inline-block';
+                            winnerRightIcon.style.display = 'none';
+                        } else if (gameDetails.predicted_winner === gameDetails.away) {
+                            winnerRightIcon.style.display = 'inline-block';
+                            winnerLeftIcon.style.display = 'none';
+                        } else {
+                            winnerLeftIcon.style.display = 'none';
+                            winnerRightIcon.style.display = 'none';
+                        }
+
+                        populatePlayByPlay(gameDetails, playByPlay, 10);
+
+                        // Show the modal
+                        var gameDetailsModal = new bootstrap.Modal(document.getElementById('gameDetailsModal'), {});
+                        gameDetailsModal.show();
+                    })
+                    .catch(error => {
+                        console.error('Error fetching game details:', error);
+                    });
+            }
+
+            const tableBody = document.querySelector('#gamesTableBody');
+            tableBody.addEventListener('click', function (event) {
+                let target = event.target;
+                while (target != null && !target.classList.contains('game-row')) {
+                    target = target.parentElement;
+                }
+
+                if (target && target.classList.contains('game-row')) {
+                    const gameId = target.getAttribute('data-game-id');
+                    showGameDetails(gameId);
+                }
+            });
+        });
+    </script>
+
+
+
+
+
+</body>
+
+
+</html>
