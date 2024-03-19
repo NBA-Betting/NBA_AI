@@ -25,6 +25,17 @@
         </div>
     </nav>
 
+    <!--FLASH MESSAGES-->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="container">
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
 
 
     <!--MAIN GAMES TABLE-->
@@ -205,7 +216,7 @@
                                 row.className = 'game-row';
                                 row.setAttribute('data-game-id', game.game_id);
                                 row.innerHTML = `
-                                    <td class="text-left" style="vertical-align: middle;">${(game.time_display).split('-').join('<br>')}</td>
+                                    <td class="text-left" style="vertical-align: middle;">${(game.datetime_display).split('-').join('<br>')}</td>
                                     <td style="vertical-align: middle;">
                                         <div style="display: flex; align-items: center;">
                                             <img src="${game.home_logo_url}" alt="Logo of ${game.home_team_display}" style="width: 50px; height: auto; margin-right: 10px;">
@@ -263,7 +274,7 @@
                         </div>
                         <div class="col">
                             <p class="mb-0"><strong>${player.name}</strong></p>
-                            <p class="mb-0">${player.predicted_points} PTS</p>
+                            <p class="mb-0">${player.pred_points} PTS</p>
                         </div>
                         `;
 
@@ -326,8 +337,8 @@
                         const awayLogoUrl = data.away_logo_url;
                         const homeScore = data.home_score;
                         const awayScore = data.away_score;
-                        const timeDisplay = data.time_display;
-                        const playByPlay = data.pbp;
+                        const timeDisplay = data.datetime_display;
+                        const playByPlay = data.condensed_pbp;
                         const homePlayers = data.home_players;
                         const roadPlayers = data.away_players;
 

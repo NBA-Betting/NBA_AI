@@ -1,28 +1,14 @@
-import json
 import os
 from copy import deepcopy
 
 import pandas as pd
 from dotenv import load_dotenv
 from nba_api.live.nba.endpoints import playbyplay
-from tqdm import tqdm
 
 try:
-    from src.NBAStats_prior_states import get_prior_states
-    from src.utils import (
-        game_id_to_season,
-        get_schedule,
-        lookup_basic_game_info,
-        validate_game_id,
-    )
+    from src.utils import lookup_basic_game_info, validate_game_id
 except ModuleNotFoundError:
-    from NBAStats_prior_states import get_prior_states
-    from utils import (
-        game_id_to_season,
-        get_schedule,
-        lookup_basic_game_info,
-        validate_game_id,
-    )
+    from utils import lookup_basic_game_info, validate_game_id
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
@@ -47,19 +33,21 @@ def get_pbp(game_id):
     try:
         # Use the PlayByPlay class to retrieve the play-by-play logs for the game
         pbp = playbyplay.PlayByPlay(game_id=game_id)
-        # Convert the PlayByPlay object to a dictionary
-        pbp = pbp.get_dict()
     except Exception as e:
         # If an API call error occurs (e.g., the game ID is not found), print the error and return an empty list
-        print(f"API call error occurred for game ID {game_id}: {e}")
+        print(
+            f"API call error occurred for game ID {game_id}. Has game started yet? \n {e}"
+        )
         return []
 
     try:
+        # Convert the PlayByPlay object to a dictionary
+        pbp = pbp.get_dict()
         # Extract the play-by-play logs from the dictionary
         pbp_logs = pbp["game"]["actions"]
         # Sort the play-by-play logs by order number
         pbp_logs_sorted = sorted(pbp_logs, key=lambda x: x["orderNumber"])
-    except KeyError as e:
+    except Exception as e:
         # If an API response format error occurs, print the error and return an empty list
         print(f"API response format error occurred for game ID {game_id}: {e}")
         return []
@@ -148,16 +136,15 @@ def _create_game_states_and_final_state(pbp_logs, home, away, game_id, game_date
     return game_states, final_state
 
 
-def get_current_game_info(game_id, include_prior_states=False):
+def get_current_game_info(game_id):
     """
-    This function retrieves the current game information given a game ID and a flag indicating whether to include prior states.
+    This function retrieves the current game information given a game ID.
 
     Parameters:
     game_id (str): The ID of the game to retrieve the information for.
-    include_prior_states (bool): A flag indicating whether to include prior states. Defaults to False.
 
     Returns:
-    dict: A dictionary containing the game information, including the game ID, game date, game time (EST), home team, away team, game status, play-by-play logs, game states, final state, and prior states (if requested).
+    dict: A dictionary containing the game information, including the game ID, game date, game time (EST), home team, away team, game status, play-by-play logs, game states, and final state.
     """
 
     # Validate the game_id
@@ -204,104 +191,44 @@ def get_current_game_info(game_id, include_prior_states=False):
         "final_state": final_state,
     }
 
-    # If the include_prior_states flag is set to True, retrieve the prior states and handle any exceptions
-    if include_prior_states:
-        try:
-            game_info["prior_states"] = get_prior_states(game_id)
-        except Exception as e:
-            print(f"Failed to get prior states for game {game_id}. Error: {e}")
-
     return game_info
 
 
-def update_database(game_data_dict, print_updated=True):
-    game_id = game_data_dict["game_id"]
-    game_date = game_data_dict["game_date"]
-    home = game_data_dict["home"]
-    away = game_data_dict["away"]
-    season = game_id_to_season(game_id)
-
-    directory = f"{PROJECT_ROOT}/data/NBAStats/{season}/{game_date}"
-    filename = f"{directory}/{game_id}_{home}_{away}.json"
-
-    # Create the directory if it does not exist
-    os.makedirs(directory, exist_ok=True)
-
-    # If the file exists, load the existing data and update it
-    if os.path.exists(filename):
-        with open(filename, "r") as json_file:
-            existing_data = json.load(json_file)
-        existing_data.update(game_data_dict)
-    else:
-        existing_data = game_data_dict
-
-    # Write the updated data back to the file
-    with open(filename, "w") as json_file:
-        json.dump(existing_data, json_file, indent=4)
-
-    if print_updated:
-        print(f"Updated: {filename}")
-
-
-def update_full_season_database(
-    season,
-    season_type="Regular Season",
-    include_prior_states=False,
-):
-    schedule = get_schedule(season)
-    season_type_codes = {
-        "001": "Pre Season",
-        "002": "Regular Season",
-        "003": "All-Star",
-        "004": "Post Season",
-    }
-
-    # Filter the game_ids to only include games that match the season type
-    games = [
-        game
-        for game in schedule
-        if season_type_codes.get(game["gameId"][:3]) == season_type
-    ]
-
-    # Sort the games by 'gameDateTimeEst' from least recent to most recent
-    games_sorted = sorted(games, key=lambda game: game["gameDateTimeEst"])
-
-    # Extract the game_ids from the sorted games
-    game_ids = [game["gameId"] for game in games_sorted]
-
-    for game_id in tqdm(game_ids, desc="Updating database"):
-        try:
-            # Update the database for this game
-            if include_prior_states:
-                game_data_dict = get_current_game_info(
-                    game_id, include_prior_states=True
-                )
-            else:
-                game_data_dict = get_current_game_info(game_id)
-            update_database(game_data_dict, print_updated=False)
-        except Exception as e:
-            # Find the game that caused the exception
-            failed_game = next(
-                game for game in games_sorted if game["gameId"] == game_id
-            )
-            print(
-                f"Failed to update game with ID: {failed_game['gameId']} and DateTime: {failed_game['gameDateTimeEst']}"
-            )
-            print(f"Error: {str(e)}")
-
-
 if __name__ == "__main__":
-    # game_id = "0022300001"
-    # game_info = get_current_game_info(game_id, include_prior_states=True)
-    # keys = ["game_id", "game_date", "game_time_est", "home", "away", "game_status"]
 
-    # for key in keys:
-    #     if key in game_info:
-    #         print(f"{key}: {game_info[key]}")
-    # print(game_info["game_states"][-1] == game_info["final_state"])
-    # print(game_info["final_state"])
-    # print(game_info["prior_states"])
+    def print_current_game_info(game_info):
+        print()
+        print("Game ID:", game_info["game_id"])
+        print("Game Date:", game_info["game_date"])
+        print("Game Time (EST):", game_info["game_time_est"])
+        print("Home Team:", game_info["home"])
+        print("Away Team:", game_info["away"])
+        print("Game Status:", game_info["game_status"])
+        print("Play-by-Play Log Count:", len(game_info["pbp_logs"]))
+        print("Game States Count:", len(game_info["game_states"]))
+        if game_info["game_status"] != "Not Started":
+            if game_info["final_state"] == game_info["game_states"][-1]:
+                print("Final State matches the last game state.")
 
-    # update_database(game_info)
+            most_recent_state = game_info["game_states"][-1]
+            print("Most Recent State:")
+            print("  Remaining Time:", most_recent_state["remaining_time"])
+            print("  Period:", most_recent_state["period"])
+            print("  Home Score:", most_recent_state["home_score"])
+            print("  Away Score:", most_recent_state["away_score"])
+            print("  Total Score:", most_recent_state["total"])
+            print("  Home Margin:", most_recent_state["home_margin"])
+            print("  Players:", most_recent_state["players"])
+        print()
 
-    update_full_season_database("2020-21", include_prior_states=True)
+    # First Day of Season Game
+    c1 = get_current_game_info("0022200001")
+    print_current_game_info(c1)
+
+    # Late Season Game
+    c2 = get_current_game_info("0022200919")
+    print_current_game_info(c2)
+
+    # Future Game
+    c3 = get_current_game_info("0022301170")
+    print_current_game_info(c3)

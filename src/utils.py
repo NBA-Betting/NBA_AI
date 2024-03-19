@@ -11,77 +11,6 @@ load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 
 
-def load_featurized_data(seasons):
-    dfs = []
-    for season in seasons:
-        dfs.append(pd.read_csv(f"{PROJECT_ROOT}/data/featurized_NBAStats/{season}.csv"))
-    return pd.concat(dfs)
-
-
-def create_featurized_data_csv(season):
-    """
-    This function creates a CSV file of featurized data for a given NBA season.
-    Saves time loading in data from core data files for basic featurized modeling.
-
-    Parameters:
-    season (str): The season for which to create the featurized data CSV.
-
-    Returns:
-    pd.DataFrame: A DataFrame of the featurized data for the given season.
-    """
-    # Define the path to the season folder
-    season_folder = f"{PROJECT_ROOT}/data/NBAStats/{season}"
-    # Initialize an empty list to store the season data
-    season_data = []
-    # Convert os.scandir() object to a list to get the count
-    date_folders = list(os.scandir(season_folder))
-    # Iterate over all date subfolders in the season folder
-    for date_folder in tqdm(
-        date_folders, total=len(date_folders), desc="Loading season data"
-    ):
-        # Iterate over all JSON files in the date folder
-        for game_file in os.scandir(date_folder.path):
-            try:
-                # Open and load the JSON file
-                with open(game_file.path, "r") as f:
-                    game = json.load(f)
-                    # Check if the game has a feature set
-                    if game["prior_states"]["feature_set"]:
-                        # Extract the game ID, date, feature set, and home margin
-                        game_id = game["game_id"]
-                        game_date = game["game_date"]
-                        feature_set = game["prior_states"]["feature_set"][0]
-                        home_score = game["final_state"]["home_score"]
-                        away_score = game["final_state"]["away_score"]
-                        home_margin = game["final_state"]["home_margin"]
-                        total_score = home_score + away_score
-                        # Append the extracted data to the season data list
-                        season_data.append(
-                            {
-                                "game_id": game_id,
-                                "game_date": game_date,
-                                "home_score": home_score,
-                                "away_score": away_score,
-                                "home_margin": home_margin,
-                                "total_score": total_score,
-                                **feature_set,
-                            }
-                        )
-            except Exception as e:
-                # Print an error message if an exception occurs
-                print(f"Error processing file: {game_file.path}")
-                print(f"Error: {str(e)}")
-    # Convert the list of dictionaries to a DataFrame
-    season_data = pd.DataFrame(season_data)
-    # Write the DataFrame to a CSV file
-    season_data.to_csv(
-        f"{PROJECT_ROOT}/data/featurized_NBAStats/{season}.csv", index=False
-    )
-
-    # Return the DataFrame
-    return season_data
-
-
 def lookup_basic_game_info(game_id):
     """
     This function looks up basic game information given a game_id.
@@ -137,7 +66,7 @@ def lookup_basic_game_info(game_id):
     }
 
 
-def get_games_for_date(date, season):
+def get_games_for_date(date, season="2023-24"):
     """
     Fetches the NBA games for a given date and season.
 
@@ -164,18 +93,36 @@ def get_games_for_date(date, season):
     return games_on_date
 
 
-def get_schedule(season):
+def get_schedule(season, season_type="All"):
     """
     Fetches the NBA schedule for a given season.
 
     Parameters:
     season (str): The season to fetch the schedule for, formatted as 'XXXX-XX' (e.g., '2020-21').
+    season_type (str): The type of season to fetch the schedule for. Defaults to 'All'.
 
     Returns:
     list: A list of dictionaries, each representing a game. Each dictionary contains the game ID, status, date/time, and the home and away teams.
     """
     # Check if the season format is correct
     validate_season_format(season, abbreviated=True)
+
+    season_type_codes = {
+        "Pre Season": "001",
+        "Regular Season": "002",
+        "All-Star": "003",
+        "Post Season": "004",
+    }
+    if season_type not in [
+        "Pre Season",
+        "Regular Season",
+        "All-Star",
+        "Post Season",
+        "All",
+    ]:
+        raise ValueError(
+            "Invalid season type. Please use one of 'Pre Season', 'Regular Season', 'All-Star', 'Post Season', or 'All'."
+        )
 
     # Define the endpoint URL, including the season
     endpoint = (
@@ -219,6 +166,11 @@ def get_schedule(season):
     for game in all_games:
         game["homeTeam"] = game["homeTeam"]["teamTricode"]
         game["awayTeam"] = game["awayTeam"]["teamTricode"]
+
+    # Filter for season type
+    if season_type != "All":
+        season_code = season_type_codes[season_type]
+        all_games = [game for game in all_games if game["gameId"][:3] == season_code]
 
     return all_games
 
@@ -315,15 +267,10 @@ def validate_date_format(date):
         raise ValueError(
             "Invalid day. Please use DD format with a value between 01 and 30 for this month."
         )
-    elif month == 2:
-        if (year % 4 == 0 and year % 100 != 0 or year % 400 == 0) and day > 29:
-            raise ValueError(
-                "Invalid day. Please use DD format with a value between 01 and 29 for this month."
-            )
-        elif day > 28:
-            raise ValueError(
-                "Invalid day. Please use DD format with a value between 01 and 28 for this month."
-            )
+    elif month == 2 and day > 29:
+        raise ValueError(
+            "Invalid day. Please use DD format with a value between 01 and 29 for this month."
+        )
     elif day < 1 or day > 31:
         raise ValueError(
             "Invalid day. Please use DD format with a value between 01 and 31."
@@ -342,7 +289,7 @@ def validate_season_format(season, abbreviated=False):
     ValueError: If the season string does not match the required format or if the second year does not logically follow the first year.
     """
     # Define the regex pattern based on abbreviated flag
-    pattern = r"^(\d{4})-(\d{2,4})$" if abbreviated else r"^(\d{4})-(\d{4})$"
+    pattern = r"^(\d{4})-(\d{2})$" if abbreviated else r"^(\d{4})-(\d{4})$"
 
     # Attempt to match the pattern to the season string
     match = re.match(pattern, season)
@@ -364,6 +311,8 @@ class NBATeamConverter:
     A class to convert between various identifiers of NBA teams such as team ID,
     abbreviation, short name, and full name along with any historical identifiers.
     """
+
+    __lookup_dict = None
 
     @classmethod
     def __generate_lookup_dict(cls):
@@ -388,9 +337,6 @@ class NBATeamConverter:
                 lookup_dict[normalized_identifier] = team_id
         return lookup_dict
 
-    # Call the generate_lookup_dict method to initialize lookup_dict
-    __lookup_dict = __generate_lookup_dict()
-
     @classmethod
     def __get_team_id(cls, identifier):
         """
@@ -398,6 +344,8 @@ class NBATeamConverter:
         If the identifier is unknown, raise a ValueError.
         """
         identifier_normalized = str(identifier).lower().replace(" ", "-")
+        if cls.__lookup_dict is None:
+            cls.__lookup_dict = cls.__generate_lookup_dict()
         if identifier_normalized not in cls.__lookup_dict:
             raise ValueError(f"Unknown team identifier: {identifier}")
         return cls.__lookup_dict[identifier_normalized]
@@ -677,3 +625,113 @@ class NBATeamConverter:
             ],
         },
     }
+
+
+# --------------- MODELING UTILS -----------------
+
+
+def load_featurized_modeling_data(seasons):
+    """
+    This function loads featurized modeling data for a list of NBA seasons.
+
+    Parameters:
+    seasons (list): A list of seasons for which to load the featurized modeling data.
+
+    Returns:
+    pd.DataFrame: A DataFrame of the featurized modeling data for the given seasons.
+    """
+    # Initialize an empty list to store the DataFrames
+    dfs = []
+
+    # Iterate over all seasons in the list
+    for season in seasons:
+        # Load the CSV file for the current season into a DataFrame and append it to the list
+        dfs.append(pd.read_csv(f"{PROJECT_ROOT}/data/featurized_NBAStats/{season}.csv"))
+
+    # Concatenate all DataFrames in the list into a single DataFrame
+    return pd.concat(dfs)
+
+
+def create_featurized_training_data_csv(season):
+    """
+    This function creates a CSV file of featurized data for a given NBA season.
+    Saves time loading in data from core data files for basic featurized modeling.
+
+    Parameters:
+    season (str): The season for which to create the featurized data CSV.
+
+    Returns:
+    pd.DataFrame: A DataFrame of the featurized data for the given season.
+    """
+    # Validate the season format
+    validate_season_format(season, abbreviated=False)
+
+    # Define the path to the season folder
+    season_folder = f"{PROJECT_ROOT}/data/NBAStats/{season}"
+
+    # Initialize an empty list to store the season data
+    season_data = []
+
+    # Get only the directories from the season folder
+    date_folders = [entry for entry in os.scandir(season_folder) if entry.is_dir()]
+
+    # Iterate over all date subfolders in the season folder
+    for date_folder in tqdm(
+        date_folders,
+        total=len(date_folders),
+        desc="Loading season data",
+        dynamic_ncols=True,
+    ):
+        # Iterate over all JSON files in the date folder
+        for game_file in os.scandir(date_folder.path):
+            try:
+                # Open and load the JSON file
+                with open(game_file.path, "r") as f:
+                    game = json.load(f)
+
+                    # Check if the game has a feature set
+                    if game["prior_states"]["feature_set"]:
+                        # Extract the game ID, date, feature set, and home margin
+                        game_id = game["game_id"]
+                        game_date = game["game_date"]
+                        feature_set = game["prior_states"]["feature_set"]
+                        home_score = game["final_state"]["home_score"]
+                        away_score = game["final_state"]["away_score"]
+                        home_margin = game["final_state"]["home_margin"]
+                        total_score = home_score + away_score
+
+                        # Append the extracted data to the season data list
+                        season_data.append(
+                            {
+                                "game_id": game_id,
+                                "game_date": game_date,
+                                "home_score": home_score,
+                                "away_score": away_score,
+                                "home_margin": home_margin,
+                                "total_score": total_score,
+                                **feature_set,
+                            }
+                        )
+            except Exception as e:
+                # Print an error message if an exception occurs
+                print(f"Error processing file: {game_file.path}")
+                print(f"Error: {str(e)}")
+
+    # Convert the list of dictionaries to a DataFrame
+    season_data = pd.DataFrame(season_data)
+
+    # Write the DataFrame to a CSV file
+    season_data.to_csv(
+        f"{PROJECT_ROOT}/data/featurized_NBAStats/{season}.csv", index=False
+    )
+
+    # Return the DataFrame
+    return season_data
+
+
+if __name__ == "__main__":
+    seasons = ["2020-2021", "2021-2022", "2022-2023", "2023-2024"]
+
+    for season in seasons:
+        create_featurized_training_data_csv(season)
+        print(f"Created featurized training data for {season}.")

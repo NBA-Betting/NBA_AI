@@ -1,41 +1,63 @@
 import os
 from datetime import datetime
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 from dotenv import load_dotenv
 from joblib import dump
 from sklearn.linear_model import Ridge
-from sklearn.metrics import brier_score_loss, mean_absolute_error, r2_score
+from sklearn.metrics import log_loss
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
-from wandb.sklearn import plot_regressor
 
 import wandb
-from utils import load_featurized_data
+from evaluation import create_evaluations
+from utils import load_featurized_modeling_data
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 
-pd.set_option("display.max_columns", None)
-sns.set_context("notebook")
+if __name__ == "__main__":
+    import os
+
+from datetime import datetime
+
+import numpy as np
+from dotenv import load_dotenv
+from joblib import dump
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.preprocessing import StandardScaler
+
+import wandb
+from evaluation import create_evaluations
+from utils import load_featurized_modeling_data
+
+# Load environment variables
+load_dotenv()
+PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 
 if __name__ == "__main__":
-    # Choose Seasons
+    # ------------------------
+    # Section 1: Data Loading
+    # ------------------------
+    # Define the seasons for training and testing
     training_seasons = ["2021-2022"]
     testing_seasons = ["2022-2023"]
 
-    # Load data
-    training_df = load_featurized_data(training_seasons)
-    testing_df = load_featurized_data(testing_seasons)
+    # Load featurized modeling data for the defined seasons
+    training_df = load_featurized_modeling_data(training_seasons)
+    testing_df = load_featurized_modeling_data(testing_seasons)
 
-    # Remove nans
+    # Drop rows with NaN values to ensure data quality
     training_df = training_df.dropna()
     testing_df = testing_df.dropna()
 
-    # Create X and y
+    # ----------------------------------------
+    # Section 2: Feature and Target Selection
+    # ----------------------------------------
+    # Define features (X) by dropping target and non-predictive columns
+    # Define targets (y) for the model
     X_train = training_df.drop(
         columns=[
             "game_id",
@@ -59,38 +81,43 @@ if __name__ == "__main__":
     )
     y_test = testing_df[["home_score", "away_score"]]
 
-    # Save the feature names for later use
+    # Keep a list of feature names for later use (e.g., for model interpretation)
     feature_names = X_train.columns.tolist()
 
-    # Initialize the scaler
+    # ---------------------------
+    # Section 3: Data Preprocessing
+    # ---------------------------
+    # Initialize and fit a scaler to standardize features
     scaler = StandardScaler()
-
-    # Fit on the training data and transform both the training and testing data
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
 
-    # Hyperparameter Tuning
-    # Define the hyperparameters and their distributions
+    # -------------------------------------
+    # Section 4: Hyperparameter Tuning
+    # -------------------------------------
+    # Define the hyperparameter space and setup RandomizedSearchCV
     param_distributions = {
-        "alpha": np.logspace(-4, 4, 20),  # Logarithmically spaced values
-        "fit_intercept": [True, False],
+        "alpha": np.logspace(-4, 4, 20),  # Defines a range of values for alpha
+        "fit_intercept": [
+            True,
+            False,
+        ],  # Whether to calculate the intercept for this model
     }
 
-    # Initialize the RandomizedSearchCV for Ridge Regression
+    # Perform hyperparameter tuning using Randomized Search
     random_search = RandomizedSearchCV(
         Ridge(), param_distributions, n_iter=10, cv=5, random_state=42
     )
-
-    # Fit the RandomizedSearchCV
     random_search.fit(X_train, y_train)
-
-    # Get the best parameters
     best_params = random_search.best_params_
 
-    # Initialize wandb
+    # ------------------------------------
+    # Section 5: Model Training and Logging
+    # ------------------------------------
+    # Initialize wandb for experiment tracking
     run = wandb.init(project="NBA AI", config=best_params)
 
-    # Update the configuration
+    # Log configuration and model details
     model_type = "Ridge Regression"
     run_datetime = datetime.now().isoformat()
     wandb.config.update(
@@ -106,16 +133,18 @@ if __name__ == "__main__":
         }
     )
 
-    # Setup the model with the best parameters found
+    # Setup and fit the Ridge Regression model with the best hyperparameters
     model = Ridge(**best_params)
-
-    # Fit the model
     model.fit(X_train, y_train)
 
-    # Create predictions
+    # -----------------------------
+    # Section 6: Making Predictions
+    # -----------------------------
+    # Predict on training and testing data
     y_pred = model.predict(X_test)
     y_pred_train = model.predict(X_train)
 
+    # Extract specific prediction components for analysis
     y_pred_home_score = y_pred[:, 0]
     y_pred_away_score = y_pred[:, 1]
     y_pred_home_margin = y_pred_home_score - y_pred_away_score
@@ -124,95 +153,121 @@ if __name__ == "__main__":
     y_pred_train_away_score = y_pred_train[:, 1]
     y_pred_train_home_margin = y_pred_train_home_score - y_pred_train_away_score
 
+    # Apply a sigmoid function for probability estimation (e.g., home team win probability)
     def sigmoid(x):
-        sensitivity_factor = (
-            0.1  # Adjust this value to change the steepness of the curve
-        )
+        sensitivity_factor = 0.1  # Adjust this value as needed
         return 1 / (1 + np.exp(-x * sensitivity_factor))
 
     y_pred_home_win_prob = sigmoid(y_pred_home_margin)
     y_pred_train_home_win_prob = sigmoid(y_pred_train_home_margin)
 
-    # Compute metrics
-    train_mae_home_score = mean_absolute_error(
-        y_train["home_score"], y_pred_train_home_score
+    # -----------------------------------
+    # Section 7: Evaluation and Logging
+    # -----------------------------------
+    # Log Core Metrics
+    home_score_mae = np.mean(np.abs(y_test["home_score"] - y_pred_home_score))
+    away_score_mae = np.mean(np.abs(y_test["away_score"] - y_pred_away_score))
+    home_margin_mae = np.mean(
+        np.abs(y_test["home_score"] - y_test["away_score"] - y_pred_home_margin)
     )
-    test_mae_home_score = mean_absolute_error(y_test["home_score"], y_pred_home_score)
-    train_r2_home_score = r2_score(y_train["home_score"], y_pred_train_home_score)
-    test_r2_home_score = r2_score(y_test["home_score"], y_pred_home_score)
-
-    train_mae_away_score = mean_absolute_error(
-        y_train["away_score"], y_pred_train_away_score
+    home_win_prob_log_loss = log_loss(
+        (y_test["home_score"] > y_test["away_score"]).astype(int), y_pred_home_win_prob
     )
-    test_mae_away_score = mean_absolute_error(y_test["away_score"], y_pred_away_score)
-    train_r2_away_score = r2_score(y_train["away_score"], y_pred_train_away_score)
-    test_r2_away_score = r2_score(y_test["away_score"], y_pred_away_score)
 
-    y_train_home_margin = y_train["home_score"] - y_train["away_score"]
-    y_test_home_margin = y_test["home_score"] - y_test["away_score"]
-
-    train_mae_home_margin = mean_absolute_error(
-        y_train_home_margin, y_pred_train_home_margin
-    )
-    test_mae_home_margin = mean_absolute_error(y_test_home_margin, y_pred_home_margin)
-    train_r2_home_margin = r2_score(y_train_home_margin, y_pred_train_home_margin)
-    test_r2_home_margin = r2_score(y_test_home_margin, y_pred_home_margin)
-
-    y_train_home_win = y_train_home_margin > 0
-    y_test_home_win = y_test_home_margin > 0
-
-    train_brier_score = brier_score_loss(y_train_home_win, y_pred_train_home_win_prob)
-    test_brier_score = brier_score_loss(y_test_home_win, y_pred_home_win_prob)
-
-    # Log the metrics
     wandb.log(
         {
-            "train_mae_home_score": train_mae_home_score,
-            "test_mae_home_score": test_mae_home_score,
-            "train_r2_home_score": train_r2_home_score,
-            "test_r2_home_score": test_r2_home_score,
-            "train_mae_away_score": train_mae_away_score,
-            "test_mae_away_score": test_mae_away_score,
-            "train_r2_away_score": train_r2_away_score,
-            "test_r2_away_score": test_r2_away_score,
-            "train_mae_home_margin": train_mae_home_margin,
-            "test_mae_home_margin": test_mae_home_margin,
-            "train_r2_home_margin": train_r2_home_margin,
-            "test_r2_home_margin": test_r2_home_margin,
-            "train_brier_score": train_brier_score,
-            "test_brier_score": test_brier_score,
+            "home_score_mae": home_score_mae,
+            "away_score_mae": away_score_mae,
+            "home_margin_mae": home_margin_mae,
+            "home_win_prob_log_loss": home_win_prob_log_loss,
         }
     )
 
-    # Log model info
-    wandb.log({"intercept": model.intercept_})
-    # Log the coefficients as a dictionary
-    wandb.log({"coefficients": dict(zip(feature_names, model.coef_))})
+    # Run full evaluation suite
+    # Prepare correct and predicted values for evaluation
+    train_correct = {
+        "home_score": y_train["home_score"],
+        "away_score": y_train["away_score"],
+        "home_margin_derived": y_train["home_score"] - y_train["away_score"],
+        "total_points_derived": y_train["home_score"] + y_train["away_score"],
+        "home_win_prob": (y_train["home_score"] > y_train["away_score"]).astype(int),
+    }
+    train_pred = {
+        "home_score": y_pred_train_home_score,
+        "away_score": y_pred_train_away_score,
+        "home_margin_derived": y_pred_train_home_margin,
+        "total_points_derived": y_pred_train_home_score + y_pred_train_away_score,
+        "home_win_prob": y_pred_train_home_win_prob,
+    }
 
-    # Create and log the plots
-    plot_regressor(model, X_train, X_test, y_train, y_test, model_name=model_type)
+    test_correct = {
+        "home_score": y_test["home_score"],
+        "away_score": y_test["away_score"],
+        "home_margin_derived": y_test["home_score"] - y_test["away_score"],
+        "total_points_derived": y_test["home_score"] + y_test["away_score"],
+        "home_win_prob": (y_test["home_score"] > y_test["away_score"]).astype(int),
+    }
 
-    # Feature importances
-    feature_importances = dict(zip(feature_names, model.coef_))
-    sorted_features = sorted(
-        feature_importances.items(), key=lambda x: abs(x[1]), reverse=True
+    test_pred = {
+        "home_score": y_pred_home_score,
+        "away_score": y_pred_away_score,
+        "home_margin_derived": y_pred_home_margin,
+        "total_points_derived": y_pred_home_score + y_pred_away_score,
+        "home_win_prob": y_pred_home_win_prob,
+    }
+
+    train_evaluations = pd.DataFrame(
+        [
+            {
+                "train_" + k: v
+                for k, v in create_evaluations(train_correct, train_pred).items()
+            }
+        ]
     )
-    features, importances = zip(*sorted_features)
 
-    plt.figure(figsize=(10, 6))
-    sns.barplot(x=importances, y=features, palette="viridis")
-    plt.xlabel("Importance")
-    plt.ylabel("Feature")
-    plt.title("Feature Importances")
+    test_evaluations = pd.DataFrame(
+        [
+            {
+                "test_" + k: v
+                for k, v in create_evaluations(test_correct, test_pred).items()
+            }
+        ]
+    )
 
-    wandb.log({"feature_importances": plt})
+    # Convert the dataframes to wandb Tables
+    train_evaluations_table = wandb.Table(dataframe=train_evaluations)
+    test_evaluations_table = wandb.Table(dataframe=test_evaluations)
 
-    # Save the model
-    model_filename = f"{PROJECT_ROOT}/models/{model_type}_{run_datetime}_train_mae_{train_mae:.2f}_test_mae_{test_mae:.2f}.joblib"
+    # Log the tables to wandb
+    wandb.log({"Train Evals": train_evaluations_table})
+    wandb.log({"Test Evals": test_evaluations_table})
 
-    # Save the model using joblib
+    # Create a DataFrame with the intercept and coefficients
+    model_details = pd.DataFrame(
+        [
+            {
+                "feature_" + feature: value
+                for feature, value in zip(
+                    ["intercept"] + feature_names,
+                    [model.intercept_] + list(model.coef_),
+                )
+            }
+        ]
+    )
+
+    # Convert the DataFrame to a wandb Table
+    model_details_table = wandb.Table(dataframe=model_details)
+
+    # Log the table to wandb
+    wandb.log({"Model Details": model_details_table})
+
+    # -----------------------------
+    # Section 8: Model Persistence
+    # -----------------------------
+    # Construct filename and save the model
+    model_filename = f"{PROJECT_ROOT}/models/{model_type}_{run_datetime}.joblib"
     dump(model, model_filename)
     wandb.save(model_filename, base_path=PROJECT_ROOT)
 
-    # Finish the wandb run
+    # End the wandb run
     run.finish()
