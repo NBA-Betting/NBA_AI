@@ -1,132 +1,150 @@
-import json
+import logging
 import os
 import re
+import sqlite3
 
-import pandas as pd
 import requests
 from dotenv import load_dotenv
-from tqdm import tqdm
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s",
+)
 
-def lookup_basic_game_info(game_id):
+
+def lookup_basic_game_info(game_ids, db_path):
     """
-    This function looks up basic game information given a game_id.
+    This function looks up basic game information given a game_id or a list of game_ids from the Games table in the SQLite database.
 
     Parameters:
-    game_id (str): The ID of the game to look up.
+    game_ids (str or list): The ID of the game or a list of game IDs to look up.
+    db_path (str): The path to the SQLite database.
 
     Returns:
-    dict: A dictionary containing the game_id, home team, away team, game date, game time, and game status.
-
-    Raises:
-    ValueError: If multiple games are found for the given game_id or if no game is found for the given game_id.
+    list: A list of dictionaries, each representing a game. Each dictionary contains the game ID, home team, away team, date/time, status, season, and season type.
     """
 
-    # Validate the game_id
-    validate_game_id(game_id)
+    # Ensure game_ids is a list
+    if not isinstance(game_ids, list):
+        game_ids = [game_ids]
 
-    # Convert the game_id to a season string
-    season = game_id_to_season(game_id, abbreviate=True)
+    # Validate the game_ids
+    validate_game_ids(game_ids)
 
-    # Get the schedule for the extracted season
-    schedule = get_schedule(season)
-
-    # Find the game in the schedule using the game_id
-    game = [g for g in schedule if g["gameId"] == game_id]
-
-    # Ensure a single game is returned
-    if len(game) > 1:
-        raise ValueError(f"""Multiple games found for Game ID {game_id}.""")
-
-    # Raise an error if the game is not found
-    if not game:
-        raise ValueError(f"""Game ID {game_id} not found in the schedule.""")
-
-    # Extract the first (and only) game from the list
-    game = game[0]
-
-    # Extract the home team, away team, game date, and game time from the game dictionary
-    home = game["homeTeam"]
-    away = game["awayTeam"]
-    game_date = game["gameDateTimeEst"][:10]
-    game_time_est = game["gameDateTimeEst"][11:19]
-    game_status_id = game["gameStatus"]
-
-    # Return the game information as a dictionary
-    return {
-        "game_id": game_id,
-        "home": home,
-        "away": away,
-        "game_date": game_date,
-        "game_time_est": game_time_est,
-        "game_status_id": game_status_id,
-    }
-
-
-def get_games_for_date(date, season="2023-24"):
+    # Prepare the SQL statement to fetch the games
+    sql = f"""
+    SELECT game_id, home_team, away_team, date_time_est, status, season, season_type
+    FROM Games
+    WHERE game_id IN ({','.join(['?']*len(game_ids))})
     """
-    Fetches the NBA games for a given date and season.
+
+    # Use a context manager to handle the database connection
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Execute the SQL statement with the game_ids
+        cursor.execute(sql, game_ids)
+
+        # Fetch the games from the database
+        games = cursor.fetchall()
+
+    # Create a set of all game_ids
+    game_ids_set = set(game_ids)
+
+    # Process each game
+    game_info_list = []
+    for game_id, home, away, date_time_est, status, season, season_type in games:
+        # Remove the game_id from the set
+        game_ids_set.remove(game_id)
+
+        # Add the game information to the list
+        game_info_list.append(
+            {
+                "game_id": game_id,
+                "home_team": home,
+                "away_team": away,
+                "date_time_est": date_time_est,
+                "status": status,
+                "season": season,
+                "season_type": season_type,
+            }
+        )
+
+    # Log any game_ids that were not found
+    if game_ids_set:
+        logging.warning(f"Game IDs not found in the database: {game_ids_set}")
+
+    # Return the game information
+    return game_info_list
+
+
+def get_games_for_date(date, db_path):
+    """
+    Fetches the NBA games for a given date from the Games table in the SQLite database.
 
     Parameters:
     date (str): The date to fetch the games for, formatted as 'YYYY-MM-DD'.
-    season (str): The season to fetch the games for, formatted as 'XXXX-XX'.
+    db_path (str): The path to the SQLite database.
 
     Returns:
     list: A list of dictionaries, each representing a game. Each dictionary contains the game ID, status, date/time, and the home and away teams.
     """
-    # Validate the date and season formats
+
+    # Validate the date format
     validate_date_format(date)
-    validate_season_format(season, abbreviated=True)
 
-    # Fetch the schedule for the entire season
-    season_schedule = get_schedule(season)
+    # Prepare the SQL statement to fetch the games
+    sql = """
+    SELECT game_id, home_team, away_team, date_time_est, status
+    FROM Games
+    WHERE date(date_time_est) = :date
+    """
 
-    # Filter the schedule to only include games on the specified date
-    # Note: This assumes that game["gameDateTimeEst"] is a string starting with the date in 'YYYY-MM-DD' format
+    # Use a context manager to handle the database connection
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Execute the SQL statement with the date
+        cursor.execute(sql, {"date": date})
+
+        # Fetch the games from the database
+        games = cursor.fetchall()
+
+    # Convert the games to a list of dictionaries
     games_on_date = [
-        game for game in season_schedule if game["gameDateTimeEst"].startswith(date)
+        {
+            "game_id": game[0],
+            "home_team": game[1],
+            "away_team": game[2],
+            "date_time_est": game[3],
+            "status": game[4],
+        }
+        for game in games
     ]
 
     return games_on_date
 
 
-def get_schedule(season, season_type="All"):
+def update_scheduled_games(season, db_path):
     """
-    Fetches the NBA schedule for a given season.
+    Fetches the NBA schedule for a given season and updates the Games database.
+    This function performs an UPSERT operation (UPDATE or INSERT).
 
     Parameters:
-    season (str): The season to fetch the schedule for, formatted as 'XXXX-XX' (e.g., '2020-21').
-    season_type (str): The type of season to fetch the schedule for. Defaults to 'All'.
-
-    Returns:
-    list: A list of dictionaries, each representing a game. Each dictionary contains the game ID, status, date/time, and the home and away teams.
+    season (str): The season to fetch the schedule for, formatted as 'XXXX-XXXX' (e.g., '2020-2021').
+    db_path (str): The path to the SQLite database file.
     """
-    # Check if the season format is correct
-    validate_season_format(season, abbreviated=True)
+    # Validate the format of the season string
+    validate_season_format(season, abbreviated=False)
+    # Convert the season string to the format used by the API
+    api_season = season[:5] + season[-2:]
 
-    season_type_codes = {
-        "Pre Season": "001",
-        "Regular Season": "002",
-        "All-Star": "003",
-        "Post Season": "004",
-    }
-    if season_type not in [
-        "Pre Season",
-        "Regular Season",
-        "All-Star",
-        "Post Season",
-        "All",
-    ]:
-        raise ValueError(
-            "Invalid season type. Please use one of 'Pre Season', 'Regular Season', 'All-Star', 'Post Season', or 'All'."
-        )
-
-    # Define the endpoint URL, including the season
+    # Define the URL for the API endpoint, including the season
     endpoint = (
-        f"https://stats.nba.com/stats/scheduleleaguev2?Season={season}&LeagueID=00"
+        f"https://stats.nba.com/stats/scheduleleaguev2?Season={api_season}&LeagueID=00"
     )
 
     # Define the headers to be sent with the request
@@ -136,15 +154,16 @@ def get_schedule(season, season_type="All"):
         "Accept-Language": "en-US,en;q=0.9",
     }
 
+    # Try to send the request and get the response
     try:
-        # Send the request and get the response
         response = requests.get(endpoint, headers=headers)
-        response.raise_for_status()  # Raise an exception if the response indicates an error
+        # If the response indicates an error, raise an exception
+        response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"Error occurred: {e}")
-        raise
+        logging.error(f"Error occurred while fetching the schedule for {season}.")
+        raise e
 
-    # Parse the JSON response
+    # Parse the JSON response to get the game dates
     game_dates = response.json()["leagueSchedule"]["gameDates"]
 
     # Extract all games from the response
@@ -167,12 +186,53 @@ def get_schedule(season, season_type="All"):
         game["homeTeam"] = game["homeTeam"]["teamTricode"]
         game["awayTeam"] = game["awayTeam"]["teamTricode"]
 
-    # Filter for season type
-    if season_type != "All":
-        season_code = season_type_codes[season_type]
-        all_games = [game for game in all_games if game["gameId"][:3] == season_code]
+    # Define the season type codes
+    season_type_codes = {
+        "001": "Pre Season",
+        "002": "Regular Season",
+        "003": "All-Star",
+        "004": "Post Season",
+    }
 
-    return all_games
+    game_status_codes = {
+        1: "Not Started",
+        2: "In Progress",
+        3: "Completed",
+    }
+
+    # Use a context manager to handle the database connection
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Update or insert the games in the database
+        for game in all_games:
+            # Determine the season type based on the game ID
+            season_type = season_type_codes.get(game["gameId"][:3], "Unknown")
+            status = game_status_codes.get(game["gameStatus"], "Unknown")
+
+            # Prepare the SQL statement for UPSERT operation
+            sql = """
+            INSERT OR REPLACE INTO Games
+            (game_id, date_time_est, home_team, away_team, status, season, season_type)
+            VALUES (:gameId, :gameDateTimeEst, :homeTeam, :awayTeam, :gameStatus, :season, :seasonType)
+            """
+
+            # Execute the SQL statement with the game data
+            cursor.execute(
+                sql,
+                {
+                    "gameId": game["gameId"],
+                    "gameDateTimeEst": game["gameDateTimeEst"],
+                    "homeTeam": game["homeTeam"],
+                    "awayTeam": game["awayTeam"],
+                    "gameStatus": status,
+                    "season": season,
+                    "seasonType": season_type,
+                },
+            )
+
+        # Commit the changes to the database
+        conn.commit()
 
 
 def game_id_to_season(game_id, abbreviate=False):
@@ -190,7 +250,7 @@ def game_id_to_season(game_id, abbreviate=False):
         str: The season corresponding to the game ID.
     """
     # Validate the game ID
-    validate_game_id(game_id)
+    validate_game_ids(game_id)
 
     # Extract the season from the game ID
     season = game_id[3:5]
@@ -208,29 +268,40 @@ def game_id_to_season(game_id, abbreviate=False):
     return year1 + "-" + year2
 
 
-def validate_game_id(game_id):
+def validate_game_ids(game_ids):
     """
-    Validates a game ID.
+    Validates a game ID or a list of game IDs.
 
-    The game ID must be a 10-character string that starts with '00'.
+    Each game ID must be a 10-character string that starts with '00'.
 
     Args:
-        game_id (str): The game ID to validate.
+        game_ids (str or list): The game ID(s) to validate.
 
     Raises:
-        ValueError: If the game ID is not valid.
+        ValueError: If any game ID is not valid.
     """
-    if not (
-        game_id
-        and isinstance(game_id, str)
-        and len(game_id) == 10
-        and game_id.startswith("00")
-    ):
+    # Ensure game_ids is a list
+    if isinstance(game_ids, str):
+        game_ids = [game_ids]
+
+    invalid_game_ids = []
+
+    # Validate the game_ids
+    for game_id in game_ids:
+        if not (
+            game_id
+            and isinstance(game_id, str)
+            and len(game_id) == 10
+            and game_id.startswith("00")
+        ):
+            invalid_game_ids.append(game_id)
+            logging.warning(
+                f"Invalid game ID {game_id}. Game ID must be a 10-digit string starting with '00'. Example: '0022100001'. Offical NBA.com Game ID"
+            )
+
+    if invalid_game_ids:
         raise ValueError(
-            """Invalid game ID.
-            Game ID must be a 10-digit string starting with '00'.
-            Example: '0022100001'. 
-            Offical NBA.com Game ID"""
+            f"Invalid game IDs: {invalid_game_ids}. Each game ID must be a 10-digit string starting with '00'. Example: '0022100001'. Offical NBA.com Game ID"
         )
 
 
@@ -312,426 +383,126 @@ class NBATeamConverter:
     abbreviation, short name, and full name along with any historical identifiers.
     """
 
-    __lookup_dict = None
+    # Path to the SQLite database file
+    DATABASE_PATH = os.path.join(PROJECT_ROOT, "data", "NBA_AI.sqlite")
 
-    @classmethod
-    def __generate_lookup_dict(cls):
-        """
-        Generate a lookup dictionary from teams_data. The dictionary maps each identifier
-        (team ID, abbreviation, full name, short name, and alternatives) to the corresponding team ID.
-        """
-        lookup_dict = {}
-        for team_id, details in cls.teams_data.items():
-            # Directly map the team's ID
-            lookup_dict[team_id] = team_id
-
-            # Map other identifiers, normalized to lowercase
-            identifiers = [
-                details["abbreviation"],
-                details["full_name"],
-                details["short_name"],
-            ] + details["alternatives"]
-
-            for identifier in identifiers:
-                normalized_identifier = identifier.lower().replace(" ", "-")
-                lookup_dict[normalized_identifier] = team_id
-        return lookup_dict
-
-    @classmethod
-    def __get_team_id(cls, identifier):
+    @staticmethod
+    def __get_team_id(identifier):
         """
         Get the team ID corresponding to the given identifier.
         If the identifier is unknown, raise a ValueError.
-        """
-        identifier_normalized = str(identifier).lower().replace(" ", "-")
-        if cls.__lookup_dict is None:
-            cls.__lookup_dict = cls.__generate_lookup_dict()
-        if identifier_normalized not in cls.__lookup_dict:
-            raise ValueError(f"Unknown team identifier: {identifier}")
-        return cls.__lookup_dict[identifier_normalized]
 
-    @classmethod
-    def get_abbreviation(cls, identifier):
+        Args:
+            identifier (str): The identifier of the team.
+
+        Returns:
+            int: The team ID corresponding to the identifier.
+
+        Raises:
+            ValueError: If the identifier is unknown.
+        """
+        # Normalize the identifier
+        identifier_normalized = str(identifier).lower().replace("-", " ")
+
+        # Open a new database connection
+        with sqlite3.connect(NBATeamConverter.DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+
+            # Execute the SQL query
+            cursor.execute(
+                """
+                SELECT team_id FROM Teams
+                WHERE abbreviation_normalized = ? OR full_name_normalized = ? OR short_name_normalized = ? OR
+                json_extract(alternatives_normalized, '$') LIKE ?
+                """,
+                (
+                    identifier_normalized,
+                    identifier_normalized,
+                    identifier_normalized,
+                    f'%"{identifier_normalized}"%',
+                ),
+            )
+
+            # Fetch the result of the query
+            result = cursor.fetchone()
+
+            # If the result is None, raise a ValueError
+            if result is None:
+                raise ValueError(f"Unknown team identifier: {identifier}")
+
+            # Return the team ID
+            return result[0]
+
+    @staticmethod
+    def get_abbreviation(identifier):
         """
         Get the abbreviation of the team corresponding to the given identifier.
-        """
-        team_id = cls.__get_team_id(identifier)
-        return cls.teams_data[team_id]["abbreviation"].upper()
 
-    @classmethod
-    def get_short_name(cls, identifier):
+        Args:
+            identifier (str): The identifier of the team.
+
+        Returns:
+            str: The abbreviation of the team.
+        """
+        # Get the team ID corresponding to the identifier
+        team_id = NBATeamConverter.__get_team_id(identifier)
+
+        # Open a new database connection
+        with sqlite3.connect(NBATeamConverter.DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+
+            # Execute the SQL query
+            cursor.execute(
+                "SELECT abbreviation FROM Teams WHERE team_id = ?", (team_id,)
+            )
+
+            # Return the abbreviation of the team
+            return cursor.fetchone()[0].upper()
+
+    @staticmethod
+    def get_short_name(identifier):
         """
         Get the short name of the team corresponding to the given identifier.
-        """
-        team_id = cls.__get_team_id(identifier)
-        return cls.teams_data[team_id]["short_name"].title()
 
-    @classmethod
-    def get_full_name(cls, identifier):
+        Args:
+            identifier (str): The identifier of the team.
+
+        Returns:
+            str: The short name of the team.
+        """
+        # Get the team ID corresponding to the identifier
+        team_id = NBATeamConverter.__get_team_id(identifier)
+
+        # Open a new database connection
+        with sqlite3.connect(NBATeamConverter.DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+
+            # Execute the SQL query
+            cursor.execute("SELECT short_name FROM Teams WHERE team_id = ?", (team_id,))
+
+            # Return the short name of the team
+            return cursor.fetchone()[0].title()
+
+    @staticmethod
+    def get_full_name(identifier):
         """
         Get the full name of the team corresponding to the given identifier.
+
+        Args:
+            identifier (str): The identifier of the team.
+
+        Returns:
+            str: The full name of the team.
         """
-        team_id = cls.__get_team_id(identifier)
-        return cls.teams_data[team_id]["full_name"].title()
+        # Get the team ID corresponding to the identifier
+        team_id = NBATeamConverter.__get_team_id(identifier)
 
-    # Team data with details for each team. Including abbreviation, full name, short name, and alternatives.
-    teams_data = {
-        "1610612737": {
-            "abbreviation": "ATL",
-            "full_name": "Atlanta Hawks",
-            "short_name": "Hawks",
-            "alternatives": [
-                "STL",
-                "Tri-Cities Blackhawks",
-                "MLH",
-                "TRI",
-                "Milwaukee Hawks",
-                "St. Louis Hawks",
-            ],
-        },
-        "1610612751": {
-            "abbreviation": "BKN",
-            "full_name": "Brooklyn Nets",
-            "short_name": "Nets",
-            "alternatives": [
-                "NJA",
-                "BK",
-                "NYN",
-                "NJN",
-                "New York Nets",
-                "BRK",
-                "New Jersey Americans",
-                "New Jersey Nets",
-            ],
-        },
-        "1610612738": {
-            "abbreviation": "BOS",
-            "full_name": "Boston Celtics",
-            "short_name": "Celtics",
-            "alternatives": [],
-        },
-        "1610612766": {
-            "abbreviation": "CHA",
-            "full_name": "Charlotte Hornets",
-            "short_name": "Hornets",
-            "alternatives": [
-                "Charlotte Bobcats",
-                "CHH",
-                "CHO",
-            ],
-        },
-        "1610612739": {
-            "abbreviation": "CLE",
-            "full_name": "Cleveland Cavaliers",
-            "short_name": "Cavaliers",
-            "alternatives": [],
-        },
-        "1610612741": {
-            "abbreviation": "CHI",
-            "full_name": "Chicago Bulls",
-            "short_name": "Bulls",
-            "alternatives": [],
-        },
-        "1610612742": {
-            "abbreviation": "DAL",
-            "full_name": "Dallas Mavericks",
-            "short_name": "Mavericks",
-            "alternatives": [],
-        },
-        "1610612743": {
-            "abbreviation": "DEN",
-            "full_name": "Denver Nuggets",
-            "short_name": "Nuggets",
-            "alternatives": ["Denver Rockets", "DNR"],
-        },
-        "1610612765": {
-            "abbreviation": "DET",
-            "full_name": "Detroit Pistons",
-            "short_name": "Pistons",
-            "alternatives": ["FTW", "Fort Wayne Pistons"],
-        },
-        "1610612744": {
-            "abbreviation": "GSW",
-            "full_name": "Golden State Warriors",
-            "short_name": "Warriors",
-            "alternatives": [
-                "PHW",
-                "GS",
-                "Philadelphia Warriors",
-                "San Francisco Warriors",
-                "SFW",
-            ],
-        },
-        "1610612745": {
-            "abbreviation": "HOU",
-            "full_name": "Houston Rockets",
-            "short_name": "Rockets",
-            "alternatives": ["SDR", "San Diego Rockets"],
-        },
-        "1610612754": {
-            "abbreviation": "IND",
-            "full_name": "Indiana Pacers",
-            "short_name": "Pacers",
-            "alternatives": [],
-        },
-        "1610612746": {
-            "abbreviation": "LAC",
-            "full_name": "Los Angeles Clippers",
-            "short_name": "Clippers",
-            "alternatives": [
-                "SDC",
-                "Buffalo Braves",
-                "San Diego Clippers",
-                "LA Clippers",
-                "BUF",
-            ],
-        },
-        "1610612747": {
-            "abbreviation": "LAL",
-            "full_name": "Los Angeles Lakers",
-            "short_name": "Lakers",
-            "alternatives": ["MNL", "Minneapolis Lakers"],
-        },
-        "1610612763": {
-            "abbreviation": "MEM",
-            "full_name": "Memphis Grizzlies",
-            "short_name": "Grizzlies",
-            "alternatives": ["VAN", "Vancouver Grizzlies"],
-        },
-        "1610612748": {
-            "abbreviation": "MIA",
-            "full_name": "Miami Heat",
-            "short_name": "Heat",
-            "alternatives": [],
-        },
-        "1610612749": {
-            "abbreviation": "MIL",
-            "full_name": "Milwaukee Bucks",
-            "short_name": "Bucks",
-            "alternatives": [],
-        },
-        "1610612750": {
-            "abbreviation": "MIN",
-            "full_name": "Minnesota Timberwolves",
-            "short_name": "Timberwolves",
-            "alternatives": [],
-        },
-        "1610612752": {
-            "abbreviation": "NYK",
-            "full_name": "New York Knicks",
-            "short_name": "Knicks",
-            "alternatives": ["NY"],
-        },
-        "1610612740": {
-            "abbreviation": "NOP",
-            "full_name": "New Orleans Pelicans",
-            "short_name": "Pelicans",
-            "alternatives": [
-                "NOH",
-                "New Orleans Hornets",
-                "NOK",
-                "NO",
-                "New Orleans/Oklahoma City Hornets",
-            ],
-        },
-        "1610612760": {
-            "abbreviation": "OKC",
-            "full_name": "Oklahoma City Thunder",
-            "short_name": "Thunder",
-            "alternatives": ["Seattle SuperSonics", "SEA"],
-        },
-        "1610612753": {
-            "abbreviation": "ORL",
-            "full_name": "Orlando Magic",
-            "short_name": "Magic",
-            "alternatives": [],
-        },
-        "1610612755": {
-            "abbreviation": "PHI",
-            "full_name": "Philadelphia 76ers",
-            "short_name": "76ers",
-            "alternatives": [
-                "PHL",
-                "Syracuse Nationals",
-                "SYR",
-            ],
-        },
-        "1610612756": {
-            "abbreviation": "PHX",
-            "full_name": "Phoenix Suns",
-            "short_name": "Suns",
-            "alternatives": ["PHO"],
-        },
-        "1610612757": {
-            "abbreviation": "POR",
-            "full_name": "Portland Trail Blazers",
-            "short_name": "Trail Blazers",
-            "alternatives": [],
-        },
-        "1610612759": {
-            "abbreviation": "SAS",
-            "full_name": "San Antonio Spurs",
-            "short_name": "Spurs",
-            "alternatives": [
-                "DLC",
-                "SAN",
-                "Dallas Chaparrals",
-                "SA",
-            ],
-        },
-        "1610612758": {
-            "abbreviation": "SAC",
-            "full_name": "Sacramento Kings",
-            "short_name": "Kings",
-            "alternatives": [
-                "KCO",
-                "KCK",
-                "Kansas City-Omaha Kings",
-                "Kansas City Kings",
-                "Cincinnati Royals",
-                "CIN",
-                "Rochester Royals",
-                "ROC",
-            ],
-        },
-        "1610612761": {
-            "abbreviation": "TOR",
-            "full_name": "Toronto Raptors",
-            "short_name": "Raptors",
-            "alternatives": [],
-        },
-        "1610612762": {
-            "abbreviation": "UTA",
-            "full_name": "Utah Jazz",
-            "short_name": "Jazz",
-            "alternatives": ["NOJ", "New Orleans Jazz", "UTAH"],
-        },
-        "1610612764": {
-            "abbreviation": "WAS",
-            "full_name": "Washington Wizards",
-            "short_name": "Wizards",
-            "alternatives": [
-                "WSH",
-                "Washington Bullets",
-                "CAP",
-                "BAL",
-                "Baltimore Bullets",
-                "CHP",
-                "CHZ",
-                "Chicago Packers",
-                "WSB",
-                "Capital Bullets",
-                "Chicago Zephyrs",
-            ],
-        },
-    }
+        # Open a new database connection
+        with sqlite3.connect(NBATeamConverter.DATABASE_PATH) as conn:
+            cursor = conn.cursor()
 
+            # Execute the SQL query
+            cursor.execute("SELECT full_name FROM Teams WHERE team_id = ?", (team_id,))
 
-# --------------- MODELING UTILS -----------------
-
-
-def load_featurized_modeling_data(seasons):
-    """
-    This function loads featurized modeling data for a list of NBA seasons.
-
-    Parameters:
-    seasons (list): A list of seasons for which to load the featurized modeling data.
-
-    Returns:
-    pd.DataFrame: A DataFrame of the featurized modeling data for the given seasons.
-    """
-    # Initialize an empty list to store the DataFrames
-    dfs = []
-
-    # Iterate over all seasons in the list
-    for season in seasons:
-        # Load the CSV file for the current season into a DataFrame and append it to the list
-        dfs.append(pd.read_csv(f"{PROJECT_ROOT}/data/featurized_NBAStats/{season}.csv"))
-
-    # Concatenate all DataFrames in the list into a single DataFrame
-    return pd.concat(dfs)
-
-
-def create_featurized_training_data_csv(season):
-    """
-    This function creates a CSV file of featurized data for a given NBA season.
-    Saves time loading in data from core data files for basic featurized modeling.
-
-    Parameters:
-    season (str): The season for which to create the featurized data CSV.
-
-    Returns:
-    pd.DataFrame: A DataFrame of the featurized data for the given season.
-    """
-    # Validate the season format
-    validate_season_format(season, abbreviated=False)
-
-    # Define the path to the season folder
-    season_folder = f"{PROJECT_ROOT}/data/NBAStats/{season}"
-
-    # Initialize an empty list to store the season data
-    season_data = []
-
-    # Get only the directories from the season folder
-    date_folders = [entry for entry in os.scandir(season_folder) if entry.is_dir()]
-
-    # Iterate over all date subfolders in the season folder
-    for date_folder in tqdm(
-        date_folders,
-        total=len(date_folders),
-        desc="Loading season data",
-        dynamic_ncols=True,
-    ):
-        # Iterate over all JSON files in the date folder
-        for game_file in os.scandir(date_folder.path):
-            try:
-                # Open and load the JSON file
-                with open(game_file.path, "r") as f:
-                    game = json.load(f)
-
-                    # Check if the game has a feature set
-                    if game["prior_states"]["feature_set"]:
-                        # Extract the game ID, date, feature set, and home margin
-                        game_id = game["game_id"]
-                        game_date = game["game_date"]
-                        feature_set = game["prior_states"]["feature_set"]
-                        home_score = game["final_state"]["home_score"]
-                        away_score = game["final_state"]["away_score"]
-                        home_margin = game["final_state"]["home_margin"]
-                        total_score = home_score + away_score
-
-                        # Append the extracted data to the season data list
-                        season_data.append(
-                            {
-                                "game_id": game_id,
-                                "game_date": game_date,
-                                "home_score": home_score,
-                                "away_score": away_score,
-                                "home_margin": home_margin,
-                                "total_score": total_score,
-                                **feature_set,
-                            }
-                        )
-            except Exception as e:
-                # Print an error message if an exception occurs
-                print(f"Error processing file: {game_file.path}")
-                print(f"Error: {str(e)}")
-
-    # Convert the list of dictionaries to a DataFrame
-    season_data = pd.DataFrame(season_data)
-
-    # Write the DataFrame to a CSV file
-    season_data.to_csv(
-        f"{PROJECT_ROOT}/data/featurized_NBAStats/{season}.csv", index=False
-    )
-
-    # Return the DataFrame
-    return season_data
-
-
-if __name__ == "__main__":
-    seasons = ["2020-2021", "2021-2022", "2022-2023", "2023-2024"]
-
-    for season in seasons:
-        create_featurized_training_data_csv(season)
-        print(f"Created featurized training data for {season}.")
+            # Return the full name of the team
+            return cursor.fetchone()[0].title()

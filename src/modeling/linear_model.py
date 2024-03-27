@@ -3,6 +3,7 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import wandb
 from dotenv import load_dotenv
 from joblib import dump
 from sklearn.linear_model import Ridge
@@ -10,30 +11,9 @@ from sklearn.metrics import log_loss
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
 
-import wandb
-from evaluation import create_evaluations
+from src.modeling.evaluation import create_evaluations
 from utils import load_featurized_modeling_data
 
-load_dotenv()
-PROJECT_ROOT = os.getenv("PROJECT_ROOT")
-
-if __name__ == "__main__":
-    import os
-
-from datetime import datetime
-
-import numpy as np
-from dotenv import load_dotenv
-from joblib import dump
-from sklearn.linear_model import Ridge
-from sklearn.model_selection import RandomizedSearchCV
-from sklearn.preprocessing import StandardScaler
-
-import wandb
-from evaluation import create_evaluations
-from utils import load_featurized_modeling_data
-
-# Load environment variables
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 
@@ -42,7 +22,7 @@ if __name__ == "__main__":
     # Section 1: Data Loading
     # ------------------------
     # Define the seasons for training and testing
-    training_seasons = ["2021-2022"]
+    training_seasons = ["2020-2021", "2021-2022"]
     testing_seasons = ["2022-2023"]
 
     # Load featurized modeling data for the defined seasons
@@ -58,27 +38,25 @@ if __name__ == "__main__":
     # ----------------------------------------
     # Define features (X) by dropping target and non-predictive columns
     # Define targets (y) for the model
-    X_train = training_df.drop(
-        columns=[
-            "game_id",
-            "game_date",
-            "home_margin",
-            "home_score",
-            "away_score",
-            "total_score",
-        ]
-    )
+    game_info_columns = [
+        "game_id",
+        "date_time_est",
+        "home_team",
+        "away_team",
+        "season",
+        "season_type",
+    ]
+    game_results_columns = [
+        "home_score",
+        "away_score",
+        "total",
+        "home_margin",
+        "players_data",
+    ]
+
+    X_train = training_df.drop(columns=game_info_columns + game_results_columns)
     y_train = training_df[["home_score", "away_score"]]
-    X_test = testing_df.drop(
-        columns=[
-            "game_id",
-            "game_date",
-            "home_margin",
-            "home_score",
-            "away_score",
-            "total_score",
-        ]
-    )
+    X_test = testing_df.drop(columns=game_info_columns + game_results_columns)
     y_test = testing_df[["home_score", "away_score"]]
 
     # Keep a list of feature names for later use (e.g., for model interpretation)
@@ -262,8 +240,13 @@ if __name__ == "__main__":
     wandb.log({"Model Details": model_details_table})
 
     # -----------------------------
-    # Section 8: Model Persistence
+    # Section 8: Model Finalization
     # -----------------------------
+    # Refit the model on the full dataset
+    X_full = np.concatenate((X_train, X_test))
+    y_full = np.concatenate((y_train, y_test))
+    model.fit(X_full, y_full)
+
     # Construct filename and save the model
     model_filename = f"{PROJECT_ROOT}/models/{model_type}_{run_datetime}.joblib"
     dump(model, model_filename)
