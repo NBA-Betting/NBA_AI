@@ -2,19 +2,26 @@
 <html lang="en">
 
 <head>
+    <!-- Meta tags -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NBA AI</title>
+
+    <!-- CSS links -->
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
-    <!-- Include your custom CSS file -->
+
+    <!-- Custom CSS -->
     <link href="{{ url_for('static', filename='css/custom.css') }}" rel="stylesheet">
+
+    <!-- Favicon -->
+    <link rel="icon" href="{{ url_for('static', filename='img/basketball.png') }}">
 </head>
 
-<body>
+<body data-query-date="{{ query_date_str }}">
 
-    <!--HEADER and NAVBAR-->
+    <!-- Header and Navbar -->
     <nav class="navbar navbar-expand-lg navbar-light bg-light">
         <div class="container">
             <a class="navbar-brand d-flex align-items-center" href="{{ url_for('home') }}">
@@ -25,7 +32,7 @@
         </div>
     </nav>
 
-    <!--FLASH MESSAGES-->
+    <!-- Flash Messages -->
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
     <div class="container">
@@ -38,12 +45,16 @@
 
 
 
-    <!--MAIN GAMES TABLE-->
+    <!-- Start of Main Games Table -->
     <div class="container mt-4">
+        <!-- Alert for No Games -->
         <div id="noGamesAlert" class="alert alert-info" style="display: none;">No Games for this date.</div>
+
+        <!-- Games Table -->
         <table class="table custom-table">
             <thead>
                 <tr>
+                    <!-- Table Headers -->
                     <th rowspan="2"></th> <!-- Placeholder for Time Display -->
                     <th rowspan="2">Home</th>
                     <th rowspan="2">Away</th>
@@ -62,49 +73,62 @@
                 </tr>
             </thead>
             <tbody id="gamesTableBody">
-                <!-- Games will be loaded here dynamically -->
+                <!-- Placeholder for Games Data. Games will be loaded here dynamically -->
             </tbody>
         </table>
     </div>
+    <!-- End of Main Games Table -->
 
-
-    <!-- Simplified Pagination Controls -->
+    <!-- Start of Pagination Controls -->
     <nav aria-label="Page navigation" class="mt-4">
         <ul class="pagination justify-content-center">
+            <!-- Previous Page Link -->
             <li class="page-item">
                 <a class="page-link" href="/?date={{ prev_date }}">&lt;&lt;</a>
             </li>
+            <!-- Current Page Indicator -->
             <li class="page-item active">
                 <span class="page-link">{{ query_date_display_str }}</span>
             </li>
+            <!-- Next Page Link -->
             <li class="page-item">
                 <a class="page-link" href="/?date={{ next_date }}">&gt;&gt;</a>
             </li>
         </ul>
     </nav>
+    <!-- End of Pagination Controls -->
 
-    <!-- GAME DETAILS MODAL -->
+
+    <!-- Start of Game Details Modal -->
     <div class="modal fade" id="gameDetailsModal" tabindex="-1" aria-labelledby="gameDetailsModalLabel"
         aria-hidden="true">
-        <div class="modal-dialog modal-xl"> <!-- Change modal-dialog class to modal-xl -->
+        <!-- Modal Dialog Container -->
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <!-- Modal Content Container -->
             <div class="modal-content">
+                <!-- Modal Header -->
                 <div class="modal-header">
                     <h5 class="modal-title" id="gameDetailsModalLabel">Game Details</h5>
+                    <!-- Close Button for Modal -->
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
+                <!-- Modal Body - This is where the game details will be dynamically loaded -->
                 <div class="modal-body">
-                    <!-- Game details will be loaded here dynamically -->
                 </div>
             </div>
         </div>
     </div>
+    <!-- End of Game Details Modal -->
 
-    <!-- Template for Game Details Modal Body -->
+    <!-- Start of Game Details Template -->
     <template id="gameDetailsTemplate">
-        <div class="row flex-column-reverse flex-lg-row">
-            <!-- Play By Play -->
-            <div class="col-lg-5 overflow-auto" style="max-height: 500px;" id="play_by_play">
+        <!-- Main Row - Contains Play By Play and Live Predictions -->
+        <div class="row flex-column-reverse flex-xl-row">
+            <!-- Play By Play Section -->
+            <div class="col-lg-5" id="play_by_play">
+                <!-- Play By Play Table -->
                 <table class="table">
+                    <!-- Table Header -->
                     <thead>
                         <tr>
                             <th colspan="2">Play By Play</th>
@@ -112,57 +136,60 @@
                             <th id="awayTeamHeader">Away</th>
                         </tr>
                     </thead>
+                    <!-- Table Body - This is where the play-by-play rows will be dynamically added -->
                     <tbody id="playByPlayBody">
-                        <!-- Dynamic play-by-play rows will be added here -->
                     </tbody>
                 </table>
             </div>
 
-            <!-- Live Predictions -->
+            <!-- Live Predictions Section -->
             <div class="col-lg-7" id="live_predictions">
-                <div class="row justify-content-center mb-2 border-bottom" id="live_predictions_title"
-                    style="border-color: lightgrey;">
+                <!-- Live Predictions Title Row -->
+                <div class="row justify-content-center mb-2 border-bottom-custom" id="live_predictions_title">
                     <div class="col">
                         <h1 class="text-center">Live Predictions</h1>
                     </div>
                 </div>
-                <div class="row mb-4 border-bottom" style="border-color: lightgrey;">
+                <!-- Live Predictions Data Row -->
+                <div class="row mb-4 border-bottom-custom">
+                    <!-- Home Team Column -->
                     <div class="col">
                         <div class="row align-items-center">
+                            <!-- Home Team Name and Predicted Score -->
                             <div class="col-6 text-center d-flex flex-column justify-content-center">
                                 <h4 id="templateHomeTeam"></h4>
                                 <h1 class="mb-0" id="templatePredictedHomeScore"></h1>
                             </div>
+                            <!-- Home Team Logo -->
                             <div class="col-6 d-flex align-items-center justify-content-center">
-                                <img id="templateHomeLogo" src="" alt="Team Logo" class="img-fluid"
-                                    style="max-width: 100px;">
+                                <img id="templateHomeLogo" src="" alt="Team Logo" class="img-fluid-custom">
                             </div>
                         </div>
                     </div>
+                    <!-- Winner Prediction Column -->
                     <div class="col d-flex align-items-center justify-content-center">
                         <div class="row">
                             <div class="col text-center d-flex justify-content-center align-items-center">
-                                <!-- Left SVG icon -->
-                                <i class="bi bi-caret-left-fill me-0 text-success" id="winnerLeftIcon"
-                                    style="visibility: hidden; font-size: 2rem;"></i>
-                                <!-- Winner Text and Percentage -->
+                                <!-- Winner Prediction Icons and Text -->
+                                <i class="bi bi-caret-left-fill bi-caret-left-fill-custom me-0 text-success-custom"
+                                    id="winnerLeftIcon"></i>
                                 <div>
                                     <h5 class="mb-0">Winner</h5>
                                     <h4 id="templatePredictedWinPct" class="mb-0"></h4>
                                 </div>
-
-                                <!-- Right SVG icon -->
-                                <i class="bi bi-caret-right-fill ms-0 text-success" id="winnerRightIcon"
-                                    style="visibility: hidden; font-size: 2rem;"></i>
+                                <i class="bi bi-caret-right-fill bi-caret-right-fill-custom ms-0 text-success-custom"
+                                    id="winnerRightIcon"></i>
                             </div>
                         </div>
                     </div>
+                    <!-- Away Team Column -->
                     <div class="col">
                         <div class="row align-items-center">
+                            <!-- Away Team Logo -->
                             <div class="col-6 d-flex align-items-center justify-content-center">
-                                <img id="templateAwayLogo" src="" alt="Team Logo" class="img-fluid"
-                                    style="max-width: 100px;">
+                                <img id="templateAwayLogo" src="" alt="Team Logo" class="img-fluid-custom">
                             </div>
+                            <!-- Away Team Name and Predicted Score -->
                             <div class="col-6 text-center d-flex flex-column justify-content-center">
                                 <h4 id="templateAwayTeam"></h4>
                                 <h1 class="mb-0" id="templatePredictedAwayScore"></h1>
@@ -170,260 +197,31 @@
                         </div>
                     </div>
                 </div>
-                <!-- Container for Player Information (third row in the right column) -->
+                <!-- Player Information Container -->
                 <div class="row" id="playerInfoContainer">
-                    <!-- Home Team Players -->
+                    <!-- Home Team Players Column -->
                     <div class="col-1"></div>
                     <div class="col-5 d-flex justify-content-center flex-column" id="homeTeamPlayers">
-                        <!-- Dynamic home team players will be added here -->
+                        <!-- This is where the home team players will be dynamically added -->
                     </div>
 
-                    <!-- Road Team Players -->
+                    <!-- Road Team Players Column -->
                     <div class="col-1"></div>
-                    <div class="col-5 d-flex justify-content-center flex-column" id="roadTeamPlayers">
-                        <!-- Dynamic road team players will be added here -->
+                    <div class="col-5 d-flex justify-content-center flex-column" id="awayTeamPlayers">
+                        <!-- This is where the away team players will be dynamically added -->
                     </div>
                 </div>
             </div>
         </div>
     </template>
-
-
-
+    <!-- End of Game Details Template -->
 
     <!-- Bootstrap 5 JS bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            function fetchAndUpdateGames() {
-                const queryDate = "{{ query_date_str }}";
-                fetch(`/get-games?date=${queryDate}`)
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error('Network response was not ok');
-                        }
-                        return response.json();
-                    })
-                    .then(games => {
-                        const tableBody = document.querySelector('#gamesTableBody');
-                        tableBody.innerHTML = '';
-
-                        if (games.length > 0) {
-                            games.forEach(game => {
-                                console.log('Game:', game);
-                                const row = document.createElement('tr');
-                                row.className = 'game-row';
-                                row.setAttribute('data-game-id', game.game_id);
-                                row.innerHTML = `
-                                    <td class="text-left" style="vertical-align: middle;">${(game.datetime_display).split('-').join('<br>')}</td>
-                                    <td style="vertical-align: middle;">
-                                        <div style="display: flex; align-items: center;">
-                                            <img src="${game.home_logo_url}" alt="Logo of ${game.home_team_display}" style="width: 50px; height: auto; margin-right: 10px;">
-                                            <div style="text-align: left;">${game.home_team_display}</div>
-                                        </div>
-                                    </td>
-                                    <td style="vertical-align: middle;">
-                                        <div style="display: flex; align-items: center;">
-                                            <img src="${game.away_logo_url}" alt="Logo of ${game.away_team_display}" style="width: 50px; height: auto; margin-right: 10px;">
-                                            <div style="text-align: left;">${game.away_team_display}</div>
-                                        </div>
-                                    </td>
-                                    <td class="text-center" style="vertical-align: middle;">${game.home_score}</td>
-                                    <td class="text-center" style="vertical-align: middle;">${game.away_score}</td>
-                                    <td class="text-center" style="vertical-align: middle;">${game.predictions.home_score}</td>
-                                    <td class="text-center" style="vertical-align: middle;">${game.predictions.away_score}</td>
-                                    <td class="text-center" style="vertical-align: middle;">${game.predictions.winning_team} ${game.predictions.winning_team_pct}</td>
-                                `;
-                                tableBody.appendChild(row);
-                            });
-                        } else {
-                            tableBody.innerHTML = '<tr><td colspan="8" class="text-center">No Games for the selected date</td></tr>';
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error fetching games:', error);
-                    });
-            }
-
-            fetchAndUpdateGames();
-        });
-    </script>
-
-
-    <!-- Custom JS to fetch and display game details -->
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            function populatePlayerDetails(players, container, limit = 5) {
-                container.innerHTML = ''; // Clear previous content
-
-                // Loop through player details
-                for (let i = 0; i < players.length; i++) {
-                    if (i >= limit) {
-                        break; // Break the loop when the limit is reached
-                    }
-
-                    const player = players[i];
-
-                    if (player.name) { // If player data exists
-                        const playerDetailDiv = document.createElement('div');
-                        playerDetailDiv.className = 'player-detail row d-flex align-items-center mb-3';
-                        playerDetailDiv.innerHTML = `
-                        <div class="col-auto">
-                            <img src="${player.player_headshot_url}" alt="${player.name}" class="img-fluid mb-2" style="width: 80px; height: auto;">
-                        </div>
-                        <div class="col">
-                            <p class="mb-0"><strong>${player.name}</strong></p>
-                            <p class="mb-0">${player.pred_points} PTS</p>
-                        </div>
-                        `;
-
-                        container.appendChild(playerDetailDiv);
-                    }
-                }
-            }
-
-            function populatePlayByPlay(home_team, away_team, pbp, limit = 10) {
-                const homeTeamHeader = document.getElementById('homeTeamHeader');
-                const awayTeamHeader = document.getElementById('awayTeamHeader');
-                const playByPlayBody = document.getElementById('playByPlayBody');
-
-                // Set team names in headers
-                homeTeamHeader.textContent = home_team;
-                awayTeamHeader.textContent = away_team;
-
-                // Clear existing content
-                playByPlayBody.innerHTML = '';
-
-                // Check if pbp array is empty
-                if (pbp.length === 0) {
-                    playByPlayBody.innerHTML = '<tr><td colspan="4" class="text-center">No Play By Play Logs Available</td></tr>';
-                } else {
-                    // Add rows to the table, adjusting for the updated structure
-                    pbp.slice(0, limit).forEach((record) => {
-                        const formattedTime = record.time_info;
-                        const description = record.description;
-                        const homeScore = record.home_score;
-                        const awayScore = record.away_score;
-
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td>${formattedTime}</td>
-                            <td>${description}</td>
-                            <td>${homeScore}</td>
-                            <td>${awayScore}</td>
-                        `;
-                        playByPlayBody.appendChild(row);
-                    });
-                }
-            }
-
-
-            function showGameDetails(gameId) {
-                fetch(`/game-details/${gameId}`)
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error('Network response was not ok');
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        console.log('Game details:', data);
-                        const home = data.home;
-                        const away = data.away;
-                        const homeFullName = data.home_full_name;
-                        const awayFullName = data.away_full_name;
-                        const homeLogoUrl = data.home_logo_url;
-                        const awayLogoUrl = data.away_logo_url;
-                        const homeScore = data.home_score;
-                        const awayScore = data.away_score;
-                        const timeDisplay = data.datetime_display;
-                        const playByPlay = data.condensed_pbp;
-                        const homePlayers = data.home_players;
-                        const roadPlayers = data.away_players;
-
-                        // Construct the modal header content
-                        const modalTitle = document.querySelector('#gameDetailsModalLabel');
-                        modalTitle.innerHTML = `
-                            ${homeFullName} <img src="${homeLogoUrl}" alt="${homeFullName}" style="width: 30px; height: auto;"> 
-                            ${homeScore} - ${awayScore} 
-                            <img src="${awayLogoUrl}" alt="${awayFullName}" style="width: 30px; height: auto;"> ${awayFullName} 
-                            <span class="breakpoint"> - <wbr></span>${timeDisplay}
-                            <style>
-                                @media (max-width: 600px) {
-                                    .breakpoint {
-                                        display: none;
-                                    }
-                                }
-                            </style>
-                        `;
-
-                        // Use the template for the modal body
-                        const template = document.querySelector('#gameDetailsTemplate').content.cloneNode(true);
-                        template.querySelector('#templateHomeTeam').textContent += `${home}`;
-                        template.querySelector('#templateAwayTeam').textContent += `${away}`;
-                        template.querySelector('#templateHomeLogo').src = homeLogoUrl;
-                        template.querySelector('#templateAwayLogo').src = awayLogoUrl;
-                        template.querySelector('#templatePredictedHomeScore').textContent += `${data.predictions.home_score}`;
-                        template.querySelector('#templatePredictedAwayScore').textContent += `${data.predictions.away_score}`;
-                        template.querySelector('#templatePredictedWinPct').textContent += `${data.predictions.winning_team_pct}`;
-
-                        // Populate player details for both teams
-                        const homePlayersContainer = template.querySelector('#homeTeamPlayers');
-                        const roadPlayersContainer = template.querySelector('#roadTeamPlayers');
-                        populatePlayerDetails(homePlayers, homePlayersContainer);
-                        populatePlayerDetails(roadPlayers, roadPlayersContainer);
-
-                        const modalBody = document.querySelector('#gameDetailsModal .modal-body');
-                        modalBody.innerHTML = ''; // Clear existing content
-                        modalBody.appendChild(template);
-
-                        // Determine which icon to show based on the predicted winner
-                        const winnerLeftIcon = document.getElementById('winnerLeftIcon');
-                        const winnerRightIcon = document.getElementById('winnerRightIcon');
-
-                        if (data.predictions.winning_team === data.home) {
-                            winnerLeftIcon.style.visibility = 'visible';
-                            winnerRightIcon.style.visibility = 'hidden';
-                        } else if (data.predictions.winning_team === data.away) {
-                            winnerRightIcon.style.visibility = 'visible';
-                            winnerLeftIcon.style.visibility = 'hidden';
-                        } else {
-                            winnerLeftIcon.style.visibility = 'hidden';
-                            winnerRightIcon.style.visibility = 'hidden';
-                        }
-
-                        populatePlayByPlay(home, away, playByPlay, 100);
-
-                        // Show the modal
-                        var gameDetailsModal = new bootstrap.Modal(document.getElementById('gameDetailsModal'), {});
-                        gameDetailsModal.show();
-                    })
-                    .catch(error => {
-                        console.error('Error fetching game details:', error);
-                    });
-            }
-
-            const tableBody = document.querySelector('#gamesTableBody');
-            tableBody.addEventListener('click', function (event) {
-                let target = event.target;
-                while (target != null && !target.classList.contains('game-row')) {
-                    target = target.parentElement;
-                }
-
-                if (target && target.classList.contains('game-row')) {
-                    const gameId = target.getAttribute('data-game-id');
-                    showGameDetails(gameId);
-                }
-            });
-        });
-    </script>
-
-
-
-
+    <!-- Custom JavaScript -->
+    <script src="static/js/main.js"></script>
 
 </body>
-
 
 </html>

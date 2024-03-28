@@ -1,8 +1,71 @@
+/* Styles used directly in index.html */
 .navbar-text {
     font-size: 56px;
-    /* Start with this and adjust as needed */
     line-height: 60px;
-    /* Try to match the image height */
     margin-left: 10px;
-    /* Adds some space between the image and the text */
+}
+
+.border-bottom-custom {
+    border-color: lightgrey;
+}
+
+.img-fluid-custom {
+    max-width: 100px;
+}
+
+.text-success-custom {
+    color: #28a745;
+}
+
+.bi-caret-left-fill-custom,
+.bi-caret-right-fill-custom {
+    visibility: hidden;
+    font-size: 2rem;
+}
+
+/* Styles used in main.js */
+.custom-vertical-align-middle {
+    vertical-align: middle;
+}
+
+.custom-display-flex {
+    display: flex;
+}
+
+.custom-align-items-center {
+    align-items: center;
+}
+
+.custom-team-logo {
+    width: 50px;
+    height: auto;
+    margin-right: 10px;
+}
+
+.custom-text-align-left {
+    text-align: left;
+}
+
+.player-headshot {
+    width: 80px;
+    height: auto;
+}
+
+.no-pbp-data {
+    text-align: center;
+}
+
+.team-logo {
+    width: 30px;
+    height: auto;
+}
+
+.breakpoint {
+    display: none;
+}
+
+@media (max-width: 600px) {
+    .breakpoint {
+        display: inline;
+    }
 }

@@ -79,7 +79,7 @@ def get_user_datetime(as_eastern_tz=False):
     return utc_now.astimezone(user_timezone)
 
 
-def process_games_data(games_info, predictions_list):
+def process_games_data(games, predictions):
     """
     Process game data for display.
 
@@ -89,77 +89,124 @@ def process_games_data(games_info, predictions_list):
     players and predictions if available.
 
     Args:
-        games_info (list of dict): List of dictionaries with game information.
-        predictions_list (list of dict): List of dictionaries with game predictions.
+        games (list of dict): List of dictionaries with game information.
+        predictions (list of dict): List of dictionaries with game predictions.
 
     Returns:
         list of dict: List of dictionaries with the processed game data.
-    """
-    games_data = []
-    predictions_dict = {pred["game_id"]: pred for pred in predictions_list}
 
-    for game_info in games_info:
+    Output Game Dictionary Structure:
+    {
+        "game_id": "game_id",
+        "game_date": "YYYY-MM-DD",
+        "game_time_est": "HH:MM:SS",
+        "home": "Home Team Abbreviation",
+        "away": "Away Team Abbreviation",
+        "game_status": "In Progress" or "Not Started" or "Completed",
+        "home_full_name": "Home Team Name",
+        "away_full_name": "Away Team Name",
+        "home_team_display": "Home Team Name",
+        "away_team_display": "Away Team Name",
+        "home_logo_url": "URL",
+        "away_logo_url": "URL",
+        "home_score": "Home Team Score",
+        "away_score": "Away Team Score",
+        "datetime_display": "Date - Time" or "Date - Final" or "Time - Period",
+        "condensed_pbp": [{time_info, home_score, away_score, description}, ...],
+        "pred_home_score": "Predicted Home Score",
+        "pred_away_score": "Predicted Away Score",
+        "pred_winner": "Predicted Winning Team",
+        "pred_win_pct": "Predicted Win Probability",
+        "home_players": [{player_id, player_name, player_headshot_url, points, pred_points}, ...],
+        "away_players": [{player_id, player_name, player_headshot_url, points, pred_points}, ...],
+    }
+    """
+    # Initialize an empty list to store the processed game data to be returned
+    outbound_games = []
+    # Reorganize the inbound prediction data into a dictionary for easier access
+    predictions_dict = {pred["game_id"]: pred for pred in predictions}
+
+    for game in games:
+        # Get the predictions for the current game
+        game_predictions = predictions_dict.get(game["game_id"])
         # Initialize game_data with basic game information
-        game_data = {
-            "game_id": game_info["game_id"],
-            "game_date": game_info["game_date"],
-            "game_time_est": game_info["game_time_est"],
-            "home": game_info["home"],
-            "away": game_info["away"],
-            "game_status": game_info["game_status"],
+        outbound_game_data = {
+            "game_id": game["game_id"],
+            "game_date": game["game_date"],
+            "game_time_est": game["game_time_est"],
+            "home": game["home"],
+            "away": game["away"],
+            "game_status": game["game_status"],
         }
 
-        # Process team names, add team logo URLs, and format date and time for display
-        game_data.update(_process_team_names(game_data))
-        game_data.update(_add_team_logo_urls(game_data))
-        game_data.update(_format_date_time_display(game_data, game_info))
-
         # Add current score data if available, otherwise set the scores to empty strings
-        if game_info["game_states"]:
-            game_data["home_score"] = game_info["game_states"][-1]["home_score"]
-            game_data["away_score"] = game_info["game_states"][-1]["away_score"]
+        if game["game_states"]:
+            outbound_game_data["home_score"] = game["game_states"][-1]["home_score"]
+            outbound_game_data["away_score"] = game["game_states"][-1]["away_score"]
         else:
-            game_data["home_score"] = ""
-            game_data["away_score"] = ""
+            outbound_game_data["home_score"] = ""
+            outbound_game_data["away_score"] = ""
+
+        # Process team names
+        outbound_game_data.update(_process_team_names(game))
+
+        # Generate logo URLs for the home and away teams
+        outbound_game_data["home_logo_url"] = generate_logo_url(
+            outbound_game_data["home_full_name"]
+        )
+        outbound_game_data["away_logo_url"] = generate_logo_url(
+            outbound_game_data["away_full_name"]
+        )
+
+        # Format the date and time display
+        outbound_game_data.update(_format_date_time_display(game))
 
         # Add condensed play-by-play logs if available
-        if game_info["pbp_logs"]:
-            game_data.update(_get_condensed_pbp(game_info))
+        if game["pbp_logs"]:
+            outbound_game_data.update(_get_condensed_pbp(game))
         else:
-            game_data["condensed_pbp"] = []
+            outbound_game_data["condensed_pbp"] = []
+
+        # Add predicted score and winner if available, otherwise set the values to empty strings
+        outbound_game_data["pred_home_score"] = game_predictions.get(
+            "pred_home_score", ""
+        )
+        outbound_game_data["pred_away_score"] = game_predictions.get(
+            "pred_away_score", ""
+        )
+        outbound_game_data["pred_winner"] = game_predictions.get("pred_winner", "")
+        outbound_game_data["pred_win_pct"] = game_predictions.get("pred_win_pct", "")
 
         # Add sorted players and predictions if available
-        predictions = predictions_dict.get(game_info["game_id"])
-        if predictions:
-            game_data.update(_get_sorted_players(predictions))
-            game_data["predictions"] = predictions
+        outbound_game_data.update(_get_sorted_players(game, game_predictions))
 
-        games_data.append(game_data)
+        # Append the processed game data to the list
+        outbound_games.append(outbound_game_data)
 
-    return games_data
+    return outbound_games
 
 
-def _process_team_names(game_data):
+def _process_team_names(game_info):
     """
     Format team data for display.
 
-    This function takes a dictionary of game data, retrieves the full team names using the NBATeamConverter,
+    This function takes a dictionary of game info, retrieves the full team names using the NBATeamConverter,
     and formats the team names for display.
 
     Args:
-        game_data (dict): A dictionary containing game data. It should have a structure like:
+        game_info (dict): A dictionary containing game data. It should have a structure including the home and away team abbreviations like:
             {
                 "home": "Home Team Abbreviation",
                 "away": "Away Team Abbreviation",
             }
 
     Returns:
-        dict: The updated game data dictionary with added keys for full team names and formatted team names.
+        dict: A dictionary containing the full and formatted team names.
     """
 
     # Retrieve the full team names using the NBATeamConverter
-    home_full_name = NBATeamConverter.get_full_name(game_data["home"])
-    away_full_name = NBATeamConverter.get_full_name(game_data["away"])
+    home_full_name = NBATeamConverter.get_full_name(game_info["home"])
+    away_full_name = NBATeamConverter.get_full_name(game_info["away"])
 
     def format_team_name(full_name):
         """
@@ -197,93 +244,58 @@ def _process_team_names(game_data):
     }
 
 
-def _add_team_logo_urls(game_data):
+def generate_logo_url(team_name):
     """
-    Add team logo URLs to game data.
+    Generate a logo URL for a team.
 
-    This function takes a dictionary of game data, generates the logo URLs for the home and away teams,
-    and adds them to the game data dictionary.
+    This function takes a team name, formats it to match the naming convention of the logo files,
+    and generates a URL for the logo.
 
     Args:
-        game_data (dict): A dictionary containing game data. It should have a structure like:
-            {
-                "home_full_name": "Home Team Name",
-                "away_full_name": "Away Team Name",
-            }
+        team_name (str): The name of the team.
 
     Returns:
-        dict: The updated game data dictionary with added keys for home and away team logo URLs.
+        str: The URL for the team's logo.
     """
+    # Format the team name to match the naming convention of the logo files
+    # Example inbound team_name: "Phoenix Suns"
+    # Example formatted_team_name: "phoenix-suns"
+    formatted_team_name = team_name.lower().replace(" ", "-")
 
-    def generate_logo_url(team_name):
-        """
-        Generate a logo URL for a team.
+    # Generate the URL for the logo
+    # Example url: "static/img/team_logos/nba-phoenix-suns-logo.png"
 
-        This function takes a team name, formats it to match the naming convention of the logo files,
-        and generates a URL for the logo.
+    logo_url = f"static/img/team_logos/nba-{formatted_team_name}-logo.png"
 
-        Args:
-            team_name (str): The name of the team.
-
-        Returns:
-            str: The URL for the team's logo.
-        """
-        # Format the team name to match the naming convention of the logo files
-        # Example inbound team_name: "Phoenix Suns"
-        # Example formatted_team_name: "phoenix-suns"
-        formatted_team_name = team_name.lower().replace(" ", "-")
-
-        # Generate the URL for the logo
-        # Example url: "static/img/team_logos/nba-phoenix-suns-logo.png"
-
-        logo_url = f"static/img/team_logos/nba-{formatted_team_name}-logo.png"
-
-        return logo_url
-
-    # Generate the logo URLs for the home and away teams
-    home_logo_url = generate_logo_url(game_data["home_full_name"])
-    away_logo_url = generate_logo_url(game_data["away_full_name"])
-
-    # Return the updated game data with the logo URLs
-    return {"home_logo_url": home_logo_url, "away_logo_url": away_logo_url}
+    return logo_url
 
 
-def _format_date_time_display(game_data, game_info_api):
+def _format_date_time_display(game_info):
     """
     This function formats the date and time display for a game.
     It shows the time and period/quarter/overtime if the game is in progress,
     or the date and start time if the game is not in progress.
 
     Args:
-        game_data (dict): A dictionary containing game data. It should have a structure like:
+        game_info (dict): A dictionary containing game data. It should have a structure including the game date and time like:
             {
-                "game_status": "In Progress" or "Not Started" or "Completed",
                 "game_date": "YYYY-MM-DD",
-                "game_time_est": "HH:MM",
-            }
-        game_info_api (dict): A dictionary containing game info data. It should have a structure like:
-            {
-                "game_states": [
-                    {
-                        "period": period,
-                        "remaining_time": "PTMMSS.SS",
-                    },
-                    ...
-                ]
+                "game_time_est": "HH:MM:SS",
+                "game_status": "In Progress" or "Not Started" or "Completed",
+                "game_states": [{"period": period, "remaining_time": "PTMMSS.SS", ...}, ...]
             }
 
     Returns:
         dict: A dictionary containing the formatted date and time display.
     """
     # If the game is in progress and game_states is available
-    if (
-        game_info_api
-        and game_info_api["game_states"]
-        and game_data["game_status"] == "In Progress"
+    if game_info["game_status"] == "In Progress" or (
+        game_info["game_states"]
+        and not game_info["game_states"][-1].get("is_final_state", False)
     ):
         # Get the current period and remaining time
-        period = game_info_api["game_states"][-1]["period"]
-        time_remaining = game_info_api["game_states"][-1]["remaining_time"]
+        period = game_info["game_states"][-1]["period"]
+        time_remaining = game_info["game_states"][-1]["remaining_time"]
 
         # Parse the remaining time into minutes and seconds
         minutes, seconds = time_remaining.lstrip("PT").rstrip("S").split("M")
@@ -313,9 +325,12 @@ def _format_date_time_display(game_data, game_info_api):
         return {"datetime_display": datetime_display}
 
     # If the game is not in progress, format the game date and time
-    game_date_est = datetime.strptime(game_data["game_date"], "%Y-%m-%d")
-    game_time_est = datetime.strptime(game_data["game_time_est"], "%H:%M:%S")
-    game_date_time_est = datetime.combine(game_date_est, game_time_est.time())
+    # ISSUE: Unsure of database game timezone. Seems to be EDT.
+    game_date_est = datetime.strptime(game_info["game_date"], "%Y-%m-%d")
+    game_time_est = datetime.strptime(game_info["game_time_est"], "%H:%M:%S")
+    game_date_time_est = datetime.combine(
+        game_date_est, game_time_est.time(), tzinfo=pytz.timezone("Etc/GMT+4")
+    )
     user_timezone = get_localzone()
     game_date_time_local = game_date_time_est.astimezone(user_timezone)
 
@@ -338,24 +353,22 @@ def _format_date_time_display(game_data, game_info_api):
     time_display = game_date_time_local.strftime("%I:%M %p").lstrip("0")
 
     # Combine the date and time into a single display string
-    if game_data["game_status"] == "Not Started" or (
-        game_data["game_status"] == "In Progress"
-        and (not game_info_api or not game_info_api.get("game_states"))
-    ):
-        datetime_display = f"{date_display} - {time_display}"
-    elif game_data["game_status"] == "Completed":
+    if game_info["game_status"] == "Completed":
         datetime_display = f"{date_display} - Final"
+    else:
+        # Typically, this will be game status: "Not Started"
+        datetime_display = f"{date_display} - {time_display}"
 
     return {"datetime_display": datetime_display}
 
 
-def _get_condensed_pbp(game_info_api):
+def _get_condensed_pbp(game_info):
     """
     This function condenses the play-by-play logs from a game info API response.
     It sorts the logs in reverse order, parses the clock values, and combines the clock and period into a single item.
 
     Args:
-        game_info_api (dict): A dictionary containing game info data. It should have a structure like:
+        game_info (dict): A dictionary containing game info data. It should have a structure like:
             {
                 "pbp_logs": [
                     {
@@ -374,9 +387,7 @@ def _get_condensed_pbp(game_info_api):
         dict: A dictionary containing the condensed play-by-play logs.
     """
     # Sort the play-by-play logs in reverse order
-    pbp = sorted(
-        game_info_api["pbp_logs"], key=lambda x: x["orderNumber"], reverse=True
-    )
+    pbp = sorted(game_info["pbp_logs"], key=lambda x: x["orderNumber"], reverse=True)
 
     # Initialize the list to store the condensed logs
     condensed_pbp = []
@@ -390,7 +401,10 @@ def _get_condensed_pbp(game_info_api):
         seconds = int(seconds.split(".")[0])  # Only take the whole seconds
 
         # Combine the clock and period into a single item
-        time_info = f"{minutes}:{seconds:02} Q{play['period']}"
+        if play["period"] > 4:
+            time_info = f"{minutes}:{seconds:02} OT{play['period'] - 4}"
+        else:
+            time_info = f"{minutes}:{seconds:02} Q{play['period']}"
 
         # Add the play to condensed_pbp with the new time_info key
         condensed_pbp.append(
@@ -406,74 +420,112 @@ def _get_condensed_pbp(game_info_api):
     return {"condensed_pbp": condensed_pbp}
 
 
-def _get_sorted_players(predictions):
+def _get_sorted_players(game_info, predictions):
     """
-    This function sorts players based on their predicted points in descending order.
-    It also assigns a headshot image to each player.
+    This function combines player data from the current game state and predictions, assigns a headshot image to each player,
+    sorts the players based on their predicted points in descending order, and returns a dictionary with the sorted lists of players
+    for both the home and away teams.
 
     Args:
+        game_info (dict): A dictionary containing the current game state. It should have a structure like:
+            {
+                "game_states": [
+                    {
+                        "players_data": {
+                            "home": {
+                                "player_id1": {"player_name": "name1", "points": points1},
+                                "player_id2": {"player_name": "name2", "points": points2},
+                                ...
+                            },
+                            "away": {
+                                "player_id3": {"player_name": "name3", "points": points3},
+                                "player_id4": {"player_name": "name4", "points": points4},
+                                ...
+                            }
+                        }
+                    },
+                    ...
+                ]
+            }
+
         predictions (dict): A dictionary containing player data. It should have a structure like:
             {
                 "players": {
                     "home": {
-                        "player_id1": {"name": "name1", "points": points1},
-                        "player_id2": {"name": "name2", "points": points2},
+                        "player_id1": {"pred_points": pred_points1},
+                        "player_id2": {"pred_points": pred_points2},
                         ...
                     },
                     "away": {
-                        "player_id3": {"name": "name3", "points": points3},
-                        "player_id4": {"name": "name4", "points": points4},
+                        "player_id3": {"pred_points": pred_points3},
+                        "player_id4": {"pred_points": pred_points4},
                         ...
                     }
                 }
             }
 
     Returns:
-        dict: A dictionary containing sorted home and away players.
+        dict: A dictionary containing sorted home and away players. Each player is represented as a dictionary with the following keys:
+            - player_id: The player's ID.
+            - player_name: The player's name.
+            - player_headshot_url: The URL of the player's headshot image.
+            - points: The player's points from the current game state.
+            - pred_points: The player's predicted points.
     """
-    # Initialize lists to store player data
-    home_players = []
-    away_players = []
 
-    # If predictions is None or doesn't contain player data, return empty lists
-    if predictions is None or not predictions.get("players"):
-        return {"home_players": home_players, "away_players": away_players}
+    def get_player_image(player_id, files):
+        player_image_file = next(
+            (f for f in files if f.endswith(f"_{player_id}.png")), None
+        )
+        if player_image_file:
+            return f"static/img/player_images/{player_image_file}"
+        else:
+            return "static/img/basketball-player.png"
+
+    # Initialize dictionaries to store player data
+    players = {"home_players": [], "away_players": []}
 
     # Get a list of all image files in the directory
     files = os.listdir("web_app/static/img/player_images")
 
     # Iterate over home and away teams
     for team in ["home", "away"]:
-        # Iterate over each player in the team
-        for player_id, player_data in predictions["players"][team].items():
-            # Find the image file that corresponds to the player
-            player_image_file = next(
-                (f for f in files if f.endswith(f"_{player_id}.png")), None
-            )
+        # Get current game's team player data
+        team_players = (
+            game_info["game_states"][-1]["players_data"][team]
+            if game_info["game_states"]
+            else {}
+        )
+        # Get predicted team player data
+        team_predictions = predictions["pred_players"][team]
 
-            # If an image file was found, use it. Otherwise, use a default image
-            if player_image_file:
-                player_headshot_url = f"static/img/player_images/{player_image_file}"
-            else:
-                player_headshot_url = "static/img/basketball-player.png"
+        # Combine all player ids from both sources
+        all_player_ids = set(list(team_players.keys()) + list(team_predictions.keys()))
+
+        # Iterate over each player in the team
+        for player_id in all_player_ids:
+            player_data = team_players.get(player_id, {})
+            player_prediction = team_predictions.get(player_id, {})
+
+            # Get player image
+            player_headshot_url = get_player_image(player_id, files)
 
             # Create a dictionary with the player's data
             player = {
                 "player_id": player_id,
-                "name": player_data["name"],
+                "player_name": player_data.get("name", ""),
                 "player_headshot_url": player_headshot_url,
-                "pred_points": player_data["points"],
+                "points": player_data.get("points", 0),
+                "pred_points": player_prediction.get("pred_points", 0),
             }
 
             # Add the player to the appropriate list
-            if team == "home":
-                home_players.append(player)
-            else:
-                away_players.append(player)
+            players[f"{team}_players"].append(player)
 
-    # Sort the players by predicted points in descending order
-    home_players = sorted(home_players, key=lambda x: x["pred_points"], reverse=True)
-    away_players = sorted(away_players, key=lambda x: x["pred_points"], reverse=True)
+        # Sort the players by predicted points in descending order
+        players[f"{team}_players"] = sorted(
+            players[f"{team}_players"], key=lambda x: x["pred_points"], reverse=True
+        )
 
     # Return the sorted lists of players
-    return {"home_players": home_players, "away_players": away_players}
+    return players

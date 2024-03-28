@@ -72,11 +72,11 @@ def random_predictions(games, model=None):
         # Initialize the predictions dictionary
         predictions = {
             "game_id": game["game_id"],
-            "home_score": home_score,
-            "away_score": away_score,
-            "winning_team": winning_team,
-            "winning_team_pct": winning_team_pct,
-            "players": {"home": {}, "away": {}},
+            "pred_home_score": home_score,
+            "pred_away_score": away_score,
+            "pred_winner": winning_team,
+            "pred_win_pct": winning_team_pct,
+            "pred_players": {"home": {}, "away": {}},
         }
 
         # Generate random player predictions if game["game_states"] is not empty
@@ -87,17 +87,17 @@ def random_predictions(games, model=None):
             # Generate random points for each home player
             # The points are constrained to be between 0 and 40
             for player in current_players["home"]:
-                predictions["players"]["home"][player] = {
+                predictions["pred_players"]["home"][player] = {
                     "name": current_players["home"][player]["name"],
-                    "points": int(max(0, min(40, abs(np.random.normal(20, 5))))),
+                    "pred_points": int(max(0, min(40, abs(np.random.normal(20, 5))))),
                 }
 
             # Generate random points for each away player
             # The points are constrained to be between 0 and 40
             for player in current_players["away"]:
-                predictions["players"]["away"][player] = {
+                predictions["pred_players"]["away"][player] = {
                     "name": current_players["away"][player]["name"],
-                    "points": int(max(0, min(40, abs(np.random.normal(20, 5))))),
+                    "pred_points": int(max(0, min(40, abs(np.random.normal(20, 5))))),
                 }
 
         predictions_list.append(predictions)

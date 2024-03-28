@@ -34,10 +34,10 @@ def create_app(prediction_engine="Random"):
         and defaults to the current date. It also calculates the previous and next dates for navigation links.
         """
 
-        # Get the current date in Eastern Time Zone
-        current_date_et = get_user_datetime(as_eastern_tz=True)
+        # Get the current date in user's local time zone
+        current_date_local = get_user_datetime(as_eastern_tz=False)
         # Format the current date as a string
-        current_date_str = current_date_et.strftime("%Y-%m-%d")
+        current_date_str = current_date_local.strftime("%Y-%m-%d")
         # Get the date from the query parameters, default to the current date if not provided
         query_date_str = request.args.get("date", current_date_str)
 
@@ -55,7 +55,7 @@ def create_app(prediction_engine="Random"):
             flash("Invalid date format. Showing games for today.", "error")
             # Default to the current date
             query_date_str = current_date_str
-            query_date = current_date_et
+            query_date = current_date_local
 
         # Format the query date as a string for display
         query_date_display_str = query_date.strftime("%b %d")
@@ -91,13 +91,13 @@ def create_app(prediction_engine="Random"):
         Returns:
             A JSON response containing the processed game data for each game.
         """
-        # Get the current date in Eastern Time Zone
-        current_date_est = get_user_datetime(as_eastern_tz=True)
+        # Get the current date in the user's local time zone
+        current_date_local = get_user_datetime(as_eastern_tz=False)
 
         # Fetch the date parameter from the request, default to current date if not provided
         inbound_query_date_str = request.args.get("date")
         if inbound_query_date_str is None or inbound_query_date_str == "":
-            query_date_str = current_date_est.strftime("%Y-%m-%d")
+            query_date_str = current_date_local.strftime("%Y-%m-%d")
         else:
             query_date_str = inbound_query_date_str
 
