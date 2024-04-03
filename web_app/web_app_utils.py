@@ -282,7 +282,7 @@ def _format_date_time_display(game_info):
                 "game_date": "YYYY-MM-DD",
                 "game_time_est": "HH:MM:SS",
                 "game_status": "In Progress" or "Not Started" or "Completed",
-                "game_states": [{"period": period, "remaining_time": "PTMMSS.SS", ...}, ...]
+                "game_states": [{"period": period, "clock": "PTMMSS.SS", ...}, ...]
             }
 
     Returns:
@@ -295,7 +295,7 @@ def _format_date_time_display(game_info):
     ):
         # Get the current period and remaining time
         period = game_info["game_states"][-1]["period"]
-        time_remaining = game_info["game_states"][-1]["remaining_time"]
+        time_remaining = game_info["game_states"][-1]["clock"]
 
         # Parse the remaining time into minutes and seconds
         minutes, seconds = time_remaining.lstrip("PT").rstrip("S").split("M")

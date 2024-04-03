@@ -34,8 +34,21 @@ def create_game_states(pbp_logs, home, away, game_id, game_date):
         if not pbp_logs:
             return []
 
-        # Sort the play-by-play logs by order number
-        pbp_logs = sorted(pbp_logs, key=lambda x: x["orderNumber"])
+        # Sort the play-by-play logs by period, remaining time (clock), and play ID
+
+        def duration_to_seconds(duration_str):
+            minutes = int(duration_str.split("M")[0][2:])
+            seconds = float(duration_str.split("M")[1][:-1])
+            return minutes * 60 + seconds
+
+        pbp_logs = sorted(
+            pbp_logs,
+            key=lambda x: (
+                x["period"],
+                -duration_to_seconds(x["clock"]),
+                x["orderNumber"],
+            ),
+        )
 
         # Filter out logs where 'description' is not a key
         pbp_logs = [log for log in pbp_logs if "description" in log]
@@ -71,7 +84,7 @@ def create_game_states(pbp_logs, home, away, game_id, game_date):
                 "game_date": game_date,
                 "home": home,
                 "away": away,
-                "remaining_time": row["clock"],
+                "clock": row["clock"],
                 "period": int(row["period"]),
                 "home_score": int(row["scoreHome"]),
                 "away_score": int(row["scoreAway"]),
@@ -125,7 +138,7 @@ def save_game_states(game_states, db_path):
                             state["game_date"],
                             state["home"],
                             state["away"],
-                            state["remaining_time"],
+                            state["clock"],
                             state["period"],
                             state["home_score"],
                             state["away_score"],
@@ -140,7 +153,7 @@ def save_game_states(game_states, db_path):
                     # Use executemany to insert or replace data in a single operation
                     conn.executemany(
                         """
-                        INSERT OR REPLACE INTO GameStates (game_id, play_id, game_date, home, away, remaining_time, period, home_score, away_score, total, home_margin, is_final_state, players_data)
+                        INSERT OR REPLACE INTO GameStates (game_id, play_id, game_date, home, away, clock, period, home_score, away_score, total, home_margin, is_final_state, players_data)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         data_to_insert,
@@ -237,7 +250,7 @@ def print_current_game_info(game_info):
     if game_info["game_status"] != "Not Started":
         most_recent_state = game_info["game_states"][-1]
         print("Most Recent State:")
-        print("  Remaining Time:", most_recent_state["remaining_time"])
+        print("  Remaining Time:", most_recent_state["clock"])
         print("  Period:", most_recent_state["period"])
         print("  Home Score:", most_recent_state["home_score"])
         print("  Away Score:", most_recent_state["away_score"])

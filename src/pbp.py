@@ -37,7 +37,20 @@ def fetch_game_data(session, base_url, headers, game_id):
 
         # Extract the actions and sort them by action number
         actions = data.get("game", {}).get("actions", [])
-        actions_sorted = sorted(actions, key=lambda x: x["actionNumber"])
+
+        def duration_to_seconds(duration_str):
+            minutes = int(duration_str.split("M")[0][2:])
+            seconds = float(duration_str.split("M")[1][:-1])
+            return minutes * 60 + seconds
+
+        actions_sorted = sorted(
+            actions,
+            key=lambda x: (
+                x["period"],
+                -duration_to_seconds(x["clock"]),
+                x["orderNumber"],
+            ),
+        )
 
         return game_id, actions_sorted
     except requests.exceptions.HTTPError as http_err:
@@ -146,7 +159,7 @@ def save_pbp(pbp_data, db_path):
                     # Use executemany to insert or replace data in a single operation
                     conn.executemany(
                         """
-                        INSERT OR REPLACE INTO PbP_Logs (game_id, orderNumber, log_data)
+                        INSERT OR REPLACE INTO PbP_Logs (game_id, play_id, log_data)
                         VALUES (?, ?, ?)
                         """,
                         data_to_insert,

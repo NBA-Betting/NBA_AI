@@ -166,7 +166,7 @@ def print_game_info(game_info):
     if game_info["game_status"] != "Not Started":
         most_recent_state = game_info["game_states"][-1]
         print("Most Recent State:")
-        print("  Remaining Time:", most_recent_state["remaining_time"])
+        print("  Remaining Time:", most_recent_state["clock"])
         print("  Period:", most_recent_state["period"])
         print("  Home Score:", most_recent_state["home_score"])
         print("  Away Score:", most_recent_state["away_score"])
