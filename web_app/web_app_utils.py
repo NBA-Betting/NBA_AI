@@ -28,7 +28,7 @@ def load_models(prediction_engine="Random"):
 
     # Map prediction engine names to model filenames
     model_filenames = {
-        "LinearModel": "Ridge Regression_2024-03-14T02:49:44.817782.joblib",
+        "LinearModel": "Ridge_Regression_2024-04-03T20:21:06.480082.joblib",
         "TreeModel": "xgboost_model.xgb",
         "MLPModel": "pytorch_model.pt",
         # Add new models here
@@ -124,11 +124,14 @@ def process_games_data(games, predictions):
     # Initialize an empty list to store the processed game data to be returned
     outbound_games = []
     # Reorganize the inbound prediction data into a dictionary for easier access
-    predictions_dict = {pred["game_id"]: pred for pred in predictions}
+    if predictions:
+        predictions_dict = {pred["game_id"]: pred for pred in predictions}
+    else:
+        predictions_dict = {}
 
     for game in games:
         # Get the predictions for the current game
-        game_predictions = predictions_dict.get(game["game_id"])
+        game_predictions = predictions_dict.get(game["game_id"], {})
         # Initialize game_data with basic game information
         outbound_game_data = {
             "game_id": game["game_id"],
@@ -497,7 +500,7 @@ def _get_sorted_players(game_info, predictions):
             else {}
         )
         # Get predicted team player data
-        team_predictions = predictions["pred_players"][team]
+        team_predictions = predictions.get("pred_players", {}).get(team, {})
 
         # Combine all player ids from both sources
         all_player_ids = set(list(team_players.keys()) + list(team_predictions.keys()))

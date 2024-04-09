@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import time
 from datetime import datetime
 
 import pytz
@@ -28,15 +29,20 @@ def get_games_info(game_ids, db_path, include_prior_states, save_to_database=Tru
     # Validate the provided game IDs
     validate_game_ids(game_ids)
 
+    start = time.time()
     # Fetch the current game information for all game IDs
     games_info = get_current_games_info(game_ids, db_path, save_to_db=save_to_database)
+    print(f"Time taken to fetch current game info: {time.time() - start:.2f} seconds")
 
+    start = time.time()
     # If requested, fetch and include prior states for each game
     if include_prior_states:
+        game_ids = [game_info["game_id"] for game_info in games_info]
+        prior_states_dict = get_prior_states(game_ids, db_path)
+
         for game_info in games_info:
-            game_id = game_info["game_id"]
-            prior_states = get_prior_states(game_id, db_path)
-            game_info["prior_states"] = prior_states
+            game_info["prior_states"] = prior_states_dict[game_info["game_id"]]
+    print(f"Time taken to fetch prior states: {time.time() - start:.2f} seconds")
 
     # Return the fetched game information
     return games_info

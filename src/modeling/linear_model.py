@@ -5,19 +5,21 @@ import numpy as np
 import pandas as pd
 import wandb
 from dotenv import load_dotenv
+from evaluation import create_evaluations
 from joblib import dump
+from modeling_utils import load_featurized_modeling_data
 from sklearn.linear_model import Ridge
 from sklearn.metrics import log_loss
 from sklearn.model_selection import RandomizedSearchCV
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-
-from src.modeling.evaluation import create_evaluations
-from utils import load_featurized_modeling_data
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 
 if __name__ == "__main__":
+    db_path = f"{PROJECT_ROOT}/data/NBA_AI.sqlite"
+
     # ------------------------
     # Section 1: Data Loading
     # ------------------------
@@ -26,12 +28,20 @@ if __name__ == "__main__":
     testing_seasons = ["2022-2023"]
 
     # Load featurized modeling data for the defined seasons
-    training_df = load_featurized_modeling_data(training_seasons)
-    testing_df = load_featurized_modeling_data(testing_seasons)
+    print("Loading featurized modeling data...")
+    print(f"Training seasons: {training_seasons}")
+    print(f"Testing seasons: {testing_seasons}")
+    training_df = load_featurized_modeling_data(training_seasons, db_path)
+    testing_df = load_featurized_modeling_data(testing_seasons, db_path)
+    print(f"Training data shape: {training_df.shape}")
+    print(f"Testing data shape: {testing_df.shape}")
 
     # Drop rows with NaN values to ensure data quality
+    print("\nDropping rows with NaN values...")
     training_df = training_df.dropna()
     testing_df = testing_df.dropna()
+    print(f"Training data shape after dropping NaNs: {training_df.shape}")
+    print(f"Testing data shape after dropping NaNs: {testing_df.shape}")
 
     # ----------------------------------------
     # Section 2: Feature and Target Selection
@@ -62,17 +72,24 @@ if __name__ == "__main__":
     # Keep a list of feature names for later use (e.g., for model interpretation)
     feature_names = X_train.columns.tolist()
 
+    print("\nX_train shape:", X_train.shape)
+    print("y_train shape:", y_train.shape, y_train.columns.tolist())
+    print("X_test shape:", X_test.shape)
+    print("y_test shape:", y_test.shape, y_test.columns.tolist())
+
     # ---------------------------
     # Section 3: Data Preprocessing
     # ---------------------------
     # Initialize and fit a scaler to standardize features
+    print("\nStandardizing features...")
     scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
 
     # -------------------------------------
     # Section 4: Hyperparameter Tuning
     # -------------------------------------
+    print("\nPerforming hyperparameter tuning...")
     # Define the hyperparameter space and setup RandomizedSearchCV
     param_distributions = {
         "alpha": np.logspace(-4, 4, 20),  # Defines a range of values for alpha
@@ -86,7 +103,7 @@ if __name__ == "__main__":
     random_search = RandomizedSearchCV(
         Ridge(), param_distributions, n_iter=10, cv=5, random_state=42
     )
-    random_search.fit(X_train, y_train)
+    random_search.fit(X_train_scaled, y_train)
     best_params = random_search.best_params_
 
     # ------------------------------------
@@ -96,15 +113,15 @@ if __name__ == "__main__":
     run = wandb.init(project="NBA AI", config=best_params)
 
     # Log configuration and model details
-    model_type = "Ridge Regression"
+    model_type = "Ridge_Regression"
     run_datetime = datetime.now().isoformat()
     wandb.config.update(
         {
             "model_type": model_type,
             "train_seasons": training_seasons,
             "test_seasons": testing_seasons,
-            "train_shape": X_train.shape,
-            "test_shape": X_test.shape,
+            "train_shape": X_train_scaled.shape,
+            "test_shape": X_test_scaled.shape,
             "targets": ["home_score", "away_score"],
             "features": feature_names,
             "run_datetime": run_datetime,
@@ -112,15 +129,17 @@ if __name__ == "__main__":
     )
 
     # Setup and fit the Ridge Regression model with the best hyperparameters
+    print("\nTraining the Ridge Regression model...")
     model = Ridge(**best_params)
-    model.fit(X_train, y_train)
+    model.fit(X_train_scaled, y_train)
 
     # -----------------------------
     # Section 6: Making Predictions
     # -----------------------------
     # Predict on training and testing data
-    y_pred = model.predict(X_test)
-    y_pred_train = model.predict(X_train)
+    print("\nMaking predictions...")
+    y_pred = model.predict(X_test_scaled)
+    y_pred_train = model.predict(X_train_scaled)
 
     # Extract specific prediction components for analysis
     y_pred_home_score = y_pred[:, 0]
@@ -239,18 +258,38 @@ if __name__ == "__main__":
     # Log the table to wandb
     wandb.log({"Model Details": model_details_table})
 
-    # -----------------------------
-    # Section 8: Model Finalization
-    # -----------------------------
-    # Refit the model on the full dataset
-    X_full = np.concatenate((X_train, X_test))
-    y_full = np.concatenate((y_train, y_test))
-    model.fit(X_full, y_full)
+    # ------------------------------------------
+    # Section 8: Recreating Model on Full Data
+    # ------------------------------------------
 
-    # Construct filename and save the model
+    print("\nRecreating the model on full data...")
+    X_all = np.concatenate((X_train, X_test))
+    y_all = np.concatenate((y_train, y_test))
+
+    final_scaler = StandardScaler()
+    X_all_scaled = final_scaler.fit_transform(X_all)
+
+    final_random_search = RandomizedSearchCV(
+        Ridge(), param_distributions, n_iter=10, cv=5, random_state=42
+    )
+    final_random_search.fit(X_all_scaled, y_all)
+    final_params = final_random_search.best_params_
+
+    final_model = Ridge(**final_params)
+    final_model.fit(X_all_scaled, y_all)
+
+    pipeline = Pipeline([("scaler", final_scaler), ("model", final_model)])
+
+    # ----------------------------------
+    # Section 9: Saving the Model
+    # ----------------------------------
+
+    # Construct filename and save the pipeline
+    print("\nSaving the model...")
     model_filename = f"{PROJECT_ROOT}/models/{model_type}_{run_datetime}.joblib"
-    dump(model, model_filename)
+    dump(pipeline, model_filename)
     wandb.save(model_filename, base_path=PROJECT_ROOT)
+    print(f"Model saved to {model_filename}")
 
     # End the wandb run
     run.finish()

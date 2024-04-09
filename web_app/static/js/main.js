@@ -13,7 +13,9 @@ function fetchAndUpdateGames() {
         .then(response => {
             // If the response is not ok, throw an error
             if (!response.ok) {
-                throw new Error('Error fetching games for date: ' + queryDate);
+                return response.json().then(error => {
+                    throw new Error(error.error);
+                });
             }
             // Otherwise, parse the response as JSON
             return response.json();
@@ -66,6 +68,15 @@ function fetchAndUpdateGames() {
         .catch(error => {
             // Log any errors
             console.error('Error fetching games:', error);
+
+            // Get the table body element
+            const tableBody = document.querySelector('#gamesTableBody');
+
+            // Clear the table body
+            tableBody.innerHTML = '';
+
+            // Display the error message
+            tableBody.innerHTML = `<tr><td colspan="8" class="text-center">${error.message}</td></tr>`;
         });
 }
 
@@ -162,7 +173,9 @@ function showGameDetails(gameId) {
         .then(response => {
             // If the response was not OK, throw an error
             if (!response.ok) {
-                throw new Error('Network response was not ok');
+                return response.json().then(error => {
+                    throw new Error(error.error);
+                });
             }
             // Otherwise, parse the response as JSON
             return response.json();

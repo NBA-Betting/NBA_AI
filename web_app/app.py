@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ WEB_APP_SECRET_KEY = os.getenv("WEB_APP_SECRET_KEY")
 CURRENT_SEASON = os.getenv("CURRENT_SEASON")
 
 
-def create_app(prediction_engine="Random"):
+def create_app(prediction_engine="LinearModel"):
     db_path = os.path.join(PROJECT_ROOT, "data", "NBA_AI.sqlite")
     update_scheduled_games(CURRENT_SEASON, db_path)
 
@@ -88,8 +89,11 @@ def create_app(prediction_engine="Random"):
         The date is provided as a 'date' parameter in the request. If no date is provided, it defaults
         to the current date.
 
+        If the date format is invalid, it returns a JSON response with an error message and a status code of 400.
+        If an error occurs while loading games or processing game data, it returns a JSON response with an error message and a status code of 500.
+
         Returns:
-            A JSON response containing the processed game data for each game.
+            A JSON response containing the processed game data for each game, or an error message and a status code if an error occurs.
         """
         # Get the current date in the user's local time zone
         current_date_local = get_user_datetime(as_eastern_tz=False)
@@ -111,7 +115,11 @@ def create_app(prediction_engine="Random"):
 
         # Load Games
         try:
+            start = time.time()
             scheduled_games = get_games_for_date(query_date_str, db_path)
+            print(
+                f"Time taken to fetch scheduled games: {time.time() - start:.2f} seconds"
+            )
         except Exception as e:
             # Log an error if loading games fails
             logging.error(f"Error loading games for date {query_date_str}: {e}")
@@ -120,24 +128,41 @@ def create_app(prediction_engine="Random"):
                 500,
             )
 
-        scheduled_game_ids = [game["game_id"] for game in scheduled_games]
+        try:
+            scheduled_game_ids = [game["game_id"] for game in scheduled_games]
 
-        # Get the game info for all games
-        games = get_games_info(
-            scheduled_game_ids,
-            db_path=db_path,
-            include_prior_states=False,
-            save_to_database=False,
-        )
+            start = time.time()
+            # Get the game info for all games
+            games = get_games_info(
+                scheduled_game_ids,
+                db_path=db_path,
+                include_prior_states=True,
+                save_to_database=True,
+            )
+            print(f"Time taken to fetch game info: {time.time() - start:.2f} seconds")
 
-        # Get predictions for all games
-        predictions = get_predictions(games, prediction_engine)
+            start = time.time()
+            # Get predictions for all games
+            predictions = get_predictions(games, prediction_engine, app.config["MODEL"])
+            print(f"Time taken to get predictions: {time.time() - start:.2f} seconds")
 
-        # Process the game data for all games
-        outbound_game_data = process_games_data(games, predictions)
+            start = time.time()
+            # Process the game data for all games
+            outbound_game_data = process_games_data(games, predictions)
+            print(f"Time taken to process game data: {time.time() - start:.2f} seconds")
 
-        # Return the outbound game data as a JSON response
-        return jsonify(outbound_game_data)
+            # Return the outbound game data as a JSON response
+            return jsonify(outbound_game_data)
+
+        except Exception as e:
+            return (
+                jsonify(
+                    {
+                        "error": f"Error occured while processing games data for {query_date_str}. Check terminal for more details."
+                    }
+                ),
+                500,
+            )
 
     @app.route("/game-details/<game_id>")
     def game_details(game_id):
@@ -145,32 +170,46 @@ def create_app(prediction_engine="Random"):
         Endpoint to get game details.
 
         This function is mapped to the "/game-details/<game_id>" route. It loads game data, creates predictions,
-        processes the game data, and returns it as a JSON response.
+        processes the game data, and returns it as a JSON response. If an error occurs during this process,
+        it returns a JSON response with an error message and a status code of 500.
 
         Args:
             game_id (str): The ID of the game.
 
         Returns:
-            Response: A response object containing the game data in JSON format.
+            Response: A response object containing the game data in JSON format, or an error message and a status code of 500 if an error occurs.
         """
-        # Load game data using the get_game_info function
-        # The game data is not saved to the database and prior states are not included or updated
-        game_info = get_games_info(
-            game_id,
-            db_path=db_path,
-            include_prior_states=False,
-            save_to_database=False,
-        )
+        try:
+            # Load game data using the get_game_info function
+            # The game data is not saved to the database and prior states are not included or updated
+            game_info = get_games_info(
+                game_id,
+                db_path=db_path,
+                include_prior_states=True,
+                save_to_database=True,
+            )
 
-        # Create predictions for the game using the get_predictions function
-        predictions = get_predictions(game_info, prediction_engine)
+            # Create predictions for the game using the get_predictions function
+            predictions = get_predictions(
+                game_info, prediction_engine, app.config["MODEL"]
+            )
 
-        # Process the game data using the process_game_data function
-        # The processed game data includes the game info and predictions
-        outbound_game_data = process_games_data(game_info, predictions)[0]
+            # Process the game data using the process_game_data function
+            # The processed game data includes the game info and predictions
+            outbound_game_data = process_games_data(game_info, predictions)[0]
 
-        # Return the processed game data as a JSON response
-        return jsonify(outbound_game_data)
+            # Return the processed game data as a JSON response
+            return jsonify(outbound_game_data)
+
+        except Exception as e:
+            return (
+                jsonify(
+                    {
+                        "error": f"Error occured while processing data for game id {game_id}. Check terminal for more details."
+                    }
+                ),
+                500,
+            )
 
     @app.after_request
     def add_header(response):
