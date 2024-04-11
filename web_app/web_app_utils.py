@@ -28,8 +28,8 @@ def load_models(prediction_engine="Random"):
 
     # Map prediction engine names to model filenames
     model_filenames = {
-        "LinearModel": "Ridge_Regression_2024-04-03T20:21:06.480082.joblib",
-        "TreeModel": "xgboost_model.xgb",
+        "LinearModel": "Ridge_Regression_2024-04-10T17:36:29.273358.joblib",
+        "TreeModel": "XGBoost_Regression_2024-04-10T17:36:58.323427.joblib",
         "MLPModel": "pytorch_model.pt",
         # Add new models here
     }
@@ -43,8 +43,7 @@ def load_models(prediction_engine="Random"):
             if prediction_engine == "LinearModel":
                 model = joblib.load(model_path)
             elif prediction_engine == "TreeModel":
-                model = xgboost.Booster()
-                model.load_model(model_path)
+                model = joblib.load(model_path)
             elif prediction_engine == "MLPModel":
                 model = torch.load(model_path)
             return model

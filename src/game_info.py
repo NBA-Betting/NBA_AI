@@ -185,7 +185,7 @@ def print_game_info(game_info):
 if __name__ == "__main__":
     db_path = os.path.join(PROJECT_ROOT, "data", "NBA_AI.sqlite")
 
-    # update_full_season("2023-2024", db_path, force=False)
+    update_full_season("2023-2024", db_path, force=False)
 
     # games_info = get_games_info(
     #     ["0022200001", "0022200919", "0022301170"], db_path, include_prior_states=True

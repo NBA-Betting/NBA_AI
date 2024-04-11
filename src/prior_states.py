@@ -32,21 +32,13 @@ def get_prior_states(game_ids, db_path):
         validate_game_ids(game_ids)
 
         # Determine necessary prior states for home and away teams for completed games
-        start = time.time()
         completed_prior_states = _determine_prior_states_needed(
             game_ids, db_path, completed_only=True
         )
-        print(
-            f"Time taken to determine completed prior states: {time.time() - start:.2f} seconds"
-        )
 
         # Find missing prior states for completed games
-        start = time.time()
         missing_completed_prior_states = _find_missing_prior_states(
             completed_prior_states, db_path
-        )
-        print(
-            f"Time taken to find missing completed prior states: {time.time() - start:.2f} seconds"
         )
 
         # Identify games that need to be updated
@@ -60,28 +52,16 @@ def get_prior_states(game_ids, db_path):
         )
 
         # Attempt to create missing prior states
-        start = time.time()
         get_current_games_info(games_to_attempt_update, db_path, save_to_db=True)
-        print(
-            f"Time taken to attempt update of missing prior states: {time.time() - start:.2f} seconds"
-        )
 
         # Determine all required prior states for home and away teams
-        start = time.time()
         all_required_prior_states = _determine_prior_states_needed(
             game_ids, db_path, completed_only=False
         )
-        print(
-            f"Time taken to determine all required prior states: {time.time() - start:.2f} seconds"
-        )
 
         # Load the prior states from the database
-        start = time.time()
         prior_states_from_database = _load_prior_states(
             all_required_prior_states, db_path
-        )
-        print(
-            f"Time taken to load prior states from database: {time.time() - start:.2f} seconds"
         )
 
         # Count the missing prior states
@@ -90,19 +70,13 @@ def get_prior_states(game_ids, db_path):
         )
 
         # Create the feature set for each game
-        start = time.time()
         feature_sets = _create_feature_sets(
             game_ids, prior_states_from_database, db_path
         )
-        print(f"Time taken to create feature sets: {time.time() - start:.2f} seconds")
 
         # Save the feature set and prior states flag to the database
-        start = time.time()
         _save_prior_states_info(
             game_ids, missing_prior_state_counts, feature_sets, db_path
-        )
-        print(
-            f"Time taken to save prior states info: {time.time() - start:.2f} seconds"
         )
 
         # Prepare the final dictionary to return

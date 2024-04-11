@@ -29,6 +29,7 @@ def get_predictions(games, predictor, model=None):
         predictor_dict = {
             "Random": random_predictions,
             "LinearModel": pregame_model_predictor,
+            "TreeModel": pregame_model_predictor,
         }
         if predictor in predictor_dict:
             return predictor_dict[predictor](games, model)
@@ -109,8 +110,6 @@ def pregame_model_predictor(games, model):
         # Log error and return empty list if updating predictions fails
         logging.error(f"Error updating score predictions: {e}")
         return []
-
-    print(games_df.columns)
 
     try:
         # Update win probability based on the updated score predictions
@@ -205,10 +204,6 @@ def update_score_predictions(
     # Calculate fraction of the game remaining
     fraction_of_game_remaining = 1 - total_elapsed_time / total_expected_game_time
 
-    print(period)
-    print(clock)
-    print(fraction_of_game_remaining)
-
     # If the game hasn't started, use pregame predictions
     if fraction_of_game_remaining == 1:
         return pregame_pred_home_score, pregame_pred_away_score
@@ -249,7 +244,8 @@ def update_score_predictions(
 
 def create_win_prob(period, clock, updated_home_score, updated_away_score):
     """
-    Calculate the win probability for the home team.
+    Calculate the win probability for the home team using an updated logistic function
+    that dynamically adjusts based on the time remaining in the game.
 
     Parameters:
     period (int): The current period of the game.
@@ -260,6 +256,9 @@ def create_win_prob(period, clock, updated_home_score, updated_away_score):
     Returns:
     float: The win probability for the home team.
     """
+    # Base parameters for the logistic function
+    a = -0.2504
+    b = 0.1949
 
     # Calculate the predicted score difference for the home team
     score_diff = updated_home_score - updated_away_score
@@ -270,16 +269,19 @@ def create_win_prob(period, clock, updated_home_score, updated_away_score):
 
         Parameters:
         period (int): The current period of the game.
-        clock (str): The remaining time in the current period in ISO 8601 format (e.g., "PT12M34.567S").
+        clock (str): The remaining time in the current period in ISO 8601 duration format.
 
         Returns:
         float: The total minutes remaining in the game.
         """
-        # Parse the remaining time in the current period
-        minutes, seconds = map(float, re.findall(r"PT(\d+)M(\d+\.\d+)S", clock)[0])
+        try:
+            minutes, seconds = map(float, re.findall(r"PT(\d+)M(\d+\.\d+)S", clock)[0])
+        except IndexError:
+            # Default to 0 if parsing fails
+            minutes, seconds = 0, 0
         remaining_in_period = minutes + seconds / 60
 
-        # Calculate the total minutes remaining in the game
+        # Adjust for periods beyond the 4th
         if period <= 4:
             minutes_remaining = (4 - period) * 12 + remaining_in_period
         else:
@@ -287,21 +289,25 @@ def create_win_prob(period, clock, updated_home_score, updated_away_score):
 
         return minutes_remaining
 
-    # If the period or clock is null, use the pregame win probability function
+    # If period or clock is missing, assume pregame scenario
     if pd.isnull(period) or pd.isnull(clock):
-        win_prob = 1 / (1 + np.exp(-0.03 * score_diff))
+        minutes_remaining = 48
     else:
         minutes_remaining = determine_minutes_remaining(period, clock)
-        # If there are no minutes remaining, the game is over
-        if minutes_remaining == 0:
-            return 1 if score_diff > 0 else 0
-        else:
-            # Calculate n, the number of halvings of time from the start of the game (48 minutes)
-            n = np.log2(48 / minutes_remaining)
-            # Calculate the dynamic coefficient based on time remaining
-            k = 0.03 * (2**n)
-            # Calculate the in-game win probability using the updated logistic function
-            win_prob = 1 / (1 + np.exp(-k * score_diff))
+
+    # Game over scenario
+    if minutes_remaining == 0:
+        return 1 if score_diff > 0 else 0
+
+    # Dynamic adjustment based on the time remaining
+    if minutes_remaining > 0:  # Avoid division by zero
+        time_factor = np.log(48 / (minutes_remaining + 1))  # Logarithmic adjustment
+        adjusted_b = b * (1 + time_factor)  # Adjust b dynamically
+    else:
+        adjusted_b = b
+
+    # Calculate the win probability using the dynamically adjusted logistic function
+    win_prob = 1 / (1 + np.exp(-(a + adjusted_b * score_diff)))
 
     return win_prob
 

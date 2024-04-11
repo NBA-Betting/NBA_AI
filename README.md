@@ -1,70 +1,58 @@
 # NBA_AI
 Using Generative AI tools to explain and predict the outcomes of NBA games.
 
+# TODO LIST
+- Update requirements.txt to be actual requirements instead of too many
+- Consolidate betting data into database
+- Create installation and setup instructions (Try to make as much of this a script as possible)
+    - How to pull down from Github
+    - How to perform initial setup including downlaoding any extra materials like database or models.
+    - How to update environment from requirements.txt
+    - How to determine the project root
+    - How to create and update .env file and set contents
+    - Determine any other initial setup instructions
+- Create usage instructions (Try to make a visuals. Gif preferably)
+    - How to initiate the app
+    - How to choose a predictor
+    - How to navigate the app
+- Instructions for improving or adding to the app
+    - Creating new predictors
+    - Improving the core code
+    - Contibution Guide
+    - Future Additions (New prediction engines)
+- Notes on current performance
+    - Performance of the prediction systems
+    - Performance of the web app
+- Graph of MAE of home margin and total comparing the prediction engines to baselines
+    - Vegas
+    - Simple Baseline
+        - For total this is the sum of the home teams average ppg and the away teams average ppg from that point in the season
+        - For home margin this is home average net ppg - away average net ppg
 
+- 
+- Determine how to package 2023-2024 version on data, teams.json, and models to be hosted on Github
+- Create documentation for the various modules and functions that explain what they do and how they fit together. 
 
-## Explain
-Take in play by play data of arbitrary length and generate a summary of the game. This could be a summary of the game, a summary of a player's performance, or a summary of a team's performance.
+# Table of Contents
 
-```
-def explain(pbp_logs, prompts):
-    """
-    Generate a summary of the game using the play by play logs.
+# Project Overview
 
-    If no prompts are given, generate a general summary of the game action that the logs include.
-    If prompts are given, generate a summary of the game action that the logs include that is relevant to the prompts.
-    Examples of prompts include:
-    - "What was the most exciting part of the game?"
-    - "What was the most exciting part of the game for the Lakers?"
-    - "What was the most exciting part of the game for LeBron James?"
-    - "How many points did LeBron James score?"
-    - "Who was the best player in the game?" 
-    """
+## Project Goal
 
-    pass
-```
+## Project Philosophy on the scale from NBA Betting (High Data Collection Effort) to Future goals of minimal data collection effort focusing on foundational data sets like play by play, tracking, and video. Talk a little about the tradeoffs between the types of data soruces. Consider the scale from high human intervention to low on both data collection and predicting
 
+## How to use this project
 
-## Predict
-Take in play by play data of arbitrary length and generate a prediction of the outcome of the game. This could be a prediction of the final score, a prediction of the winner, or a prediction of the final score of a player or team.
+# Installation and Setup
 
-```
-def predict(pbp_logs, game_id, prompts):
-    """
-    Generate a prediction of the game outcome using the play by play logs.
+# Prediction Engines
 
-    If no game_id is given, generate a predictions for the game in the logs.
-    If a game_id is given, generate a prediction for the game with that id.
+## Current with graph
+## Future GenAI based
 
-    If no prompts are given, generate a general prediction of the game outcome that the logs include.
-    If prompts are given, generate a prediction of the game outcome that the logs include that is relevant to the prompts.
-    Examples of prompts include:
-    - "What will be the final score of the game?"
-    - "Who will win the game?"
-    - "What will be the final score of the game for the Lakers?"
-    - "How many points will Lebron score in the game?"
-    - "Who will be the best player in the game?" 
-    - "What will happen on the next play?"
-    """
+# Notes
+## On Performance
+## On why this is a repo and not a website
+## On data sourcing and collection. Mention swar nba and sportsdataverse/hoopr
 
-    pass
-```
-
-## Generate
-Take in play by play data or a game id and generate play by play logs.
-
-```
-def generate(pbp_logs, game_id, log_count):
-    """
-    Generate play by play logs based of the play by play logs given.
-    
-    If no game_id is given, generate play by play logs for the game in the logs.
-    If a game_id is given, generate play by play logs for the game with that id.
-
-    If no log_count is given, generate a single play by play log.
-    If a log_count is given, generate that many play by play logs.
-    """
-
-    pass
-```
-
+# Contact Info and request to contact with any questions

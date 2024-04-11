@@ -19,7 +19,7 @@ TreeModel
 """
 
 # Default prediction engine
-default_prediction_engine = "LinearModel"
+default_prediction_engine = "TreeModel"
 
 # Create the parser
 parser = argparse.ArgumentParser(
