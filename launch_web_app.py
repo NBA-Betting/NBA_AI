@@ -16,10 +16,14 @@ TreeModel
     - Prior to Game Start: Predicts the results using a XGBoost model
     - After Game Start: Predictions are a combination of the model's pregame predictions 
                         and the current game state.
+MLPModel
+    - Prior to Game Start: Predicts the results using a Multi-Layer Perceptron model
+    - After Game Start: Predictions are a combination of the model's pregame predictions 
+                        and the current game state.
 """
 
 # Default prediction engine
-default_prediction_engine = "TreeModel"
+default_prediction_engine = "MLPModel"
 
 # Create the parser
 parser = argparse.ArgumentParser(

@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 import joblib
 import pytz
 import torch
-import xgboost
 from dotenv import load_dotenv
 from tzlocal import get_localzone
 
@@ -28,9 +27,9 @@ def load_models(prediction_engine="Random"):
 
     # Map prediction engine names to model filenames
     model_filenames = {
-        "LinearModel": "Ridge_Regression_2024-04-10T17:36:29.273358.joblib",
-        "TreeModel": "XGBoost_Regression_2024-04-10T17:36:58.323427.joblib",
-        "MLPModel": "pytorch_model.pt",
+        "LinearModel": "Ridge_Regression_2024-04-12T01:17:47.777432.joblib",
+        "TreeModel": "XGBoost_Regression_2024-04-12T01:18:04.876947.joblib",
+        "MLPModel": "MLP_Regression_2024-04-12T01:17:04.677772.pth",
         # Add new models here
     }
 
@@ -46,13 +45,14 @@ def load_models(prediction_engine="Random"):
                 model = joblib.load(model_path)
             elif prediction_engine == "MLPModel":
                 model = torch.load(model_path)
-            return model
         except Exception as e:
             raise ValueError(f"Error loading model: {prediction_engine}. {e}")
     else:
         raise ValueError(
             f"Invalid prediction engine: {prediction_engine}. Please choose from: {list(model_filenames.keys())}"
         )
+
+    return model
 
 
 def get_user_datetime(as_eastern_tz=False):

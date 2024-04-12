@@ -4,6 +4,9 @@ import traceback
 
 import numpy as np
 import pandas as pd
+import torch
+
+from .modeling.mlp_model import MLP
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,6 +33,7 @@ def get_predictions(games, predictor, model=None):
             "Random": random_predictions,
             "LinearModel": pregame_model_predictor,
             "TreeModel": pregame_model_predictor,
+            "MLPModel": pregame_model_predictor,
         }
         if predictor in predictor_dict:
             return predictor_dict[predictor](games, model)
@@ -83,8 +87,28 @@ def pregame_model_predictor(games, model):
     features_df = games_df[feature_cols]
 
     try:
-        # Predict scores for all games at once
-        scores = model.predict(features_df.values)
+        if isinstance(model, dict):
+            # Extract the model state dict, mean, and std from the dictionary
+            model_state_dict = model["model_state_dict"]
+            mean = model["mean"]
+            std = model["std"]
+
+            # Create a new instance of your model class and load the state dict
+            mlp_model = MLP(input_size=features_df.shape[1])
+            mlp_model.load_state_dict(model_state_dict)
+            mlp_model.eval()
+
+            # Convert features to a tensor and normalize
+            features_tensor = torch.tensor(features_df.values, dtype=torch.float32)
+            features_tensor = (features_tensor - mean) / std
+
+            # Predict scores for MLP model
+            with torch.no_grad():
+                scores = mlp_model(features_tensor).numpy()
+
+        else:
+            # Predict scores for linear and tree models
+            scores = model.predict(features_df.values)
         games_df[["pregame_pred_home_score", "pregame_pred_away_score"]] = scores
     except Exception as e:
         # Log error and return empty list if prediction fails
