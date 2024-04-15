@@ -1,7 +1,6 @@
 import json
 import logging
 import sqlite3
-import time
 import traceback
 
 import numpy as np

@@ -2,8 +2,6 @@
 Using Generative AI tools to explain and predict the outcomes of NBA games.
 
 # TODO LIST
-- Update requirements.txt to be actual requirements instead of too many
-- Consolidate betting data into database
 - Create installation and setup instructions (Try to make as much of this a script as possible)
     - How to pull down from Github
     - How to perform initial setup including downlaoding any extra materials like database or models.
@@ -24,7 +22,6 @@ Using Generative AI tools to explain and predict the outcomes of NBA games.
     - Performance of the prediction systems
     - Performance of the web app
 - Graph of MAE of home margin and total comparing the prediction engines to baselines
-    - Vegas
     - Simple Baseline
         - For total this is the sum of the home teams average ppg and the away teams average ppg from that point in the season
         - For home margin this is home average net ppg - away average net ppg
@@ -56,3 +53,8 @@ Using Generative AI tools to explain and predict the outcomes of NBA games.
 ## On data sourcing and collection. Mention swar nba and sportsdataverse/hoopr
 
 # Contact Info and request to contact with any questions
+
+
+# Future Additions
+- Create a GenAI based prediction engine
+- Consolidate betting data into database
