@@ -1,60 +1,30 @@
-# NBA_AI
-Using Generative AI tools to explain and predict the outcomes of NBA games.
+<img src='images/nba_ai_header.png' alt='NBA AI'/>
 
-# TODO LIST
-- Create installation and setup instructions (Try to make as much of this a script as possible)
-    - How to pull down from Github
-    - How to perform initial setup including downlaoding any extra materials like database or models.
-    - How to update environment from requirements.txt
-    - How to determine the project root
-    - How to create and update .env file and set contents
-    - Determine any other initial setup instructions
-- Create usage instructions (Try to make a visuals. Gif preferably)
-    - How to initiate the app
-    - How to choose a predictor
-    - How to navigate the app
-- Instructions for improving or adding to the app
-    - Creating new predictors
-    - Improving the core code
-    - Contibution Guide
-    - Future Additions (New prediction engines)
-- Notes on current performance
-    - Performance of the prediction systems
-    - Performance of the web app
-- Graph of MAE of home margin and total comparing the prediction engines to baselines
-    - Simple Baseline
-        - For total this is the sum of the home teams average ppg and the away teams average ppg from that point in the season
-        - For home margin this is home average net ppg - away average net ppg
+# NBA AI
 
-- 
-- Determine how to package 2023-2024 version on data, teams.json, and models to be hosted on Github
-- Create documentation for the various modules and functions that explain what they do and how they fit together. 
+Using AI to predict the outcomes of NBA games.
 
-# Table of Contents
+## Table of Contents
+1. [Project Overview](#project-overview)
+2. [Installation and Setup](#installation-and-setup)
+3. [Prediction Engines](#prediction-engines)
+4. [Notes](#notes)
 
-# Project Overview
+## Project Overview
+The goal of this project is to create a minimal process for predicting the outcomes of NBA games. The minimal goal is in contrast to the comprehensive goal effort of my previous project, [NBA Betting]() and is an attempt to work away from the high complexity and high human effort required for a typical data science project and towards a method where AI does the heavy lifting requiring lower human intervention. As this project progresses, it should get simpler instead of more complex by decreasing the amount of data collection and processing required. 
 
-## Project Goal
+## Installation and Setup
+Instructions on how to install and setup the project will be provided here.
 
-## Project Philosophy on the scale from NBA Betting (High Data Collection Effort) to Future goals of minimal data collection effort focusing on foundational data sets like play by play, tracking, and video. Talk a little about the tradeoffs between the types of data soruces. Consider the scale from high human intervention to low on both data collection and predicting
+## Prediction Engines
+This section will discuss the current prediction engine with a graph and future GenAI based prediction engine.
 
-## How to use this project
+## Notes
+This section will provide notes on performance, why this is a repo and not a website, and on data sourcing and collection. We will mention swar nba and sportsdataverse/hoopr.
 
-# Installation and Setup
+## Contact Info
+Please feel free to contact us with any questions.
 
-# Prediction Engines
-
-## Current with graph
-## Future GenAI based
-
-# Notes
-## On Performance
-## On why this is a repo and not a website
-## On data sourcing and collection. Mention swar nba and sportsdataverse/hoopr
-
-# Contact Info and request to contact with any questions
-
-
-# Future Additions
+## Future Additions
 - Create a GenAI based prediction engine
 - Consolidate betting data into database
