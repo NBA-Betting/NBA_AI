@@ -50,70 +50,52 @@ def requests_retry_session(
     return session
 
 
-def lookup_basic_game_info(game_ids, db_path):
-    """
-    This function looks up basic game information given a game_id or a list of game_ids from the Games table in the SQLite database.
-
-    Parameters:
-    game_ids (str or list): The ID of the game or a list of game IDs to look up.
-    db_path (str): The path to the SQLite database.
-
-    Returns:
-    list: A list of dictionaries, each representing a game. Each dictionary contains the game ID, home team, away team, date/time, status, season, and season type.
-    """
-
-    # Ensure game_ids is a list
-    if not isinstance(game_ids, list):
-        game_ids = [game_ids]
-
-    # Validate the game_ids
-    validate_game_ids(game_ids)
-
-    # Prepare the SQL statement to fetch the games
-    sql = f"""
-    SELECT game_id, home_team, away_team, date_time_est, status, season, season_type
-    FROM Games
-    WHERE game_id IN ({','.join(['?']*len(game_ids))})
-    """
-
-    # Use a context manager to handle the database connection
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-
-        # Execute the SQL statement with the game_ids
-        cursor.execute(sql, game_ids)
-
-        # Fetch the games from the database
-        games = cursor.fetchall()
-
-    # Create a set of all game_ids
-    game_ids_set = set(game_ids)
-
-    # Process each game
-    game_info_list = []
-    for game_id, home, away, date_time_est, status, season, season_type in games:
-        # Remove the game_id from the set
-        game_ids_set.remove(game_id)
-
-        # Add the game information to the list
-        game_info_list.append(
-            {
-                "game_id": game_id,
-                "home_team": home,
-                "away_team": away,
-                "date_time_est": date_time_est,
-                "status": status,
-                "season": season,
-                "season_type": season_type,
-            }
-        )
-
-    # Log any game_ids that were not found
-    if game_ids_set:
-        logging.warning(f"Game IDs not found in the database: {game_ids_set}")
-
-    # Return the game information
-    return game_info_list
+def print_game_info(game_info):
+    are_game_states_finalized = any(
+        state["is_final_state"] for state in reversed(game_info["game_states"])
+    )
+    print()
+    print("-" * 50)
+    print("Game ID:", game_info["game_id"])
+    print("Game Date:", game_info["game_date"])
+    print("Game Time (EST):", game_info["game_time_est"])
+    print("Home Team:", game_info["home"])
+    print("Away Team:", game_info["away"])
+    print("Game Status:", game_info["game_status"])
+    print("Play-by-Play Log Count:", len(game_info["pbp_logs"]))
+    print("Game States Count:", len(game_info["game_states"]))
+    print("Are Game States Finalized:", are_game_states_finalized)
+    if game_info.get("prior_states"):
+        if game_info["prior_states"]:
+            print(
+                f"Prior States Count: Home-{len(game_info['prior_states']['home_prior_states'])} Away-{len(game_info['prior_states']['away_prior_states'])}"
+            )
+            print(
+                "Are Prior States Finalized:",
+                game_info["prior_states"]["are_prior_states_finalized"],
+            )
+    if game_info.get("game_states"):
+        if game_info["game_states"]:
+            most_recent_state = game_info["game_states"][-1]
+            print("Most Recent State:")
+            print("  Remaining Time:", most_recent_state["clock"])
+            print("  Period:", most_recent_state["period"])
+            print("  Home Score:", most_recent_state["home_score"])
+            print("  Away Score:", most_recent_state["away_score"])
+            print("  Total Score:", most_recent_state["total"])
+            print("  Home Margin:", most_recent_state["home_margin"])
+            print("Players:")
+            for team, players in most_recent_state["players_data"].items():
+                print(f"  {team.title()} Team:")
+                sorted_players = sorted(
+                    players.items(), key=lambda x: x[1]["points"], reverse=True
+                )
+                for player_id, player_info in sorted_players:
+                    print(f"    {player_info['name']}: {player_info['points']} points")
+        else:
+            print("No game states available.")
+    print("-" * 50)
+    print()
 
 
 def get_games_for_date(date, db_path):
