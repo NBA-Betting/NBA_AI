@@ -4,15 +4,50 @@ import re
 import sqlite3
 
 import requests
-from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
-load_dotenv()
-PROJECT_ROOT = os.getenv("PROJECT_ROOT")
+from src.config import config
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s",
 )
+
+
+def requests_retry_session(
+    retries=3,
+    backoff_factor=0.3,
+    status_forcelist=(500, 502, 504),
+    session=None,
+    timeout=10,
+):
+    """
+    Creates a session with retry logic for handling transient HTTP errors.
+
+    Parameters:
+    retries (int): The number of retry attempts.
+    backoff_factor (float): The backoff factor for retries.
+    status_forcelist (tuple): A set of HTTP status codes to trigger a retry.
+    session (requests.Session): An existing session to use, or None to create a new one.
+    timeout (int): The timeout for the request.
+
+    Returns:
+    requests.Session: A session configured with retry logic.
+    """
+    session = session or requests.Session()
+    retry = Retry(
+        total=retries,
+        read=retries,
+        connect=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    session.timeout = timeout
+    return session
 
 
 def lookup_basic_game_info(game_ids, db_path):
@@ -126,113 +161,6 @@ def get_games_for_date(date, db_path):
     ]
 
     return games_on_date
-
-
-def update_scheduled_games(season, db_path):
-    """
-    Fetches the NBA schedule for a given season and updates the Games database.
-    This function performs an UPSERT operation (UPDATE or INSERT).
-
-    Parameters:
-    season (str): The season to fetch the schedule for, formatted as 'XXXX-XXXX' (e.g., '2020-2021').
-    db_path (str): The path to the SQLite database file.
-    """
-    # Validate the format of the season string
-    validate_season_format(season, abbreviated=False)
-    # Convert the season string to the format used by the API
-    api_season = season[:5] + season[-2:]
-
-    # Define the URL for the API endpoint, including the season
-    endpoint = (
-        f"https://stats.nba.com/stats/scheduleleaguev2?Season={api_season}&LeagueID=00"
-    )
-
-    # Define the headers to be sent with the request
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
-        "Referer": "https://stats.nba.com/schedule/",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-
-    # Try to send the request and get the response
-    try:
-        response = requests.get(endpoint, headers=headers)
-        # If the response indicates an error, raise an exception
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error occurred while fetching the schedule for {season}.")
-        raise e
-
-    # Parse the JSON response to get the game dates
-    game_dates = response.json()["leagueSchedule"]["gameDates"]
-
-    # Extract all games from the response
-    all_games = [game for date in game_dates for game in date["games"]]
-
-    # Define the keys to be kept in the game dictionaries
-    keys_needed = [
-        "gameId",
-        "gameStatus",
-        "gameDateTimeEst",
-        "homeTeam",
-        "awayTeam",
-    ]
-
-    # Filter the game dictionaries to only include the needed keys
-    all_games = [{key: game[key] for key in keys_needed} for game in all_games]
-
-    # Replace the homeTeam and awayTeam dictionaries with their teamTricode values
-    for game in all_games:
-        game["homeTeam"] = game["homeTeam"]["teamTricode"]
-        game["awayTeam"] = game["awayTeam"]["teamTricode"]
-
-    # Define the season type codes
-    season_type_codes = {
-        "001": "Pre Season",
-        "002": "Regular Season",
-        "003": "All-Star",
-        "004": "Post Season",
-    }
-
-    game_status_codes = {
-        1: "Not Started",
-        2: "In Progress",
-        3: "Completed",
-    }
-
-    # Use a context manager to handle the database connection
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-
-        # Update or insert the games in the database
-        for game in all_games:
-            # Determine the season type based on the game ID
-            season_type = season_type_codes.get(game["gameId"][:3], "Unknown")
-            status = game_status_codes.get(game["gameStatus"], "Unknown")
-
-            # Prepare the SQL statement for UPSERT operation
-            sql = """
-            INSERT OR REPLACE INTO Games
-            (game_id, date_time_est, home_team, away_team, status, season, season_type)
-            VALUES (:gameId, :gameDateTimeEst, :homeTeam, :awayTeam, :gameStatus, :season, :seasonType)
-            """
-
-            # Execute the SQL statement with the game data
-            cursor.execute(
-                sql,
-                {
-                    "gameId": game["gameId"],
-                    "gameDateTimeEst": game["gameDateTimeEst"],
-                    "homeTeam": game["homeTeam"],
-                    "awayTeam": game["awayTeam"],
-                    "gameStatus": status,
-                    "season": season,
-                    "seasonType": season_type,
-                },
-            )
-
-        # Commit the changes to the database
-        conn.commit()
 
 
 def game_id_to_season(game_id, abbreviate=False):
@@ -383,8 +311,9 @@ class NBATeamConverter:
     abbreviation, short name, and full name along with any historical identifiers.
     """
 
-    # Path to the SQLite database file
-    DATABASE_PATH = os.path.join(PROJECT_ROOT, "data", "NBA_AI.sqlite")
+    project_root = config["project"]["root"]
+    relative_db_path = config["database"]["path"]
+    absolute_db_path = os.path.join(project_root, relative_db_path)
 
     @staticmethod
     def __get_team_id(identifier):
@@ -405,7 +334,7 @@ class NBATeamConverter:
         identifier_normalized = str(identifier).lower().replace("-", " ")
 
         # Open a new database connection
-        with sqlite3.connect(NBATeamConverter.DATABASE_PATH) as conn:
+        with sqlite3.connect(NBATeamConverter.absolute_db_path) as conn:
             cursor = conn.cursor()
 
             # Execute the SQL query
@@ -448,7 +377,7 @@ class NBATeamConverter:
         team_id = NBATeamConverter.__get_team_id(identifier)
 
         # Open a new database connection
-        with sqlite3.connect(NBATeamConverter.DATABASE_PATH) as conn:
+        with sqlite3.connect(NBATeamConverter.absolute_db_path) as conn:
             cursor = conn.cursor()
 
             # Execute the SQL query
@@ -474,7 +403,7 @@ class NBATeamConverter:
         team_id = NBATeamConverter.__get_team_id(identifier)
 
         # Open a new database connection
-        with sqlite3.connect(NBATeamConverter.DATABASE_PATH) as conn:
+        with sqlite3.connect(NBATeamConverter.absolute_db_path) as conn:
             cursor = conn.cursor()
 
             # Execute the SQL query
@@ -498,7 +427,7 @@ class NBATeamConverter:
         team_id = NBATeamConverter.__get_team_id(identifier)
 
         # Open a new database connection
-        with sqlite3.connect(NBATeamConverter.DATABASE_PATH) as conn:
+        with sqlite3.connect(NBATeamConverter.absolute_db_path) as conn:
             cursor = conn.cursor()
 
             # Execute the SQL query

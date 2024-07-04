@@ -1,0 +1,24 @@
+project:
+  root: "/home/jeff/Documents/NBA_AI"  # Hardcoded project root. User needs to update when cloning and setting up project
+database:
+  path: "data/NBA_AI.sqlite"  # Relative to project root
+nba_api:
+  pbp_endpoint: "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{}.json"
+  schedule_endpoint: "https://stats.nba.com/stats/scheduleleaguev2?Season={season}&LeagueID=00"
+  pbp_headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"
+    Accept-Encoding: "gzip, deflate, br"
+    Accept-Language: "en-US,en;q=0.9"
+    Cache-Control: "max-age=0"
+    Connection: "keep-alive"
+    Host: "cdn.nba.com"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36"
+  schedule_headers:
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
+    Referer: "https://stats.nba.com/schedule/"
+    Accept: "application/json"
+    Accept-Language: "en-US,en;q=0.9"
+    Cache-Control: "no-cache"
+  
+
+
