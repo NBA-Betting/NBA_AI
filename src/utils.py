@@ -206,12 +206,12 @@ def validate_game_ids(game_ids):
         ):
             invalid_game_ids.append(game_id)
             logging.warning(
-                f"Invalid game ID {game_id}. Game ID must be a 10-digit string starting with '00'. Example: '0022100001'. Offical NBA.com Game ID"
+                f"Invalid game ID {game_id}. Game ID must be a 10-digit string starting with '00'. Example: '0022100001'. Official NBA.com Game ID"
             )
 
     if invalid_game_ids:
         raise ValueError(
-            f"Invalid game IDs: {invalid_game_ids}. Each game ID must be a 10-digit string starting with '00'. Example: '0022100001'. Offical NBA.com Game ID"
+            f"Invalid game IDs: {invalid_game_ids}. Each game ID must be a 10-digit string starting with '00'. Example: '0022100001'. Official NBA.com Game ID"
         )
 
 

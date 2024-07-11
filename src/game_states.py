@@ -120,7 +120,8 @@ def create_game_states(pbp_logs, home, away, game_id, game_date):
 
 def save_game_states(game_states, db_path):
     """
-    Saves the game states to the database. Each game_id is processed in a separate transaction to ensure all-or-nothing behavior.
+    Saves the game states to the database and updates Games.game_data_finalized to True if any state has is_final_state = True.
+    Each game_id is processed in a separate transaction to ensure all-or-nothing behavior.
 
     Parameters:
     game_states (dict): A dictionary with game IDs as keys and lists of dictionaries (game states) as values.
@@ -168,6 +169,16 @@ def save_game_states(game_states, db_path):
                         """,
                         data_to_insert,
                     )
+
+                    # Check if any state has is_final_state = True and update Games table accordingly
+                    if any(state["is_final_state"] for state in states):
+                        conn.execute(
+                            """
+                            UPDATE Games SET game_data_finalized = 1 WHERE game_id = ?
+                            """,
+                            (game_id,),
+                        )
+
                     conn.commit()  # Commit the transaction if no errors occurred
                 except Exception as e:
                     conn.rollback()  # Roll back the transaction if an error occurred

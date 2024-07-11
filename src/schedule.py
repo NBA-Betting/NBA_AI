@@ -6,11 +6,13 @@ It consists of functions to:
 - Fetch the schedule from the NBA API.
 - Validate and save the schedule to a SQLite database.
 - Ensure data integrity by checking for empty or corrupted data before updating the database.
+- Determine the current NBA season based on the current date.
 
 Functions:
 - fetch_schedule(season): Fetches the NBA schedule for a specified season.
 - save_schedule(games, season, db_path): Saves the fetched schedule to the database.
 - update_schedule(season, db_path): Orchestrates fetching and saving the schedule.
+- determine_current_season(): Determines the current NBA season based on the current date.
 - main(): Handles command-line arguments to fetch and/or save the schedule, with optional timing.
 
 Usage:
@@ -20,8 +22,11 @@ Usage:
 - Successful execution will print the number of games fetched along with the first and last games fetched.
 """
 
+import argparse
 import logging
 import sqlite3
+import time
+from datetime import datetime
 
 import requests
 
@@ -37,6 +42,21 @@ logging.basicConfig(
 DB_PATH = config["database"]["path"]
 NBA_API_BASE_URL = config["nba_api"]["schedule_endpoint"]
 NBA_API_HEADERS = config["nba_api"]["schedule_headers"]
+
+
+def update_schedule(season="Current", db_path=DB_PATH):
+    """
+    Fetches and updates the NBA schedule for a given season in the database.
+
+    Parameters:
+    season (str): The season to fetch and update the schedule for. Defaults to "Current".
+    db_path (str): The path to the SQLite database file. Defaults to the configured database path.
+    """
+    if season == "Current":
+        season = determine_current_season()
+
+    games = fetch_schedule(season)
+    save_schedule(games, season, db_path)
 
 
 def fetch_schedule(season):
@@ -64,6 +84,11 @@ def fetch_schedule(season):
 
     try:
         game_dates = response.json()["leagueSchedule"]["gameDates"]
+
+        if not game_dates:
+            logging.error(f"No games found for the season {season}.")
+            return []
+
         all_games = [game for date in game_dates for game in date["games"]]
 
         keys_needed = [
@@ -105,7 +130,7 @@ def fetch_schedule(season):
         return []
 
 
-def save_schedule(games, season, db_path):
+def save_schedule(games, season, db_path=DB_PATH):
     """
     Saves the NBA schedule to the database. This function first checks the validity of the data,
     then performs a DELETE operation to remove old records for the given season,
@@ -163,32 +188,40 @@ def save_schedule(games, season, db_path):
         return True
 
 
-def update_schedule(season, db_path):
+def determine_current_season():
     """
-    Fetches and updates the NBA schedule for a given season in the database.
+    Determines the current NBA season based on the current date.
+    Returns the current NBA season in 'XXXX-XXXX' format.
+    """
 
-    Parameters:
-    season (str): The season to fetch and update the schedule for.
-    db_path (str): The path to the SQLite database file.
-    """
-    games = fetch_schedule(season)
-    save_schedule(games, season, db_path)
+    current_date = datetime.now()
+    current_year = current_date.year
+
+    # Determine the season based on the league year cutoff (June 30th)
+    league_year_cutoff = datetime(current_year, 6, 30)
+
+    if current_date > league_year_cutoff:
+        season = f"{current_year}-{current_year + 1}"
+    else:
+        season = f"{current_year - 1}-{current_year}"
+
+    return season
 
 
 def main():
     """
     Main function to handle command-line arguments and orchestrate fetching and saving NBA schedule data.
     """
-    import argparse
-    import time
-
     parser = argparse.ArgumentParser(description="Fetch and save NBA schedule data.")
     parser.add_argument("--fetch", action="store_true", help="Fetch NBA schedule data")
     parser.add_argument(
         "--save", action="store_true", help="Save NBA schedule data to database"
     )
     parser.add_argument(
-        "--season", type=str, help="Season to fetch/update (format 'XXXX-XXXX')"
+        "--season",
+        type=str,
+        help="Season to fetch/update (format 'XXXX-XXXX')",
+        default="Current",
     )
     parser.add_argument("--timing", action="store_true", help="Measure execution time")
 
@@ -198,6 +231,9 @@ def main():
         parser.error("No action requested, add --fetch or --save")
 
     season = args.season
+
+    if season == "Current":
+        season = determine_current_season()
 
     if args.fetch:
         start_time = time.time()
