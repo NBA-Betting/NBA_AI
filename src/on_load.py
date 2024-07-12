@@ -2,10 +2,11 @@ import logging
 import sqlite3
 
 from src.config import config
-from src.features import create_feature_sets, save_feature_sets
+from src.features import create_feature_sets, load_feature_sets, save_feature_sets
 from src.game_states import create_game_states, save_game_states
 from src.games import lookup_basic_game_info
 from src.pbp import get_pbp, save_pbp
+from src.predictions import make_predictions
 from src.prior_states import determine_prior_states_needed, load_prior_states
 from src.schedule import determine_current_season, update_schedule
 from src.utils import validate_game_ids, validate_season_format
@@ -19,7 +20,7 @@ logging.basicConfig(
 DB_PATH = config["database"]["path"]
 
 
-def update_database(season="Current", db_path=DB_PATH, model_id=None):
+def update_database(season="Current", db_path=DB_PATH, predictor=None):
     # STEP 1: Update Schedule
     if season == "Current":
         season = determine_current_season()
@@ -37,8 +38,10 @@ def update_database(season="Current", db_path=DB_PATH, model_id=None):
     update_pre_game_data(game_ids, db_path)
 
     # STEP 4: Update Predictions
-    if model_id:
-        pass
+    if predictor:
+        games = get_games_for_prediction_update(season, predictor, db_path)
+        feature_sets = load_feature_sets([game_id for game_id, _, _ in games], db_path)
+        predictions = make_predictions(feature_sets, predictor)
 
 
 def update_game_data(game_ids, db_path=DB_PATH):
@@ -166,5 +169,30 @@ def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
     return [row[0] for row in results]
 
 
-def get_games_for_prediction_update(season, model_id, db_path=DB_PATH):
-    pass
+def get_games_for_prediction_update(season, predictor, db_path=DB_PATH):
+    """
+    Get game IDs, home team, and away team that need updated predictions for a given season and predictor.
+
+    Parameters:
+    season (str): The season to filter games by.
+    predictor (str): The predictor to check for existing predictions.
+    db_path (str): The path to the SQLite database file.
+
+    Returns:
+    list of tuples: A list of tuples, each containing (game_id, home_team, away_team) that need updated predictions.
+    """
+    query = """
+        SELECT g.game_id, g.home_team, g.away_team
+        FROM Games g
+        LEFT JOIN Predictions p ON g.game_id = p.game_id AND p.predictor = ?
+        WHERE g.season = ?
+            AND g.pre_game_data_finalized = 1
+            AND p.game_id IS NULL
+        """
+
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (predictor, season))
+        result = cursor.fetchall()
+
+    return result

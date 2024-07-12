@@ -5,10 +5,12 @@ This module provides functionality to generate feature sets for NBA games from t
 It consists of functions to:
 - Create feature sets for multiple games based on prior states.
 - Save feature sets to the database.
+- Load feature sets from the database.
 
 Core Functions:
 - create_feature_sets(prior_states, db_path=DB_PATH): Generate a set of features for each game in the list.
 - save_feature_sets(feature_sets, db_path): Save feature sets to the database for multiple games.
+- load_feature_sets(game_ids, db_path=DB_PATH): Load feature sets from the database for a list of game_ids.
 
 Helper Functions for Feature Creation:
 - _create_basic_features(home_df, away_df, home_team_abbr, away_team_abbr): Creates basic game features like winning percentage, points per game (PPG), opponents' PPG, and net PPG for a matchup.
@@ -155,6 +157,40 @@ def save_feature_sets(feature_sets, db_path):
 
         # Commit the changes to the database
         conn.commit()
+
+
+def load_feature_sets(game_ids, db_path=DB_PATH):
+    """
+    Load feature sets from the database for a list of game_ids.
+
+    Args:
+        game_ids (list): A list of game_ids to load feature sets for.
+        db_path (str): The path to the SQLite database file. Defaults to DB_PATH from config.
+
+    Returns:
+        dict: A dictionary where each key is a game_id and each value is the corresponding feature set.
+    """
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Query the database for the feature sets for the specified game_ids
+        cursor.execute(
+            """
+            SELECT game_id, feature_set
+            FROM Features
+            WHERE game_id IN ({})
+        """.format(
+                ",".join("?" * len(game_ids))
+            ),
+            game_ids,
+        )
+
+        # Fetch the results and construct the dictionary of feature sets
+        feature_sets = {
+            game_id: json.loads(feature_set) for game_id, feature_set in cursor
+        }
+
+    return feature_sets
 
 
 def _create_basic_features(home_df, away_df, home_team_abbr, away_team_abbr):
