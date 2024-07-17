@@ -1,15 +1,21 @@
+import argparse
 import logging
 import sqlite3
+import time
 
 from src.config import config
 from src.features import create_feature_sets, load_feature_sets, save_feature_sets
 from src.game_states import create_game_states, save_game_states
-from src.games import lookup_basic_game_info
 from src.pbp import get_pbp, save_pbp
-from src.predictions import make_predictions
+from src.predictions import make_predictions, save_predictions
 from src.prior_states import determine_prior_states_needed, load_prior_states
 from src.schedule import determine_current_season, update_schedule
-from src.utils import validate_game_ids, validate_season_format
+from src.utils import (
+    log_execution_time,
+    lookup_basic_game_info,
+    validate_game_ids,
+    validate_season_format,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,44 +28,42 @@ DB_PATH = config["database"]["path"]
 
 def update_database(season="Current", db_path=DB_PATH, predictor=None):
     # STEP 1: Update Schedule
-    if season == "Current":
-        season = determine_current_season()
-    else:
-        validate_season_format(season)
-
     update_schedule(season=season)
 
     # STEP 2: Update Game Data
     game_ids = get_games_needing_game_state_update(season, db_path)
     update_game_data(game_ids, db_path)
 
-    # STEP 3: Update Pre Game Data
-    game_ids = get_games_with_incomplete_pre_game_data(season, db_path)
-    update_pre_game_data(game_ids, db_path)
+    # # STEP 3: Update Pre Game Data
+    # game_ids = get_games_with_incomplete_pre_game_data(season, db_path)
+    # update_pre_game_data(game_ids, db_path)
 
-    # STEP 4: Update Predictions
-    if predictor:
-        games = get_games_for_prediction_update(season, predictor, db_path)
-        feature_sets = load_feature_sets([game_id for game_id, _, _ in games], db_path)
-        predictions = make_predictions(feature_sets, predictor)
+    # # STEP 4: Update Predictions
+    # if predictor:
+    #     games = get_games_for_prediction_update(season, predictor, db_path)
+    #     feature_sets = load_feature_sets([game_id for game_id, _, _ in games], db_path)
+    #     predictions = make_predictions(feature_sets, predictor)
+    #     save_predictions(predictions, predictor, db_path)
 
 
+@log_execution_time(average_over="game_ids")
 def update_game_data(game_ids, db_path=DB_PATH):
     validate_game_ids(game_ids)
-    games = lookup_basic_game_info(game_ids, db_path)
-    pbp_logs = get_pbp(game_ids)
-    save_pbp(pbp_logs, db_path)
-    game_states = {}
-    for game in games:
-        game_id = game["game_id"]
-        game_states[game_id] = create_game_states(
-            pbp_logs[game_id],
-            game["home_team"],
-            game["away_team"],
-            game_id,
-            game["date_time_est"].split("T")[0],
-        )
-    save_game_states(game_states, db_path)
+    basic_game_info = lookup_basic_game_info(game_ids, db_path)
+    pbp_data = get_pbp(game_ids)
+    save_pbp(pbp_data, db_path)
+
+    game_state_inputs = {}
+    for game_id, game_info in pbp_data.items():
+        game_state_inputs[game_id] = {
+            "home": basic_game_info[game_id]["home"],
+            "away": basic_game_info[game_id]["away"],
+            "date_time_est": basic_game_info[game_id]["date_time_est"],
+            "pbp_logs": game_info,
+        }
+
+    game_states = create_game_states(game_state_inputs)
+    save_game_states(game_states)
 
 
 def update_pre_game_data(game_ids, db_path=DB_PATH):
@@ -196,3 +200,64 @@ def get_games_for_prediction_update(season, predictor, db_path=DB_PATH):
         result = cursor.fetchall()
 
     return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Update the NBA database.")
+    parser.add_argument(
+        "--season",
+        type=str,
+        default="Current",
+        help="The season to update. Default is the current season.",
+    )
+    parser.add_argument(
+        "--predictor",
+        type=str,
+        default=None,
+        help="The predictor to use for updating predictions.",
+    )
+    parser.add_argument(
+        "--timing", action="store_true", help="Print timing information."
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Print extended debug information."
+    )
+
+    args = parser.parse_args()
+    season = args.season
+    predictor = args.predictor
+
+    # Start overall timer
+    start_time = time.time()
+
+    # STEP 1: Update Schedule
+    start_update_schedule = time.time()
+    if season == "Current":
+        season = determine_current_season()
+    else:
+        validate_season_format(season)
+
+    update_schedule(season=season)
+    update_schedule_time = time.time() - start_update_schedule
+
+    # STEP 2: Update Game Data
+    start_update_game_data = time.time()
+    game_ids = get_games_needing_game_state_update(season)
+
+    # STEP 3: Update Pre Game Data
+
+    # STEP 4: Update Predictions
+
+    # End overall timer
+    total_time = time.time() - start_time
+
+    if args.timing:
+        logging.info(f"Total time: {total_time:.2f} seconds")
+        logging.info(f"Update Schedule time: {update_schedule_time:.2f} seconds")
+        # logging.info(f"Update Game Data time: {update_game_data_time:.2f} seconds")
+        # logging.info(f"Update Pre Game Data time: {update_pre_game_data_time:.2f} seconds")
+        # logging.info(f"Update Predictions time: {update_predictions_time:.2f} seconds")
+
+
+if __name__ == "__main__":
+    main()

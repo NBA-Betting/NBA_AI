@@ -2,17 +2,136 @@ import logging
 import os
 import re
 import sqlite3
+import time
+from functools import wraps
 
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
 from src.config import config
+from src.logging_config import setup_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s",
-)
+# Configuration values
+DB_PATH = config["database"]["path"]
+
+
+def lookup_basic_game_info(game_ids, db_path=DB_PATH):
+    """
+    Looks up basic game information given a game_id or a list of game_ids from the Games table in the SQLite database.
+
+    Parameters:
+    game_ids (str or list): The ID of the game or a list of game IDs to look up.
+    db_path (str): The path to the SQLite database. Defaults to the value in the config file.
+
+    Returns:
+    dict: A dictionary with game IDs as keys and each value being a dictionary representing a game. Each game dictionary contains the home team, away team, date/time, status, season, and season type.
+    """
+    if not isinstance(game_ids, list):
+        game_ids = [game_ids]
+
+    validate_game_ids(game_ids)
+
+    sql = f"""
+    SELECT game_id, home_team, away_team, date_time_est, status, season, season_type
+    FROM Games
+    WHERE game_id IN ({','.join(['?'] * len(game_ids))})
+    """
+
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, game_ids)
+        games = cursor.fetchall()
+
+    game_ids_set = set(game_ids)
+    game_info_dict = {}
+    for game_id, home, away, date_time_est, status, season, season_type in games:
+        game_ids_set.remove(game_id)
+        game_info_dict[game_id] = {
+            "home": home,
+            "away": away,
+            "date_time_est": date_time_est,
+            "status": status,
+            "season": season,
+            "season_type": season_type,
+        }
+
+    if game_ids_set:
+        logging.warning(f"Game IDs not found in the database: {game_ids_set}")
+
+    return game_info_dict
+
+
+def log_execution_time(average_over=None):
+    """
+    Decorator that logs the execution time of a function and optionally averages the time over the output or a specified input.
+
+    Parameters:
+        average_over (str or None): Specifies what to average over. Can be None, "output", or the name of an input argument.
+
+    Returns:
+        function: The wrapped function with added logging for execution time.
+    """
+
+    if average_over not in (None, "output") and not isinstance(average_over, str):
+        raise ValueError(
+            "average_over must be None, 'output', or a string representing an input argument name."
+        )
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Validate that if average_over is specified as an argument name, it exists among the function's arguments.
+            if average_over and average_over != "output" and average_over not in kwargs:
+                arg_names = func.__code__.co_varnames[: func.__code__.co_argcount]
+                if average_over not in arg_names:
+                    raise ValueError(
+                        f"The specified average_over argument '{average_over}' does not exist in the function '{func.__name__}'."
+                    )
+
+            start_time = time.time()
+            logging.info(f"Starting {func.__name__}...")
+
+            result = func(*args, **kwargs)
+
+            duration = time.time() - start_time
+
+            if average_over:
+                items_to_average = None
+                if average_over == "output":
+                    if isinstance(result, (list, tuple)):
+                        items_to_average = result
+                    elif isinstance(result, dict):
+                        items_to_average = result.keys()
+                elif average_over in kwargs:
+                    arg = kwargs[average_over]
+                    if isinstance(arg, (list, tuple)):
+                        items_to_average = arg
+                    elif isinstance(arg, dict):
+                        items_to_average = arg.keys()
+                else:
+                    for arg in args:
+                        if isinstance(arg, (list, tuple, dict)):
+                            items_to_average = (
+                                arg if not isinstance(arg, dict) else arg.keys()
+                            )
+                            break
+
+                if items_to_average is not None and len(items_to_average) > 0:
+                    avg_time_per_item = duration / len(items_to_average)
+
+            if average_over:
+                logging.info(
+                    f"{func.__name__} execution time: {duration:.2f} seconds. Average per item: {avg_time_per_item:.2f} seconds."
+                )
+            else:
+                logging.info(f"{func.__name__} execution time: {duration:.2f} seconds.")
+
+            return result
+
+        return wrapper
+
+    return decorator
 
 
 def requests_retry_session(
@@ -269,13 +388,18 @@ def validate_season_format(season, abbreviated=False):
     Raises:
     ValueError: If the season string does not match the required format or if the second year does not logically follow the first year.
     """
+    FULL_SEASON_PATTERN = r"^(\d{4})-(\d{4})$"
+    ABBREVIATED_SEASON_PATTERN = r"^(\d{4})-(\d{2})$"
+
     # Define the regex pattern based on abbreviated flag
-    pattern = r"^(\d{4})-(\d{2})$" if abbreviated else r"^(\d{4})-(\d{4})$"
+    pattern = ABBREVIATED_SEASON_PATTERN if abbreviated else FULL_SEASON_PATTERN
 
     # Attempt to match the pattern to the season string
     match = re.match(pattern, season)
     if not match:
-        raise ValueError("Season does not match the required format.")
+        raise ValueError(
+            "Season does not match the required format. Please use 'XXXX-XX' or 'XXXX-XXXX'."
+        )
 
     year1, year2_suffix = map(int, match.groups())
 
@@ -284,7 +408,15 @@ def validate_season_format(season, abbreviated=False):
 
     # Check if year2 logically follows year1
     if year1 + 1 != year2:
-        raise ValueError("Second year does not logically follow the first year.")
+        raise ValueError(
+            f"Second year {year2} does not logically follow the first year {year1}."
+        )
+
+    # Check if years are within a valid range
+    if year1 < 1900 or year2 > 2100:
+        raise ValueError(
+            f"Season years must be between 1900 and 2100. {year1}-{year2} is not a valid season."
+        )
 
 
 class NBATeamConverter:

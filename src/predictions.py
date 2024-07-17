@@ -1,3 +1,31 @@
+"""
+predictions.py
+
+This module provides functionality to generate predictions for NBA games using various predictive models.
+It consists of classes and functions to:
+- Load models and make predictions for multiple games.
+- Save predictions to a database.
+- Dynamically select predictor classes based on configuration.
+
+Core Classes:
+- BasePredictor: Abstract base class defining the predictor interface.
+- RandomPredictor: Predictor generating random scores.
+- LinearPredictor: Predictor using a linear regression model.
+- TreePredictor: Predictor using a decision tree model.
+- MLPPredictor: Predictor using a multi-layer perceptron model.
+
+Core Functions:
+- make_predictions(predictor_name, games): Generate predictions using the specified predictor.
+- save_predictions(predictions, predictor, db_path=DB_PATH): Save predictions to the database.
+
+Helper Functions:
+- calculate_pred_home_win_pct(home_scores, away_scores): Calculate home team win probabilities.
+- get_predictor_class(class_name): Dynamically import and return the predictor class.
+
+Usage:
+- Typically run as part of a larger data processing pipeline.
+"""
+
 import importlib
 import json
 import logging
@@ -12,6 +40,7 @@ import torch
 from src.config import config
 from src.modeling.mlp_model import MLP
 
+# Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s",
@@ -21,6 +50,7 @@ logging.basicConfig(
 DB_PATH = config["database"]["path"]
 PREDICTORS = config["predictors"]
 
+# Ensure all columns are displayed in DataFrame outputs
 pd.set_option("display.max_columns", None)
 
 
@@ -51,16 +81,25 @@ def calculate_pred_home_win_pct(home_scores, away_scores):
 
 class BasePredictor(ABC):
     def __init__(self, model_paths=None):
+        """
+        Initialize the BasePredictor with model paths.
+
+        Parameters:
+        model_paths (list of str): Paths to the model files.
+        """
         self.model_paths = model_paths or []
         self.models = []
 
     @abstractmethod
     def load_models(self):
+        """
+        Load the predictive models. Must be implemented by subclasses.
+        """
         pass
 
     def make_prediction_dict(self, game_ids, home_scores, away_scores):
         """
-        Creates a dictionary of predictions for given games.
+        Create a dictionary of predictions for given games.
 
         Parameters:
         game_ids (list of str): The IDs of the games.
@@ -89,14 +128,25 @@ class BasePredictor(ABC):
 
     @abstractmethod
     def make_predictions(self, games):
+        """
+        Generate predictions for the given games. Must be implemented by subclasses.
+
+        Parameters:
+        games (dict): The game data to make predictions for.
+
+        Returns:
+        dict: The generated predictions.
+        """
         pass
 
 
 class LinearPredictor(BasePredictor):
     def load_models(self):
+        """Load the linear regression model from the specified path."""
         self.model = joblib.load(self.model_paths[0])
 
     def make_predictions(self, games):
+        """Generate predictions using the linear regression model."""
         game_ids = list(games.keys())
         features = [games[game_id] for game_id in game_ids]
         features_df = pd.DataFrame(features).fillna(0)
@@ -109,9 +159,11 @@ class LinearPredictor(BasePredictor):
 
 class TreePredictor(BasePredictor):
     def load_models(self):
+        """Load the decision tree model from the specified path."""
         self.model = joblib.load(self.model_paths[0])
 
     def make_predictions(self, games):
+        """Generate predictions using the decision tree model."""
         game_ids = list(games.keys())
         features = [games[game_id] for game_id in game_ids]
         features_df = pd.DataFrame(features).fillna(0)
@@ -124,6 +176,7 @@ class TreePredictor(BasePredictor):
 
 class MLPPredictor(BasePredictor):
     def load_models(self):
+        """Load the MLP model from the specified path and set up normalization parameters."""
         checkpoint = torch.load(self.model_paths[0])
         self.model = MLP(input_size=checkpoint["input_size"])
         self.model.load_state_dict(checkpoint["model_state_dict"])
@@ -131,6 +184,7 @@ class MLPPredictor(BasePredictor):
         self.std = checkpoint["std"]
 
     def make_predictions(self, games):
+        """Generate predictions using the MLP model."""
         game_ids = list(games.keys())
         features = [games[game_id] for game_id in game_ids]
         features_df = pd.DataFrame(features).fillna(0)  # Handle NaN values
@@ -147,9 +201,11 @@ class MLPPredictor(BasePredictor):
 
 class RandomPredictor(BasePredictor):
     def load_models(self):
+        """Random predictor does not load any models."""
         pass
 
     def make_predictions(self, games):
+        """Generate random predictions for the given games."""
         game_ids = list(games.keys())
         home_scores = np.random.randint(80, 131, size=len(game_ids))
         away_scores = np.random.randint(80, 131, size=len(game_ids))
@@ -158,12 +214,31 @@ class RandomPredictor(BasePredictor):
 
 
 def get_predictor_class(class_name):
+    """
+    Dynamically import and return the predictor class.
+
+    Parameters:
+    class_name (str): The name of the predictor class.
+
+    Returns:
+    class: The predictor class.
+    """
     module = importlib.import_module(__name__)
     predictor_class = getattr(module, class_name)
     return predictor_class
 
 
 def make_predictions(predictor_name, games):
+    """
+    Generate predictions using the specified predictor.
+
+    Parameters:
+    predictor_name (str): The name of the predictor.
+    games (dict): The game data to make predictions for.
+
+    Returns:
+    dict: The generated predictions.
+    """
     # Handle the "Best" option by mapping it to the actual best predictor
     if predictor_name == "Best":
         predictor_name = PREDICTORS["Best"]
@@ -203,10 +278,17 @@ def save_predictions(predictions, predictor, db_path=DB_PATH):
                 predictor,
                 model_id,
                 prediction_datetime,
-                json.dumps(predictions[game_id]),
+                json.dumps(
+                    {
+                        k: float(v) if isinstance(v, (np.float32, np.float64)) else v
+                        for k, v in predictions[game_id].items()
+                    }
+                ),
             )
             for game_id in predictions.keys()
         ]
+
+        print(data)  # Debugging print statement
 
         cursor.executemany(
             """
@@ -217,104 +299,3 @@ def save_predictions(predictions, predictor, db_path=DB_PATH):
         )
 
         conn.commit()
-
-
-# Example usage
-if __name__ == "__main__":
-    games = {
-        "game_1": {
-            "Home_Win_Pct": 0.5,
-            "Home_PPG": 117.5,
-            "Home_OPP_PPG": 114.0,
-            "Home_Net_PPG": 3.5,
-            "Away_Win_Pct": 0.5,
-            "Away_PPG": 118.0,
-            "Away_OPP_PPG": 117.0,
-            "Away_Net_PPG": 1.0,
-            "Win_Pct_Diff": 0.0,
-            "PPG_Diff": -0.5,
-            "OPP_PPG_Diff": -3.0,
-            "Net_PPG_Diff": 2.5,
-            "Home_Win_Pct_Home": 0,
-            "Home_PPG_Home": np.nan,
-            "Home_OPP_PPG_Home": np.nan,
-            "Home_Net_PPG_Home": np.nan,
-            "Away_Win_Pct_Away": 0.0,
-            "Away_PPG_Away": 106.0,
-            "Away_OPP_PPG_Away": 112.0,
-            "Away_Net_PPG_Away": -6.0,
-            "Win_Pct_Home_Away_Diff": 0.0,
-            "PPG_Home_Away_Diff": np.nan,
-            "OPP_PPG_Home_Away_Diff": np.nan,
-            "Net_PPG_Home_Away_Diff": np.nan,
-            "Time_Decay_Home_Win_Pct": 0.5346019613807635,
-            "Time_Decay_Home_PPG": 116.98097057928855,
-            "Time_Decay_Home_OPP_PPG": 113.16955292686168,
-            "Time_Decay_Home_Net_PPG": 3.8114176524268686,
-            "Time_Decay_Away_Win_Pct": 0.4482004813398909,
-            "Time_Decay_Away_PPG": 116.75681155215736,
-            "Time_Decay_Away_OPP_PPG": 116.4820048133989,
-            "Time_Decay_Away_Net_PPG": 0.27480673875845696,
-            "Time_Decay_Win_Pct_Diff": 0.08640148004087267,
-            "Time_Decay_PPG_Diff": 0.2241590271311935,
-            "Time_Decay_OPP_PPG_Diff": -3.312451886537218,
-            "Time_Decay_Net_PPG_Diff": 3.5366109136684116,
-            "Day_of_Season": 3.5,
-            "Home_Rest_Days": 1,
-            "Home_Game_Freq": 1.0,
-            "Away_Rest_Days": 1,
-            "Away_Game_Freq": 0.0,
-            "Rest_Days_Diff": 0,
-            "Game_Freq_Diff": 1.0,
-        },
-        "game_2": {
-            "Home_Win_Pct": 0.6,
-            "Home_PPG": 120.0,
-            "Home_OPP_PPG": 110.0,
-            "Home_Net_PPG": 10.0,
-            "Away_Win_Pct": 0.4,
-            "Away_PPG": 115.0,
-            "Away_OPP_PPG": 113.0,
-            "Away_Net_PPG": 2.0,
-            "Win_Pct_Diff": 0.2,
-            "PPG_Diff": 5.0,
-            "OPP_PPG_Diff": -3.0,
-            "Net_PPG_Diff": 8.0,
-            "Home_Win_Pct_Home": 0.5,
-            "Home_PPG_Home": 118.0,
-            "Home_OPP_PPG_Home": 112.0,
-            "Home_Net_PPG_Home": 6.0,
-            "Away_Win_Pct_Away": 0.3,
-            "Away_PPG_Away": 110.0,
-            "Away_OPP_PPG_Away": 115.0,
-            "Away_Net_PPG_Away": -5.0,
-            "Win_Pct_Home_Away_Diff": 0.2,
-            "PPG_Home_Away_Diff": 8.0,
-            "OPP_PPG_Home_Away_Diff": -3.0,
-            "Net_PPG_Home_Away_Diff": 11.0,
-            "Time_Decay_Home_Win_Pct": 0.6,
-            "Time_Decay_Home_PPG": 118.0,
-            "Time_Decay_Home_OPP_PPG": 110.0,
-            "Time_Decay_Home_Net_PPG": 8.0,
-            "Time_Decay_Away_Win_Pct": 0.4,
-            "Time_Decay_Away_PPG": 115.0,
-            "Time_Decay_Away_OPP_PPG": 113.0,
-            "Time_Decay_Away_Net_PPG": 2.0,
-            "Time_Decay_Win_Pct_Diff": 0.2,
-            "Time_Decay_PPG_Diff": 3.0,
-            "Time_Decay_OPP_PPG_Diff": -3.0,
-            "Time_Decay_Net_PPG_Diff": 6.0,
-            "Day_of_Season": 5.0,
-            "Home_Rest_Days": 2,
-            "Home_Game_Freq": 1.0,
-            "Away_Rest_Days": 1,
-            "Away_Game_Freq": 0.5,
-            "Rest_Days_Diff": 1,
-            "Game_Freq_Diff": 0.5,
-        },
-    }  # Example games dictionary
-    predictor_name = (
-        "Tree"  # This could be 'Tree', 'Linear', 'MLP', 'Random', or 'Best'
-    )
-    predictions = make_predictions(predictor_name, games)
-    print(predictions)

@@ -2,7 +2,7 @@ project:
   root: "/home/jeff/Documents/NBA_AI"  # Hardcoded project root. User needs to update when cloning and setting up project
 
 database:
-  path: "data/NBA_AI.sqlite"  # Relative to project root
+  path: "data/2023_2024_NBA_AI.sqlite"  # Relative to project root
 
 nba_api:
   pbp_endpoint: "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{}.json"

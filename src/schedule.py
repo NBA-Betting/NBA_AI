@@ -1,42 +1,37 @@
 """
 schedule.py
 
-This module fetches and saves NBA schedule data for a given season.
-It consists of functions to:
+Overview:
+This module fetches and saves NBA schedule data for a given season. It consists of functions to:
 - Fetch the schedule from the NBA API.
 - Validate and save the schedule to a SQLite database.
 - Ensure data integrity by checking for empty or corrupted data before updating the database.
 - Determine the current NBA season based on the current date.
 
 Functions:
+- update_schedule(season, db_path): Orchestrates fetching and saving the schedule.
 - fetch_schedule(season): Fetches the NBA schedule for a specified season.
 - save_schedule(games, season, db_path): Saves the fetched schedule to the database.
-- update_schedule(season, db_path): Orchestrates fetching and saving the schedule.
 - determine_current_season(): Determines the current NBA season based on the current date.
-- main(): Handles command-line arguments to fetch and/or save the schedule, with optional timing.
+- main(): Handles command-line arguments to update the schedule, with optional logging level.
 
 Usage:
 - Typically run as part of a larger data collection pipeline.
 - Script can be run directly from the command line (project root) to fetch and save NBA schedule data:
-    python -m src.schedule --fetch --save --season=2023-2024 --timing
-- Successful execution will print the number of games fetched along with the first and last games fetched.
+    python -m src.schedule --season=2023-2024 --log_level=DEBUG
+- Successful execution will print the number of games fetched and saved along with logging information.
 """
 
 import argparse
 import logging
 import sqlite3
-import time
 from datetime import datetime
 
 import requests
 
 from src.config import config
-from src.utils import requests_retry_session, validate_season_format
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s",
-)
+from src.logging_config import setup_logging
+from src.utils import log_execution_time, requests_retry_session, validate_season_format
 
 # Configuration values
 DB_PATH = config["database"]["path"]
@@ -44,6 +39,7 @@ NBA_API_BASE_URL = config["nba_api"]["schedule_endpoint"]
 NBA_API_HEADERS = config["nba_api"]["schedule_headers"]
 
 
+@log_execution_time(average_over=None)
 def update_schedule(season="Current", db_path=DB_PATH):
     """
     Fetches and updates the NBA schedule for a given season in the database.
@@ -54,11 +50,14 @@ def update_schedule(season="Current", db_path=DB_PATH):
     """
     if season == "Current":
         season = determine_current_season()
+    else:
+        validate_season_format(season, abbreviated=False)
 
     games = fetch_schedule(season)
     save_schedule(games, season, db_path)
 
 
+@log_execution_time(average_over=None)
 def fetch_schedule(season):
     """
     Fetches the NBA schedule for a given season.
@@ -69,17 +68,19 @@ def fetch_schedule(season):
     Returns:
     list: A list of dictionaries, each containing details of a game. If the request fails or the data is corrupted, an empty list is returned.
     """
-    validate_season_format(season, abbreviated=False)
+    logging.info(f"Fetching schedule for season: {season}")
     api_season = season[:5] + season[-2:]
 
     endpoint = NBA_API_BASE_URL.format(season=api_season)
+    logging.debug(f"Endpoint URL: {endpoint}")
 
     try:
         session = requests_retry_session(timeout=10)
         response = session.get(endpoint, headers=NBA_API_HEADERS)
+        logging.debug(f"Response status code: {response.status_code}")
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error occurred while fetching the schedule for {season}.")
+        logging.error(f"Error occurred while fetching the schedule for {season}: {e}")
         return []
 
     try:
@@ -123,6 +124,8 @@ def fetch_schedule(season):
             game["gameStatus"] = game_status_codes.get(game["gameStatus"], "Unknown")
             game["season"] = season
 
+        logging.info(f"Total Games Fetched: {len(all_games)}")
+        logging.debug(f"Sample games fetched:\n{all_games[:2]}\n{all_games[-2:]}")
         return all_games
 
     except (KeyError, TypeError) as e:
@@ -130,6 +133,7 @@ def fetch_schedule(season):
         return []
 
 
+@log_execution_time(average_over=None)
 def save_schedule(games, season, db_path=DB_PATH):
     """
     Saves the NBA schedule to the database. This function first checks the validity of the data,
@@ -144,6 +148,7 @@ def save_schedule(games, season, db_path=DB_PATH):
     Returns:
     bool: True if the operation was successful, False otherwise.
     """
+    logging.info(f"Saving schedule for season: {season}")
     if not games:
         logging.error("No games fetched. Skipping database update to avoid data loss.")
         return False
@@ -184,7 +189,8 @@ def save_schedule(games, season, db_path=DB_PATH):
             )
 
         conn.commit()
-        logging.info("Schedule updated successfully.")
+        logging.info(f"Successfully saved {len(games)} games for season {season}.")
+
         return True
 
 
@@ -210,52 +216,27 @@ def determine_current_season():
 
 def main():
     """
-    Main function to handle command-line arguments and orchestrate fetching and saving NBA schedule data.
+    Main function to handle command-line arguments and orchestrate updating the schedule.
     """
-    parser = argparse.ArgumentParser(description="Fetch and save NBA schedule data.")
-    parser.add_argument("--fetch", action="store_true", help="Fetch NBA schedule data")
-    parser.add_argument(
-        "--save", action="store_true", help="Save NBA schedule data to database"
-    )
+    parser = argparse.ArgumentParser(description="Update NBA schedule data.")
     parser.add_argument(
         "--season",
         type=str,
-        help="Season to fetch/update (format 'XXXX-XXXX')",
         default="Current",
+        help="The season to fetch the schedule for. Format: 'XXXX-XXXX'. Default is the current season.",
     )
-    parser.add_argument("--timing", action="store_true", help="Measure execution time")
+    parser.add_argument(
+        "--log_level",
+        type=str,
+        default="INFO",
+        help="The logging level. Default is INFO. DEBUG provides more details.",
+    )
 
     args = parser.parse_args()
+    log_level = args.log_level.upper()
+    setup_logging(log_level=log_level)
 
-    if not args.fetch and not args.save:
-        parser.error("No action requested, add --fetch or --save")
-
-    season = args.season
-
-    if season == "Current":
-        season = determine_current_season()
-
-    if args.fetch:
-        start_time = time.time()
-        games = fetch_schedule(season)
-        print(games[:5])
-        print(games[-5:])
-        print(f"Total games fetched: {len(games)}")
-        if args.timing:
-            elapsed_time = time.time() - start_time
-            logging.info(f"Fetching data took {elapsed_time:.2f} seconds.")
-
-    if args.save:
-        if "games" not in locals():
-            logging.error(
-                "No data to save. Ensure --fetch is used or data is provided."
-            )
-        else:
-            start_time = time.time()
-            save_schedule(games, season, DB_PATH)
-            if args.timing:
-                elapsed_time = time.time() - start_time
-                logging.info(f"Saving data took {elapsed_time:.2f} seconds.")
+    update_schedule(season=args.season)
 
 
 if __name__ == "__main__":

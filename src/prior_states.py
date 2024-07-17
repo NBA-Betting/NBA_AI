@@ -1,40 +1,16 @@
-"""
-prior_states.py
-
-This module provides functionality to determine and load prior game states for NBA games.
-It consists of functions to:
-- Determine game IDs for previous games played by the home and away teams.
-- Load prior states from the GameStates table in the database.
-- Main function to handle command-line arguments and orchestrate the process.
-
-Functions:
-- determine_prior_states_needed(game_ids, db_path=DB_PATH): Determines game IDs for previous games played by the home and away teams.
-- load_prior_states(game_ids_dict, db_path=DB_PATH): Loads prior states from the GameStates table.
-- main(): Main function to handle command-line arguments and orchestrate determining and loading prior game states.
-
-Usage:
-- Typically run as part of a larger data processing pipeline.
-- Script can be run directly from the command line (project root) to determine and load prior game states:
-    python -m src.prior_states --game_ids=0042300401,0022300649 --timing --debug
-- Successful execution will print loaded and missing prior states along with execution timing if specified.
-"""
-
 import argparse
 import logging
 import sqlite3
-import time
 
 from src.config import config
-from src.games import lookup_basic_game_info
+from src.logging_config import setup_logging
+from src.utils import log_execution_time, lookup_basic_game_info
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s",
-)
-
+# Configuration values
 DB_PATH = config["database"]["path"]
 
 
+@log_execution_time(average_over="game_ids")
 def determine_prior_states_needed(game_ids, db_path=DB_PATH):
     """
     Determines game IDs for previous games played by the home and away teams,
@@ -45,11 +21,11 @@ def determine_prior_states_needed(game_ids, db_path=DB_PATH):
     db_path (str): The path to the SQLite database file. Defaults to the DB_PATH from config.
 
     Returns:
-    dict: A dictionary where each key is a game ID from the input list and each value is a tuple containing
-          two lists. The first list contains the IDs of previous games played by the home team, and the second
-          list contains the IDs of previous games played by the away team. Both lists are restricted to games
-          from the same season (Regular Season and Post Season). The lists are ordered by date and time.
+    dict: A dictionary where each key is a game ID from the input list and each value is a dictionary containing
+          two keys 'home' and 'away'. The value of each key is a list of IDs of previous games played by the respective team.
+          Both lists are restricted to games from the same season (Regular Season and Post Season). The lists are ordered by date and time.
     """
+    logging.info(f"Determining prior states needed for {len(game_ids)} games...")
     necessary_prior_states = {}
 
     with sqlite3.connect(db_path) as conn:
@@ -58,11 +34,10 @@ def determine_prior_states_needed(game_ids, db_path=DB_PATH):
         # Get basic game info for all game_ids
         games_info = lookup_basic_game_info(game_ids, db_path)
 
-        for game_info in games_info:
-            game_id = game_info["game_id"]
+        for game_id, game_info in games_info.items():
             game_datetime = game_info["date_time_est"]
-            home = game_info["home_team"]
-            away = game_info["away_team"]
+            home = game_info["home"]
+            away = game_info["away"]
             season = game_info["season"]
 
             home_game_ids = []
@@ -73,6 +48,7 @@ def determine_prior_states_needed(game_ids, db_path=DB_PATH):
                 SELECT game_id FROM Games
                 WHERE date_time_est < ? AND (home_team = ? OR away_team = ?) 
                 AND season = ? AND (season_type = 'Regular Season' OR season_type = 'Post Season')
+                ORDER BY date_time_est
             """
             cursor.execute(base_query, (game_datetime, home, home, season))
             home_game_ids = [row[0] for row in cursor.fetchall()]
@@ -82,11 +58,30 @@ def determine_prior_states_needed(game_ids, db_path=DB_PATH):
             away_game_ids = [row[0] for row in cursor.fetchall()]
 
             # Store the lists of game IDs in the results dictionary
-            necessary_prior_states[game_id] = (home_game_ids, away_game_ids)
+            necessary_prior_states[game_id] = {
+                "home": home_game_ids,
+                "away": away_game_ids,
+            }
+
+        logging.info("Prior states determined.")
+        for game_id, prior_games in necessary_prior_states.items():
+            logging.debug(
+                f"Game ID: {game_id} - Home Team Prior Game Count: {len(prior_games['home'])}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Away Team Prior Game Count: {len(prior_games['away'])}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Home Team Prior Games: {prior_games['home']}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Away Team Prior Games: {prior_games['away']}"
+            )
 
     return necessary_prior_states
 
 
+@log_execution_time(average_over="game_ids_dict")
 def load_prior_states(game_ids_dict, db_path=DB_PATH):
     """
     Loads and orders by date the prior states for lists of home and away game IDs
@@ -103,6 +98,7 @@ def load_prior_states(game_ids_dict, db_path=DB_PATH):
            The keys are game IDs, and values are lists of final state information for each home and away game,
            ordered by game date. The missing prior states dictionary contains game IDs with no prior states.
     """
+    logging.info(f"Loading prior states for {len(game_ids_dict)} games...")
     prior_states = {game_id: [[], []] for game_id in game_ids_dict.keys()}
 
     # Get all unique game IDs from the dictionary
@@ -144,12 +140,48 @@ def load_prior_states(game_ids_dict, db_path=DB_PATH):
         if not prior_states[game_id][0] or not prior_states[game_id][1]:
             missing_prior_states[game_id] = (home_game_ids, away_game_ids)
 
+    logging.info(f"Prior states loaded for {len(prior_states)} games.")
+    if missing_prior_states:
+        logging.info(f"Missing prior states for {len(missing_prior_states)} games.")
+
+    for game in game_ids_dict.keys():
+        logging.debug(
+            f"Game ID: {game} - Home Team - Prior States Count: {len(prior_states[game][0]) if prior_states[game][0] else 'No prior states'}"
+        )
+        logging.debug(
+            f"Game ID: {game} - Home Team - First Prior State: {prior_states[game][0][0] if prior_states[game][0] else 'No prior states'}"
+        )
+        logging.debug(
+            f"Game ID: {game} - Away Team - Last Prior State: {prior_states[game][1][-1] if prior_states[game][1] else 'No prior states'}"
+        )
+        logging.debug(
+            f"Game ID: {game} - Home Team - Missing Count: {len(missing_prior_states[game][0]) if game in missing_prior_states else 0}"
+        )
+        logging.debug(
+            f"Game ID: {game} - Home Team - Missing IDs: {missing_prior_states[game][0]}"
+        )
+        logging.debug(
+            f"Game ID: {game} - Away Team - Prior States Count: {len(prior_states[game][1])}"
+        )
+        logging.debug(
+            f"Game ID: {game} - Away Team - First Prior State: {prior_states[game][1][0] if prior_states[game][1] else 'No prior states'}"
+        )
+        logging.debug(
+            f"Game ID: {game} - Home Team - Last Prior State: {prior_states[game][0][-1] if prior_states[game][0] else 'No prior states'}"
+        )
+        logging.debug(
+            f"Game ID: {game} - Away Team - Missing Count: {len(missing_prior_states[game][1])}"
+        )
+        logging.debug(
+            f"Game ID: {game} - Away Team - Missing IDs: {missing_prior_states[game][1]}"
+        )
+
     return prior_states, missing_prior_states
 
 
 def main():
     """
-    Main function to handle command-line arguments and orchestrate determining and loading prior game states.
+    Main function to handle command-line arguments and orchestrate the process of determining and loading prior game states.
     """
     parser = argparse.ArgumentParser(
         description="Determine and load prior states for NBA games."
@@ -157,66 +189,21 @@ def main():
     parser.add_argument(
         "--game_ids", type=str, help="Comma-separated list of game IDs to process"
     )
-    parser.add_argument("--timing", action="store_true", help="Measure execution time")
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument(
+        "--log_level",
+        type=str,
+        default="INFO",
+        help="The logging level. Default is INFO. DEBUG provides more details.",
+    )
+
     args = parser.parse_args()
+    log_level = args.log_level.upper()
+    setup_logging(log_level=log_level)
 
-    if not args.game_ids:
-        parser.error("No game IDs provided")
+    game_ids = args.game_ids.split(",") if args.game_ids else []
 
-    game_ids = args.game_ids.split(",")
-
-    overall_start_time = time.time()
-
-    # Determine the prior states needed for the games
-    logging.info("Determining prior states needed for games...")
-    start_determine_time = time.time()
-    prior_games_dict = determine_prior_states_needed(game_ids, DB_PATH)
-    determine_time = time.time() - start_determine_time
-
-    # Load the prior states for the games
-    logging.info("Loading prior states...")
-    start_load_time = time.time()
-    prior_states, missing_prior_states = load_prior_states(prior_games_dict, DB_PATH)
-    load_time = time.time() - start_load_time
-
-    overall_time = time.time() - overall_start_time
-
-    logging.info(f"Prior states loaded for {len(prior_states)} games.")
-    if missing_prior_states:
-        logging.warning(f"Missing prior states for {len(missing_prior_states)} games.")
-
-    if args.debug:
-        logging.info("Prior States Loaded:")
-        for game_id, states in prior_states.items():
-            logging.info(f"Game ID {game_id}:")
-            logging.info("  Home States:")
-            for state in states[0]:
-                logging.info(f"    {state}")
-            logging.info("  Away States:")
-            for state in states[1]:
-                logging.info(f"    {state}")
-
-        logging.info("Missing Prior States:")
-        for game_id, (home_game_ids, away_game_ids) in missing_prior_states.items():
-            logging.info(f"Game ID {game_id}:")
-            logging.info("  Missing Home States:")
-            for home_id in home_game_ids:
-                logging.info(f"    {home_id}")
-            logging.info("  Missing Away States:")
-            for away_id in away_game_ids:
-                logging.info(f"    {away_id}")
-
-    if args.timing:
-        logging.info(
-            f"Overall execution took {overall_time:.2f} seconds. Average time per game: {overall_time / len(prior_states):.2f} seconds."
-        )
-        logging.info(
-            f"Determining prior states took {determine_time:.2f} seconds. Average: {determine_time / len(prior_states):.2f} seconds."
-        )
-        logging.info(
-            f"Loading prior states took {load_time:.2f} seconds. Average: {load_time / len(prior_states):.2f} seconds."
-        )
+    prior_states_needed = determine_prior_states_needed(game_ids)
+    prior_states, missing_prior_states = load_prior_states(prior_states_needed)
 
 
 if __name__ == "__main__":
