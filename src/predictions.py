@@ -7,25 +7,28 @@ It consists of classes and functions to:
 - Save predictions to a database.
 - Dynamically select predictor classes based on configuration.
 
-Core Classes:
+Classes:
 - BasePredictor: Abstract base class defining the predictor interface.
 - RandomPredictor: Predictor generating random scores.
 - LinearPredictor: Predictor using a linear regression model.
 - TreePredictor: Predictor using a decision tree model.
 - MLPPredictor: Predictor using a multi-layer perceptron model.
 
-Core Functions:
-- make_predictions(predictor_name, games): Generate predictions using the specified predictor.
-- save_predictions(predictions, predictor, db_path=DB_PATH): Save predictions to the database.
-
-Helper Functions:
+Functions:
+- make_predictions(games, predictor_name): Generate predictions using the specified predictor.
+- save_predictions(predictions, predictor_name, db_path=DB_PATH): Save predictions to the database.
 - calculate_pred_home_win_pct(home_scores, away_scores): Calculate home team win probabilities.
 - get_predictor_class(class_name): Dynamically import and return the predictor class.
+- main(): Main function to handle command-line arguments and orchestrate the prediction process.
 
 Usage:
 - Typically run as part of a larger data processing pipeline.
+- Script can be run directly from the command line to generate and save predictions.
+    python -m src.predictions --save --game_ids=0042300401,0022300649 --log_level=DEBUG --predictor=Linear
+- Successful execution will log the generated predictions and save them to the database.
 """
 
+import argparse
 import importlib
 import json
 import logging
@@ -38,20 +41,14 @@ import pandas as pd
 import torch
 
 from src.config import config
+from src.features import load_feature_sets
+from src.logging_config import setup_logging
 from src.modeling.mlp_model import MLP
-
-# Logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s",
-)
+from src.utils import log_execution_time
 
 # Configuration
 DB_PATH = config["database"]["path"]
 PREDICTORS = config["predictors"]
-
-# Ensure all columns are displayed in DataFrame outputs
-pd.set_option("display.max_columns", None)
 
 
 def calculate_pred_home_win_pct(home_scores, away_scores):
@@ -174,6 +171,7 @@ class TreePredictor(BasePredictor):
         return self.make_prediction_dict(game_ids, home_scores, away_scores)
 
 
+# !!! TODO: Rework MLP model saving and rerun training process
 class MLPPredictor(BasePredictor):
     def load_models(self):
         """Load the MLP model from the specified path and set up normalization parameters."""
@@ -228,13 +226,14 @@ def get_predictor_class(class_name):
     return predictor_class
 
 
-def make_predictions(predictor_name, games):
+@log_execution_time(average_over="games")
+def make_predictions(games, predictor_name):
     """
     Generate predictions using the specified predictor.
 
     Parameters:
-    predictor_name (str): The name of the predictor.
     games (dict): The game data to make predictions for.
+    predictor_name (str): The name of the predictor.
 
     Returns:
     dict: The generated predictions.
@@ -242,6 +241,10 @@ def make_predictions(predictor_name, games):
     # Handle the "Best" option by mapping it to the actual best predictor
     if predictor_name == "Best":
         predictor_name = PREDICTORS["Best"]
+
+    logging.info(
+        f"Generating {len(games)} predictions using predictor '{predictor_name}'..."
+    )
 
     predictor_cfg = PREDICTORS[predictor_name]
     class_name = predictor_cfg["class"]
@@ -251,23 +254,41 @@ def make_predictions(predictor_name, games):
     predictor = predictor_class(model_paths)
     predictor.load_models()
     predictions = predictor.make_predictions(games)
+
+    logging.info(
+        f"Predictions generated successfully for {len(games)} games using predictor '{predictor_name}'."
+    )
+    logging.debug(f"Predictions: {predictions}")
+
     return predictions
 
 
-def save_predictions(predictions, predictor, db_path=DB_PATH):
+@log_execution_time(average_over="predictions")
+def save_predictions(predictions, predictor_name, db_path=DB_PATH):
     """
     Save predictions to the Predictions table.
 
     Parameters:
     predictions (dict): The predictions to save.
-    predictor (str): The name of the predictor.
+    predictor_name (str): The name of the predictor.
     db_path (str): The path to the SQLite database file. Defaults to DB_PATH from config.
 
     Returns:
     None
     """
+    if predictor_name == "Best":
+        predictor_name = PREDICTORS["Best"]
+
+    logging.info(
+        f"Saving {len(predictions)} predictions for predictor '{predictor_name}'..."
+    )
     prediction_datetime = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-    model_id = PREDICTORS[predictor]["model_paths"][0].split("/")[-1].split(".")[0]
+    if predictor_name == "Random":
+        model_id = "Random"
+    else:
+        model_id = (
+            PREDICTORS[predictor_name]["model_paths"][0].split("/")[-1].split(".")[0]
+        )
 
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
@@ -275,20 +296,22 @@ def save_predictions(predictions, predictor, db_path=DB_PATH):
         data = [
             (
                 game_id,
-                predictor,
+                predictor_name,
                 model_id,
                 prediction_datetime,
                 json.dumps(
                     {
-                        k: float(v) if isinstance(v, (np.float32, np.float64)) else v
+                        k: (
+                            float(v)
+                            if isinstance(v, (np.float32, np.float64, np.int64))
+                            else v
+                        )
                         for k, v in predictions[game_id].items()
                     }
                 ),
             )
             for game_id in predictions.keys()
         ]
-
-        print(data)  # Debugging print statement
 
         cursor.executemany(
             """
@@ -299,3 +322,51 @@ def save_predictions(predictions, predictor, db_path=DB_PATH):
         )
 
         conn.commit()
+
+    logging.info("Predictions saved successfully.")
+    logging.debug(f"Example record: {data[0]}")
+
+
+def main():
+    """
+    Main function to handle command-line arguments and orchestrate the prediction process.
+    """
+    parser = argparse.ArgumentParser(
+        description="Generate predictions for NBA games using various predictive models."
+    )
+    parser.add_argument(
+        "--game_ids", type=str, help="Comma-separated list of game IDs to process"
+    )
+    parser.add_argument(
+        "--log_level",
+        type=str,
+        default="INFO",
+        help="The logging level. Default is INFO. DEBUG provides more details.",
+    )
+    parser.add_argument(
+        "--save", action="store_true", help="Save feature sets to the database."
+    )
+    parser.add_argument(
+        "--predictor",
+        default="Best",
+        type=str,
+        help="The predictor to use for predictions.",
+    )
+
+    args = parser.parse_args()
+    log_level = args.log_level.upper()
+    setup_logging(log_level=log_level)
+
+    game_ids = args.game_ids.split(",") if args.game_ids else []
+
+    # Load feature sets from the database
+    feature_sets = load_feature_sets(game_ids=game_ids)
+
+    # Generate predictions using the specified predictor
+    predictions = make_predictions(args.predictor, feature_sets)
+    if args.save:
+        save_predictions(predictions, args.predictor)
+
+
+if __name__ == "__main__":
+    main()

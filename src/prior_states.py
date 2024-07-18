@@ -1,3 +1,24 @@
+"""
+prior_states.py
+
+This module processes NBA play-by-play data to determine and load prior game states.
+It consists of functions to:
+- Determine prior game states needed for specified games.
+- Load prior game states from a SQLite database, including handling of missing states.
+- Log detailed information about the process and any missing data.
+
+Functions:
+- determine_prior_states_needed(game_ids, db_path=DB_PATH): Determines the game IDs for previous games played by the home and away teams, restricted to regular season and post-season games from the same season.
+- load_prior_states(game_ids_dict, db_path=DB_PATH): Loads and orders by date the prior states for lists of home and away game IDs from the GameStates table in the database.
+- main(): Handles command-line arguments to determine and load prior game states, with optional logging.
+
+Usage:
+- Typically run as part of a larger data processing pipeline.
+- Script can be run directly from the command line to determine and load prior game states:
+    python -m src.prior_states --game_ids=0042300401,0022300649 --log_level=DEBUG
+- Successful execution will log detailed information about the prior states loaded and any missing data.
+"""
+
 import argparse
 import logging
 import sqlite3
@@ -28,55 +49,61 @@ def determine_prior_states_needed(game_ids, db_path=DB_PATH):
     logging.info(f"Determining prior states needed for {len(game_ids)} games...")
     necessary_prior_states = {}
 
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
 
-        # Get basic game info for all game_ids
-        games_info = lookup_basic_game_info(game_ids, db_path)
+            # Get basic game info for all game_ids
+            games_info = lookup_basic_game_info(game_ids, db_path)
 
-        for game_id, game_info in games_info.items():
-            game_datetime = game_info["date_time_est"]
-            home = game_info["home"]
-            away = game_info["away"]
-            season = game_info["season"]
+            for game_id, game_info in games_info.items():
+                game_datetime = game_info["date_time_est"]
+                home = game_info["home"]
+                away = game_info["away"]
+                season = game_info["season"]
 
-            home_game_ids = []
-            away_game_ids = []
+                home_game_ids = []
+                away_game_ids = []
 
-            # Query for prior games of the home team
-            base_query = """
-                SELECT game_id FROM Games
-                WHERE date_time_est < ? AND (home_team = ? OR away_team = ?) 
-                AND season = ? AND (season_type = 'Regular Season' OR season_type = 'Post Season')
-                ORDER BY date_time_est
-            """
-            cursor.execute(base_query, (game_datetime, home, home, season))
-            home_game_ids = [row[0] for row in cursor.fetchall()]
+                # Query for prior games of the home team
+                base_query = """
+                    SELECT game_id FROM Games
+                    WHERE date_time_est < ? AND (home_team = ? OR away_team = ?) 
+                    AND season = ? AND (season_type = 'Regular Season' OR season_type = 'Post Season')
+                    ORDER BY date_time_est
+                """
+                cursor.execute(base_query, (game_datetime, home, home, season))
+                home_game_ids = [row[0] for row in cursor.fetchall()]
 
-            # Query for prior games of the away team
-            cursor.execute(base_query, (game_datetime, away, away, season))
-            away_game_ids = [row[0] for row in cursor.fetchall()]
+                # Query for prior games of the away team
+                cursor.execute(base_query, (game_datetime, away, away, season))
+                away_game_ids = [row[0] for row in cursor.fetchall()]
 
-            # Store the lists of game IDs in the results dictionary
-            necessary_prior_states[game_id] = {
-                "home": home_game_ids,
-                "away": away_game_ids,
-            }
+                # Store the lists of game IDs in the results dictionary
+                necessary_prior_states[game_id] = {
+                    "home": home_game_ids,
+                    "away": away_game_ids,
+                }
 
-        logging.info("Prior states determined.")
-        for game_id, prior_games in necessary_prior_states.items():
-            logging.debug(
-                f"Game ID: {game_id} - Home Team Prior Game Count: {len(prior_games['home'])}"
-            )
-            logging.debug(
-                f"Game ID: {game_id} - Away Team Prior Game Count: {len(prior_games['away'])}"
-            )
-            logging.debug(
-                f"Game ID: {game_id} - Home Team Prior Games: {prior_games['home']}"
-            )
-            logging.debug(
-                f"Game ID: {game_id} - Away Team Prior Games: {prior_games['away']}"
-            )
+            logging.info("Prior states determined.")
+            for game_id, prior_games in necessary_prior_states.items():
+                logging.debug(
+                    f"Game ID: {game_id} - Home Team Prior Game Count: {len(prior_games['home'])}"
+                )
+                logging.debug(
+                    f"Game ID: {game_id} - Away Team Prior Game Count: {len(prior_games['away'])}"
+                )
+                logging.debug(
+                    f"Game ID: {game_id} - Home Team Prior Games: {prior_games['home']}"
+                )
+                logging.debug(
+                    f"Game ID: {game_id} - Away Team Prior Games: {prior_games['away']}"
+                )
+
+    except sqlite3.Error as e:
+        logging.error(f"Database error: {e}")
+    except Exception as e:
+        logging.error(f"Error: {e}")
 
     return necessary_prior_states
 
@@ -89,94 +116,122 @@ def load_prior_states(game_ids_dict, db_path=DB_PATH):
     storing each state as a dictionary within a list.
 
     Parameters:
-    game_ids_dict (dict): A dictionary where keys are game IDs and values are tuples of lists.
-                          Each list contains game IDs for the home and away team's prior games.
+    game_ids_dict (dict): A dictionary where keys are game IDs and values are dictionaries containing
+                          'home' and 'away' lists of game IDs for the home and away team's prior games.
     db_path (str): The path to the SQLite database file. Defaults to the DB_PATH from config.
 
     Returns:
-    tuple: A dictionary of prior states and a dictionary of missing prior states.
-           The keys are game IDs, and values are lists of final state information for each home and away game,
-           ordered by game date. The missing prior states dictionary contains game IDs with no prior states.
+    dict: A dictionary where each key is a game ID and each value is another dictionary containing
+          'home_prior_states', 'away_prior_states', and 'missing_prior_states'.
+          'home_prior_states' and 'away_prior_states' are lists of final state information for each home and away game,
+          ordered by game date. 'missing_prior_states' is a dictionary containing 'home' and 'away' lists of missing game IDs.
     """
     logging.info(f"Loading prior states for {len(game_ids_dict)} games...")
-    prior_states = {game_id: [[], []] for game_id in game_ids_dict.keys()}
+    prior_states_dict = {
+        game_id: {
+            "home_prior_states": [],
+            "away_prior_states": [],
+            "missing_prior_states": {"home": [], "away": []},
+        }
+        for game_id in game_ids_dict.keys()
+    }
 
-    # Get all unique game IDs from the dictionary
     all_game_ids = list(
-        set(game_id for ids in game_ids_dict.values() for game_id in ids[0] + ids[1])
+        set(
+            game_id
+            for ids in game_ids_dict.values()
+            for game_id in ids["home"] + ids["away"]
+        )
     )
 
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row  # Use sqlite3.Row for dictionary-like row access
-        cursor = conn.cursor()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
 
-        # Load prior states for all games
-        if all_game_ids:
-            placeholders = ", ".join(["?"] * len(all_game_ids))
-            cursor.execute(
-                f"""
-                SELECT * FROM GameStates
-                WHERE game_id IN ({placeholders}) AND is_final_state = 1
-                ORDER BY game_date ASC
-            """,
-                all_game_ids,
+            if all_game_ids:
+                placeholders = ", ".join(["?"] * len(all_game_ids))
+                cursor.execute(
+                    f"""
+                    SELECT * FROM GameStates
+                    WHERE game_id IN ({placeholders}) AND is_final_state = 1
+                    ORDER BY game_date ASC
+                    """,
+                    all_game_ids,
+                )
+                all_prior_states = [dict(row) for row in cursor.fetchall()]
+
+                states_dict = {state["game_id"]: state for state in all_prior_states}
+
+                for game_id, teams_game_ids in game_ids_dict.items():
+                    home_game_ids = teams_game_ids["home"]
+                    away_game_ids = teams_game_ids["away"]
+
+                    prior_states_dict[game_id]["home_prior_states"] = [
+                        states_dict[id] for id in home_game_ids if id in states_dict
+                    ]
+                    prior_states_dict[game_id]["away_prior_states"] = [
+                        states_dict[id] for id in away_game_ids if id in states_dict
+                    ]
+
+                    if not prior_states_dict[game_id]["home_prior_states"]:
+                        prior_states_dict[game_id]["missing_prior_states"][
+                            "home"
+                        ] = home_game_ids
+
+                    if not prior_states_dict[game_id]["away_prior_states"]:
+                        prior_states_dict[game_id]["missing_prior_states"][
+                            "away"
+                        ] = away_game_ids
+
+        logging.info(f"Prior states loaded for {len(prior_states_dict)} games.")
+        missing_count = sum(
+            1
+            for states in prior_states_dict.values()
+            if states["missing_prior_states"]["home"]
+            or states["missing_prior_states"]["away"]
+        )
+        if missing_count:
+            logging.info(f"Missing prior states for {missing_count} games.")
+
+        for game_id, states in prior_states_dict.items():
+            logging.debug(
+                f"Game ID: {game_id} - Home Team - Prior States Count: {len(states['home_prior_states']) if states['home_prior_states'] else 'No prior states'}"
             )
-            all_prior_states = [dict(row) for row in cursor.fetchall()]
+            logging.debug(
+                f"Game ID: {game_id} - Home Team - First Prior State: {states['home_prior_states'][0] if states['home_prior_states'] else 'No prior states'}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Home Team - Last Prior State: {states['home_prior_states'][-1] if states['home_prior_states'] else 'No prior states'}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Home Team - Missing Count: {len(states['missing_prior_states']['home']) if states['missing_prior_states']['home'] else 0}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Home Team - Missing IDs: {states['missing_prior_states']['home']}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Away Team - Prior States Count: {len(states['away_prior_states']) if states['away_prior_states'] else 'No prior states'}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Away Team - First Prior State: {states['away_prior_states'][0] if states['away_prior_states'] else 'No prior states'}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Away Team - Last Prior State: {states['away_prior_states'][-1] if states['away_prior_states'] else 'No prior states'}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Away Team - Missing Count: {len(states['missing_prior_states']['away']) if states['missing_prior_states']['away'] else 0}"
+            )
+            logging.debug(
+                f"Game ID: {game_id} - Away Team - Missing IDs: {states['missing_prior_states']['away']}"
+            )
 
-            # Create a dictionary mapping game IDs to their states
-            states_dict = {state["game_id"]: state for state in all_prior_states}
+    except sqlite3.Error as e:
+        logging.error(f"Database error: {e}")
+    except Exception as e:
+        logging.error(f"Error: {e}")
 
-            # Separate the states into their respective high-level game_ids and lower-level home/away buckets
-            for game_id, (home_game_ids, away_game_ids) in game_ids_dict.items():
-                prior_states[game_id][0] = [
-                    states_dict[id] for id in home_game_ids if id in states_dict
-                ]
-                prior_states[game_id][1] = [
-                    states_dict[id] for id in away_game_ids if id in states_dict
-                ]
-
-    missing_prior_states = {}
-    for game_id, (home_game_ids, away_game_ids) in game_ids_dict.items():
-        if not prior_states[game_id][0] or not prior_states[game_id][1]:
-            missing_prior_states[game_id] = (home_game_ids, away_game_ids)
-
-    logging.info(f"Prior states loaded for {len(prior_states)} games.")
-    if missing_prior_states:
-        logging.info(f"Missing prior states for {len(missing_prior_states)} games.")
-
-    for game in game_ids_dict.keys():
-        logging.debug(
-            f"Game ID: {game} - Home Team - Prior States Count: {len(prior_states[game][0]) if prior_states[game][0] else 'No prior states'}"
-        )
-        logging.debug(
-            f"Game ID: {game} - Home Team - First Prior State: {prior_states[game][0][0] if prior_states[game][0] else 'No prior states'}"
-        )
-        logging.debug(
-            f"Game ID: {game} - Away Team - Last Prior State: {prior_states[game][1][-1] if prior_states[game][1] else 'No prior states'}"
-        )
-        logging.debug(
-            f"Game ID: {game} - Home Team - Missing Count: {len(missing_prior_states[game][0]) if game in missing_prior_states else 0}"
-        )
-        logging.debug(
-            f"Game ID: {game} - Home Team - Missing IDs: {missing_prior_states[game][0]}"
-        )
-        logging.debug(
-            f"Game ID: {game} - Away Team - Prior States Count: {len(prior_states[game][1])}"
-        )
-        logging.debug(
-            f"Game ID: {game} - Away Team - First Prior State: {prior_states[game][1][0] if prior_states[game][1] else 'No prior states'}"
-        )
-        logging.debug(
-            f"Game ID: {game} - Home Team - Last Prior State: {prior_states[game][0][-1] if prior_states[game][0] else 'No prior states'}"
-        )
-        logging.debug(
-            f"Game ID: {game} - Away Team - Missing Count: {len(missing_prior_states[game][1])}"
-        )
-        logging.debug(
-            f"Game ID: {game} - Away Team - Missing IDs: {missing_prior_states[game][1]}"
-        )
-
-    return prior_states, missing_prior_states
+    return prior_states_dict
 
 
 def main():
@@ -203,7 +258,7 @@ def main():
     game_ids = args.game_ids.split(",") if args.game_ids else []
 
     prior_states_needed = determine_prior_states_needed(game_ids)
-    prior_states, missing_prior_states = load_prior_states(prior_states_needed)
+    prior_states_dict = load_prior_states(prior_states_needed)
 
 
 if __name__ == "__main__":

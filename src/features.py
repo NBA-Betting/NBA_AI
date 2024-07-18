@@ -11,6 +11,7 @@ Core Functions:
 - create_feature_sets(prior_states, db_path=DB_PATH): Generate a set of features for each game in the list.
 - save_feature_sets(feature_sets, db_path): Save feature sets to the database for multiple games.
 - load_feature_sets(game_ids, db_path=DB_PATH): Load feature sets from the database for a list of game_ids.
+- main(): Main function to handle command-line arguments and orchestrate the feature generation process.
 
 Helper Functions for Feature Creation:
 - _create_basic_features(home_df, away_df, home_team_abbr, away_team_abbr): Creates basic game features like winning percentage, points per game (PPG), opponents' PPG, and net PPG for a matchup.
@@ -20,8 +21,12 @@ Helper Functions for Feature Creation:
 
 Usage:
 - Typically run as part of a larger data processing pipeline.
+- Script can be run directly from the command line to generate and save feature sets for specific games.
+    python -m src.features --save --game_ids=0042300401,0022300649 --log_level=DEBUG
+- Successful execution will log the number of games processed and the time taken to generate the feature sets.
 """
 
+import argparse
 import datetime
 import json
 import logging
@@ -31,44 +36,44 @@ import numpy as np
 import pandas as pd
 
 from src.config import config
-from src.games import lookup_basic_game_info
+from src.logging_config import setup_logging
+from src.prior_states import determine_prior_states_needed, load_prior_states
+from src.utils import log_execution_time, lookup_basic_game_info
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s",
-)
-
+# Configuration
 DB_PATH = config["database"]["path"]
 
 
-def create_feature_sets(prior_states, db_path=DB_PATH):
+@log_execution_time(average_over="prior_states_dict")
+def create_feature_sets(prior_states_dict, db_path=DB_PATH):
     """
     Generate a set of features for each game in the list. Feature categories include basic, contextual, time decay, rest days, and day of season.
 
     Parameters:
-    prior_states (dict): A dictionary with the keys being game_ids and the values being tuples of home_prior_states, away_prior_states.
+    prior_states_dict (dict): A dictionary where each key is a game_id and each value is another dictionary containing
+                              'home_prior_states', 'away_prior_states', and 'missing_prior_states'.
     db_path (str): The path to the SQLite database file. Defaults to DB_PATH from config.
 
     Returns:
     dict: A dictionary where each key is a game_id and each value is a dictionary containing the generated features for that game.
     """
 
-    game_ids = list(prior_states.keys())
-
+    logging.info(f"Creating feature sets for {len(prior_states_dict)} games...")
+    game_ids = list(prior_states_dict.keys())
     game_info = lookup_basic_game_info(game_ids, db_path)
 
     # Initialize an empty dictionary to store the features for each game
     features_dict = {}
 
     # Iterate over the list of game_ids
-    for game_info in game_info:
-        game_id = game_info["game_id"]
-        home_team = game_info["home_team"]
-        away_team = game_info["away_team"]
+    for game_id, game_info in game_info.items():
+        home_team = game_info["home"]
+        away_team = game_info["away"]
         game_date = game_info["date_time_est"][:10]
 
         # Get the prior states for the home and away teams
-        home_prior_states, away_prior_states = prior_states[game_id]
+        home_prior_states = prior_states_dict[game_id]["home_prior_states"]
+        away_prior_states = prior_states_dict[game_id]["away_prior_states"]
 
         # Convert the prior states of home and away teams into DataFrames
         home_prior_states_df = pd.DataFrame(home_prior_states)
@@ -121,10 +126,17 @@ def create_feature_sets(prior_states, db_path=DB_PATH):
         # Convert the DataFrame to a dictionary and store it in the features_dict
         features_dict[game_id] = features_df.to_dict(orient="records")[0]
 
+    logging.info(f"Feature sets created successfully for {len(features_dict)} games.")
+    example_game_id, example_features = next(iter(features_dict.items()))
+    logging.debug(
+        f"Example feature set - Game Id {example_game_id}: {example_features}"
+    )
+
     return features_dict
 
 
-def save_feature_sets(feature_sets, db_path):
+@log_execution_time(average_over="feature_sets")
+def save_feature_sets(feature_sets, db_path=DB_PATH):
     """
     Save feature sets to the database for multiple games, including game_id, current datetime as save datetime, and feature set.
 
@@ -135,6 +147,7 @@ def save_feature_sets(feature_sets, db_path):
     Returns:
         None. The function updates the database directly with the provided information.
     """
+    logging.info(f"Saving feature sets for {len(feature_sets)} games...")
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
 
@@ -158,7 +171,11 @@ def save_feature_sets(feature_sets, db_path):
         # Commit the changes to the database
         conn.commit()
 
+    logging.info("Feature sets saved successfully.")
+    logging.debug(f"Example record: {data[0]}")
 
+
+@log_execution_time(average_over="game_ids")
 def load_feature_sets(game_ids, db_path=DB_PATH):
     """
     Load feature sets from the database for a list of game_ids.
@@ -170,6 +187,7 @@ def load_feature_sets(game_ids, db_path=DB_PATH):
     Returns:
         dict: A dictionary where each key is a game_id and each value is the corresponding feature set.
     """
+    logging.info(f"Loading feature sets for {len(game_ids)} games...")
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
 
@@ -189,6 +207,12 @@ def load_feature_sets(game_ids, db_path=DB_PATH):
         feature_sets = {
             game_id: json.loads(feature_set) for game_id, feature_set in cursor
         }
+
+    logging.info(f"Feature sets loaded successfully for {len(feature_sets)} games.")
+    example_game_id, example_features = next(iter(feature_sets.items()))
+    logging.debug(
+        f"Example feature set - Game Id {example_game_id}: {example_features}"
+    )
 
     return feature_sets
 
@@ -568,3 +592,41 @@ def _create_rest_and_season_features(home_df, away_df, game_date):
 
     # Convert dictionary to DataFrame and return
     return pd.DataFrame([rest_and_day_of_season_features])
+
+
+def main():
+    """
+    Main function to handle command-line arguments and orchestrate the feature generation process.
+    """
+    parser = argparse.ArgumentParser(
+        description="Generate feature sets for NBA games from the final game states from prior games."
+    )
+    parser.add_argument(
+        "--game_ids", type=str, help="Comma-separated list of game IDs to process"
+    )
+    parser.add_argument(
+        "--log_level",
+        type=str,
+        default="INFO",
+        help="The logging level. Default is INFO. DEBUG provides more details.",
+    )
+    parser.add_argument(
+        "--save", action="store_true", help="Save feature sets to the database."
+    )
+
+    args = parser.parse_args()
+    log_level = args.log_level.upper()
+    setup_logging(log_level=log_level)
+
+    game_ids = args.game_ids.split(",") if args.game_ids else []
+
+    prior_states_needed = determine_prior_states_needed(game_ids)
+    prior_states_dict = load_prior_states(prior_states_needed)
+
+    feature_sets = create_feature_sets(prior_states_dict)
+    if args.save:
+        save_feature_sets(feature_sets)
+
+
+if __name__ == "__main__":
+    main()
