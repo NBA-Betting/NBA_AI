@@ -39,7 +39,7 @@ NBA_API_BASE_URL = config["nba_api"]["schedule_endpoint"]
 NBA_API_HEADERS = config["nba_api"]["schedule_headers"]
 
 
-@log_execution_time(average_over=None)
+@log_execution_time()
 def update_schedule(season="Current", db_path=DB_PATH):
     """
     Fetches and updates the NBA schedule for a given season in the database.
@@ -57,7 +57,7 @@ def update_schedule(season="Current", db_path=DB_PATH):
     save_schedule(games, season, db_path)
 
 
-@log_execution_time(average_over=None)
+@log_execution_time()
 def fetch_schedule(season):
     """
     Fetches the NBA schedule for a given season.
@@ -133,12 +133,11 @@ def fetch_schedule(season):
         return []
 
 
-@log_execution_time(average_over=None)
+@log_execution_time()
 def save_schedule(games, season, db_path=DB_PATH):
     """
     Saves the NBA schedule to the database. This function first checks the validity of the data,
-    then performs a DELETE operation to remove old records for the given season,
-    followed by an INSERT operation for the new games.
+    then updates the database by adding new records, updating existing ones, and removing obsolete records.
 
     Parameters:
     games (list): A list of game dictionaries to be saved.
@@ -153,6 +152,8 @@ def save_schedule(games, season, db_path=DB_PATH):
         logging.error("No games fetched. Skipping database update to avoid data loss.")
         return False
 
+    game_ids = [game["gameId"] for game in games]
+
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
 
@@ -163,35 +164,101 @@ def save_schedule(games, season, db_path=DB_PATH):
             )
             return False
 
-        # Delete old records for the given season
-        delete_sql = "DELETE FROM Games WHERE season = ?"
-        cursor.execute(delete_sql, (season,))
+        # Check if all games belong to the same season
+        if any(game["season"] != season for game in games):
+            logging.error(
+                "Inconsistent season data. All games must belong to the same season."
+            )
+            return False
 
-        # Insert new game records
-        insert_sql = """
-        INSERT INTO Games
-        (game_id, date_time_est, home_team, away_team, status, season, season_type)
-        VALUES (:gameId, :gameDateTimeEst, :homeTeam, :awayTeam, :gameStatus, :season, :seasonType)
-        """
+        # Start transaction
+        cursor.execute("BEGIN TRANSACTION")
 
-        for game in games:
+        try:
+            # Count records to be deleted
             cursor.execute(
-                insert_sql,
-                {
-                    "gameId": game["gameId"],
-                    "gameDateTimeEst": game["gameDateTimeEst"],
-                    "homeTeam": game["homeTeam"],
-                    "awayTeam": game["awayTeam"],
-                    "gameStatus": game["gameStatus"],
-                    "season": game["season"],
-                    "seasonType": game["seasonType"],
-                },
+                f"SELECT COUNT(*) FROM Games WHERE season = ? AND game_id NOT IN ({','.join('?' * len(game_ids))})",
+                [season] + game_ids,
+            )
+            removed_count = cursor.fetchone()[0]
+
+            # Delete records not in the new data
+            cursor.execute(
+                f"DELETE FROM Games WHERE season = ? AND game_id NOT IN ({','.join('?' * len(game_ids))})",
+                [season] + game_ids,
             )
 
-        conn.commit()
-        logging.info(f"Successfully saved {len(games)} games for season {season}.")
+            added_count = 0
+            updated_count = 0
 
-        return True
+            # Check existing records
+            existing_games = {}
+            cursor.execute(
+                f"SELECT game_id, date_time_est, home_team, away_team, status, season, season_type FROM Games WHERE game_id IN ({','.join('?' * len(game_ids))})",
+                game_ids,
+            )
+            for row in cursor.fetchall():
+                existing_games[row[0]] = row
+
+            # Insert or replace new and updated game records
+            insert_sql = """
+            INSERT INTO Games (game_id, date_time_est, home_team, away_team, status, season, season_type, pre_game_data_finalized, game_data_finalized)
+            VALUES (:gameId, :gameDateTimeEst, :homeTeam, :awayTeam, :gameStatus, :season, :seasonType,
+                COALESCE((SELECT pre_game_data_finalized FROM Games WHERE game_id = :gameId), 0),
+                COALESCE((SELECT game_data_finalized FROM Games WHERE game_id = :gameId), 0))
+            ON CONFLICT(game_id) DO UPDATE SET
+                date_time_est=excluded.date_time_est,
+                home_team=excluded.home_team,
+                away_team=excluded.away_team,
+                status=excluded.status,
+                season=excluded.season,
+                season_type=excluded.season_type
+            """
+
+            for game in games:
+                game_id = game["gameId"]
+                if game_id not in existing_games:
+                    added_count += 1
+                else:
+                    existing_game = existing_games[game_id]
+                    if (
+                        game["gameDateTimeEst"] != existing_game[1]
+                        or game["homeTeam"] != existing_game[2]
+                        or game["awayTeam"] != existing_game[3]
+                        or game["gameStatus"] != existing_game[4]
+                        or game["season"] != existing_game[5]
+                        or game["seasonType"] != existing_game[6]
+                    ):
+                        updated_count += 1
+
+                cursor.execute(
+                    insert_sql,
+                    {
+                        "gameId": game["gameId"],
+                        "gameDateTimeEst": game["gameDateTimeEst"],
+                        "homeTeam": game["homeTeam"],
+                        "awayTeam": game["awayTeam"],
+                        "gameStatus": game["gameStatus"],
+                        "season": game["season"],
+                        "seasonType": game["seasonType"],
+                    },
+                )
+
+            # Commit transaction
+            conn.commit()
+
+            logging.info(
+                f"Successfully processed {len(games)} games for season {season}."
+            )
+            logging.info(
+                f"Records added: {added_count}, updated: {updated_count}, removed: {removed_count}."
+            )
+            return True
+        except Exception as e:
+            # Rollback transaction on error
+            conn.rollback()
+            logging.error(f"Error saving schedule: {e}")
+            raise e
 
 
 def determine_current_season():

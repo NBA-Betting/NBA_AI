@@ -21,7 +21,7 @@ Helper Functions for Feature Creation:
 
 Usage:
 - Typically run as part of a larger data processing pipeline.
-- Script can be run directly from the command line to generate and save feature sets for specific games.
+- Script can be run directly from the command line (project root) to generate and save feature sets for specific games.
     python -m src.features --save --game_ids=0042300401,0022300649 --log_level=DEBUG
 - Successful execution will log the number of games processed and the time taken to generate the feature sets.
 """
@@ -127,10 +127,11 @@ def create_feature_sets(prior_states_dict, db_path=DB_PATH):
         features_dict[game_id] = features_df.to_dict(orient="records")[0]
 
     logging.info(f"Feature sets created successfully for {len(features_dict)} games.")
-    example_game_id, example_features = next(iter(features_dict.items()))
-    logging.debug(
-        f"Example feature set - Game Id {example_game_id}: {example_features}"
-    )
+    if features_dict:
+        example_game_id, example_features = next(iter(features_dict.items()))
+        logging.debug(
+            f"Example feature set - Game Id {example_game_id}: {example_features}"
+        )
 
     return features_dict
 
@@ -172,7 +173,8 @@ def save_feature_sets(feature_sets, db_path=DB_PATH):
         conn.commit()
 
     logging.info("Feature sets saved successfully.")
-    logging.debug(f"Example record: {data[0]}")
+    if data:
+        logging.debug(f"Example record: {data[0]}")
 
 
 @log_execution_time(average_over="game_ids")
@@ -209,10 +211,11 @@ def load_feature_sets(game_ids, db_path=DB_PATH):
         }
 
     logging.info(f"Feature sets loaded successfully for {len(feature_sets)} games.")
-    example_game_id, example_features = next(iter(feature_sets.items()))
-    logging.debug(
-        f"Example feature set - Game Id {example_game_id}: {example_features}"
-    )
+    if feature_sets:
+        example_game_id, example_features = next(iter(feature_sets.items()))
+        logging.debug(
+            f"Example feature set - Game Id {example_game_id}: {example_features}"
+        )
 
     return feature_sets
 

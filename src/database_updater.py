@@ -1,5 +1,33 @@
+"""
+database_updater.py
+
+Description:
+This module handles the core process of updating the database with game data, including schedule updates, play-by-play logs,
+game states, prior states, feature sets, and predictions.
+It consists of functions to:
+- Update the schedule for a given season.
+- Update play-by-play logs and game states for games needing updates.
+- Update prior states and feature sets for games with incomplete pre-game data.
+- Update predictions for games needing updated predictions.
+
+Functions:
+    - update_database(season="Current", predictor=None, db_path=DB_PATH): Orchestrates the full update process for the specified season.
+    - update_game_data(season, db_path=DB_PATH): Updates play-by-play logs and game states for games needing updates.
+    - update_pre_game_data(season, db_path=DB_PATH): Updates prior states and feature sets for games with incomplete pre-game data.
+    - update_predictions(season, predictor, db_path=DB_PATH): Generates and saves predictions for upcoming games.
+    - get_games_needing_game_state_update(season, db_path=DB_PATH): Retrieves game_ids for games needing game state updates.
+    - get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH): Retrieves game_ids for games with incomplete pre-game data.
+    - get_games_for_prediction_update(season, predictor, db_path=DB_PATH): Retrieves game_ids for games needing updated predictions.
+    - main(): Main function to handle command-line arguments and orchestrate the update process.
+
+Usage:
+- Typically run as part of a larger data processing pipeline.
+- Script can be run directly from the command line (project root) to update the database with the latest game data and predictions.
+    python -m src.database_updater --log_level=DEBUG --season=2023-2024 --predictor=Random
+- Successful execution will update the database with the latest game data and predictions for the specified season.
+"""
+
 import argparse
-import logging
 import sqlite3
 
 from src.config import config
@@ -16,7 +44,19 @@ from src.utils import log_execution_time, lookup_basic_game_info
 DB_PATH = config["database"]["path"]
 
 
+@log_execution_time()
 def update_database(season="Current", predictor=None, db_path=DB_PATH):
+    """
+    Orchestrates the full update process for the specified season.
+
+    Parameters:
+        season (str): The season to update (default is "Current").
+        predictor: The prediction model to use (default is None).
+        db_path (str): The path to the database (default is from config).
+
+    Returns:
+        None
+    """
     # STEP 1: Update Schedule
     update_schedule(season)
     # STEP 2: Update Game Data (Play-by-Play Logs, Game States)
@@ -30,6 +70,16 @@ def update_database(season="Current", predictor=None, db_path=DB_PATH):
 
 @log_execution_time()
 def update_game_data(season, db_path=DB_PATH):
+    """
+    Updates play-by-play logs and game states for games needing updates.
+
+    Parameters:
+        season (str): The season to update.
+        db_path (str): The path to the database (default is from config).
+
+    Returns:
+        None
+    """
     game_ids = get_games_needing_game_state_update(season, db_path)
     basic_game_info = lookup_basic_game_info(game_ids, db_path)
     pbp_data = get_pbp(game_ids)
@@ -50,6 +100,16 @@ def update_game_data(season, db_path=DB_PATH):
 
 @log_execution_time()
 def update_pre_game_data(season, db_path=DB_PATH):
+    """
+    Updates prior states and feature sets for games with incomplete pre-game data.
+
+    Parameters:
+        season (str): The season to update.
+        db_path (str): The path to the database (default is from config).
+
+    Returns:
+        None
+    """
     game_ids = get_games_with_incomplete_pre_game_data(season, db_path)
     prior_states_needed = determine_prior_states_needed(game_ids, db_path)
     prior_states_dict = load_prior_states(prior_states_needed, db_path)
@@ -81,6 +141,17 @@ def update_pre_game_data(season, db_path=DB_PATH):
 
 @log_execution_time()
 def update_predictions(season, predictor, db_path=DB_PATH):
+    """
+    Generates and saves predictions for upcoming games.
+
+    Parameters:
+        season (str): The season to update.
+        predictor: The prediction model to use.
+        db_path (str): The path to the database (default is from config).
+
+    Returns:
+        None
+    """
     game_ids = get_games_for_prediction_update(season, predictor, db_path)
     feature_sets = load_feature_sets(game_ids, db_path)
     predictions = make_predictions(feature_sets, predictor)
@@ -90,18 +161,14 @@ def update_predictions(season, predictor, db_path=DB_PATH):
 @log_execution_time()
 def get_games_needing_game_state_update(season, db_path=DB_PATH):
     """
-    Identify games that need to have their data updated for a given season.
+    Retrieves game_ids for games needing game state updates.
 
-    This function filters games by the specified season and checks for
-    completed games that have not yet been marked as fully updated in terms
-    of play-by-play logs and game states.
-
-    Args:
-        season: The season to filter games by (e.g., '2023-2024').
-        db_path: The file path to the SQLite database. Default to DB_PATH from config.
+    Parameters:
+        season (str): The season to filter games by.
+        db_path (str): The path to the database (default is from config).
 
     Returns:
-        A list of game_ids for games that need to be updated.
+        list: A list of game_ids for games that need to be updated.
     """
     with sqlite3.connect(db_path) as db_connection:
         cursor = db_connection.cursor()
@@ -126,21 +193,15 @@ def get_games_needing_game_state_update(season, db_path=DB_PATH):
 @log_execution_time()
 def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
     """
-    Retrieves game_ids for games that should have their pre_game_data_finalized flag set to True but do not.
-
-    The function checks:
-    1. Games in the specified season with status 'Completed' or 'In Progress' and pre_game_data_finalized = 0.
-    2. Games in the specified season with status 'Not Started' where all prior games involving the teams
-       (home team or away team) have game_data_finalized = True.
+    Retrieves game_ids for games with incomplete pre-game data.
 
     Parameters:
-    season (str): The season to filter games by.
-    db_path (str): Path to the SQLite database file.
+        season (str): The season to filter games by.
+        db_path (str): The path to the database (default is from config).
 
     Returns:
-    list: List of game_ids that need to have their pre_game_data_finalized flag updated.
+        list: A list of game_ids that need to have their pre_game_data_finalized flag updated.
     """
-
     query = """
     SELECT game_id
     FROM Games
@@ -176,15 +237,15 @@ def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
 @log_execution_time()
 def get_games_for_prediction_update(season, predictor, db_path=DB_PATH):
     """
-    Get game IDs that need updated predictions for a given season and predictor.
+    Retrieves game_ids for games needing updated predictions.
 
     Parameters:
-    season (str): The season to filter games by.
-    predictor (str): The predictor to check for existing predictions.
-    db_path (str): The path to the SQLite database file.
+        season (str): The season to update.
+        predictor (str): The predictor to check for existing predictions.
+        db_path (str): The path to the database (default is from config).
 
     Returns:
-    list: A list of game_ids that need updated predictions.
+        list: A list of game_ids that need updated predictions.
     """
     query = """
         SELECT g.game_id
@@ -200,12 +261,14 @@ def get_games_for_prediction_update(season, predictor, db_path=DB_PATH):
         cursor.execute(query, (predictor, season))
         result = cursor.fetchall()
 
-    return result
+    game_ids = [row[0] for row in result]
+
+    return game_ids
 
 
 def main():
     """
-    Main function to update the database with the latest game data and predictions.
+    Main function to handle command-line arguments and orchestrate the update process.
     """
     parser = argparse.ArgumentParser(
         description="Update the database with the latest game data and predictions."

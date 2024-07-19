@@ -119,6 +119,8 @@ def log_execution_time(average_over=None):
 
                 if items_to_average is not None and len(items_to_average) > 0:
                     avg_time_per_item = duration / len(items_to_average)
+                else:
+                    avg_time_per_item = 0
 
             if average_over:
                 logging.info(

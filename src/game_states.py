@@ -223,7 +223,8 @@ def save_game_states(game_states, db_path=DB_PATH):
     else:
         logging.error("Some game states were not saved successfully")
 
-    logging.debug(f"Example record: {data_to_insert[0]}")
+    if game_states:
+        logging.debug(f"Example record: {data_to_insert[0]}")
 
     return overall_success
 

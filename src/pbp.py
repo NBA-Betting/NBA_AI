@@ -175,7 +175,8 @@ def save_pbp(pbp_data, db_path=DB_PATH):
     else:
         logging.warning("Some play-by-play logs were not saved successfully.")
 
-    logging.debug(f"Example record: {data_to_insert[0]}")
+    if pbp_data:
+        logging.debug(f"Example record: {data_to_insert[0]}")
 
     return overall_success
 

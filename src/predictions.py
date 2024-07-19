@@ -324,7 +324,8 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
         conn.commit()
 
     logging.info("Predictions saved successfully.")
-    logging.debug(f"Example record: {data[0]}")
+    if data:
+        logging.debug(f"Example record: {data[0]}")
 
 
 def main():
