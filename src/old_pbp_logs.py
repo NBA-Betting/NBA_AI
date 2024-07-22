@@ -15,8 +15,8 @@ from tqdm import tqdm
 # Add the parent directory to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ..prior_states import get_prior_states
-from ..utils import lookup_basic_game_info, update_scheduled_games
+from .prior_states import get_prior_states
+from .utils import lookup_basic_game_info, update_scheduled_games
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
