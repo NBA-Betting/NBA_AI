@@ -22,6 +22,7 @@ Usage:
 import argparse
 import json
 import logging
+import re
 import sqlite3
 from copy import deepcopy
 
@@ -54,6 +55,10 @@ def create_game_states(games_info):
     Returns:
     dict: A dictionary where the keys are game IDs and the values are lists of dictionaries representing the game states.
           If an error occurs, an empty dictionary is returned.
+
+    The function handles two types of play-by-play log sources:
+    1. Logs from the live endpoint (contains 'orderNumber')
+    2. Logs from the stats endpoint on NBA.com (contains 'actionId')
     """
 
     def duration_to_seconds(duration_str):
@@ -86,7 +91,7 @@ def create_game_states(games_info):
                 key=lambda x: (
                     x["period"],
                     -duration_to_seconds(x["clock"]),
-                    x["orderNumber"],
+                    x.get("orderNumber", x.get("actionId")),
                 ),
             )
 
@@ -96,39 +101,90 @@ def create_game_states(games_info):
             game_states[game_id] = []
             players = {"home": {}, "away": {}}
 
-            for row in logs:
-                if (
-                    row.get("personId") is not None
-                    and row.get("playerNameI") is not None
-                ):
-                    team = "home" if row["teamTricode"] == home else "away"
-                    player_id = row["personId"]
-                    player_name = row["playerNameI"]
+            # Check if the first log has orderNumber to decide which logic to use
+            if "orderNumber" in logs[0]:
+                # Logic for logs from the live endpoint (includes orderNumber)
+                for row in logs:
+                    if (
+                        row.get("personId") is not None
+                        and row.get("playerNameI") is not None
+                    ):
+                        team = "home" if row["teamTricode"] == home else "away"
+                        player_id = row["personId"]
+                        player_name = row["playerNameI"]
 
-                    if player_id not in players[team]:
-                        players[team][player_id] = {"name": player_name, "points": 0}
+                        if player_id not in players[team]:
+                            players[team][player_id] = {
+                                "name": player_name,
+                                "points": 0,
+                            }
 
-                    if row.get("pointsTotal") is not None:
-                        points = int(row["pointsTotal"])
-                        players[team][player_id]["points"] = points
+                        if row.get("pointsTotal") is not None:
+                            points = int(row["pointsTotal"])
+                            players[team][player_id]["points"] = points
 
-                current_game_state = {
-                    "game_id": game_id,
-                    "play_id": int(row["orderNumber"]),
-                    "game_date": game_date,
-                    "home": home,
-                    "away": away,
-                    "clock": row["clock"],
-                    "period": int(row["period"]),
-                    "home_score": int(row["scoreHome"]),
-                    "away_score": int(row["scoreAway"]),
-                    "total": int(row["scoreHome"]) + int(row["scoreAway"]),
-                    "home_margin": int(row["scoreHome"]) - int(row["scoreAway"]),
-                    "is_final_state": row["description"] == "Game End",
-                    "players_data": deepcopy(players),
-                }
+                    current_game_state = {
+                        "game_id": game_id,
+                        "play_id": int(row["orderNumber"]),
+                        "game_date": game_date,
+                        "home": home,
+                        "away": away,
+                        "clock": row["clock"],
+                        "period": int(row["period"]),
+                        "home_score": int(row["scoreHome"]),
+                        "away_score": int(row["scoreAway"]),
+                        "total": int(row["scoreHome"]) + int(row["scoreAway"]),
+                        "home_margin": int(row["scoreHome"]) - int(row["scoreAway"]),
+                        "is_final_state": row["description"] == "Game End",
+                        "players_data": deepcopy(players),
+                    }
 
-                game_states[game_id].append(current_game_state)
+                    game_states[game_id].append(current_game_state)
+            else:
+                # Logic for logs from the stats endpoint on NBA.com (includes actionId)
+                current_home_score = 0
+                current_away_score = 0
+
+                for i, row in enumerate(logs):
+                    if row.get("personId") and row.get("playerNameI"):
+                        team = "home" if row["teamTricode"] == home else "away"
+                        player_id = row["personId"]
+                        player_name = row["playerNameI"]
+
+                        if player_id not in players[team]:
+                            players[team][player_id] = {
+                                "name": player_name,
+                                "points": 0,
+                            }
+
+                        match = re.search(r"\((\d+) PTS\)", row.get("description", ""))
+                        if match:
+                            points = int(match.group(1))
+                            players[team][player_id]["points"] = points
+
+                    if row.get("scoreHome"):
+                        current_home_score = int(row["scoreHome"])
+                    if row.get("scoreAway"):
+                        current_away_score = int(row["scoreAway"])
+
+                    current_game_state = {
+                        "game_id": game_id,
+                        "play_id": int(row["actionId"]),
+                        "game_date": game_date,
+                        "home": home,
+                        "away": away,
+                        "clock": row["clock"],
+                        "period": int(row["period"]),
+                        "home_score": current_home_score,
+                        "away_score": current_away_score,
+                        "total": current_home_score + current_away_score,
+                        "home_margin": current_home_score - current_away_score,
+                        "is_final_state": (i == len(logs) - 1)
+                        and (row.get("subType") == "end"),
+                        "players_data": deepcopy(players),
+                    }
+
+                    game_states[game_id].append(current_game_state)
 
     except Exception as e:
         logging.error(f"An error occurred while creating game states: {e}")
@@ -172,6 +228,11 @@ def save_game_states(game_states, db_path=DB_PATH):
 
                 try:
                     conn.execute("BEGIN")
+
+                    # Delete existing game states for the game_id
+                    conn.execute("DELETE FROM GameStates WHERE game_id = ?", (game_id,))
+
+                    # Insert new game states for the game_id
                     data_to_insert = [
                         (
                             game_id,
@@ -193,7 +254,7 @@ def save_game_states(game_states, db_path=DB_PATH):
 
                     conn.executemany(
                         """
-                        INSERT OR REPLACE INTO GameStates (game_id, play_id, game_date, home, away, clock, period, home_score, away_score, total, home_margin, is_final_state, players_data)
+                        INSERT INTO GameStates (game_id, play_id, game_date, home, away, clock, period, home_score, away_score, total, home_margin, is_final_state, players_data)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         data_to_insert,
@@ -224,7 +285,8 @@ def save_game_states(game_states, db_path=DB_PATH):
         logging.error("Some game states were not saved successfully")
 
     if game_states:
-        logging.debug(f"Example record: {data_to_insert[0]}")
+        logging.debug(f"Example record (First): {data_to_insert[0]}")
+        logging.debug(f"Example record (Last): {data_to_insert[-1]}")
 
     return overall_success
 
