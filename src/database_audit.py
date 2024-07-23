@@ -142,7 +142,7 @@ def get_log_data_issues(cursor, season):
     cursor.execute(
         """
         SELECT g.game_id,
-               NOT (COALESCE(p.count, 0) BETWEEN 300 AND 700 AND COALESCE(s.count, 0) BETWEEN 300 AND 700 AND COALESCE(p.count, 0) = COALESCE(s.count, 0)) AS log_data_issue
+               NOT (COALESCE(p.count, 0) BETWEEN 300 AND 800 AND COALESCE(s.count, 0) BETWEEN 300 AND 800 AND COALESCE(p.count, 0) = COALESCE(s.count, 0)) AS log_data_issue
         FROM Games g
         LEFT JOIN (
             SELECT game_id, COUNT(*) as count FROM PbP_Logs GROUP BY game_id
