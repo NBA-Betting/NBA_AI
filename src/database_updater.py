@@ -14,7 +14,7 @@ Functions:
     - update_database(season="Current", predictor=None, db_path=DB_PATH): Orchestrates the full update process for the specified season.
     - update_game_data(season, db_path=DB_PATH): Updates play-by-play logs and game states for games needing updates.
     - update_pre_game_data(season, db_path=DB_PATH): Updates prior states and feature sets for games with incomplete pre-game data.
-    - update_predictions(season, predictor, db_path=DB_PATH): Generates and saves predictions for upcoming games.
+    - update_prediction_data(season, predictor, db_path=DB_PATH): Generates and saves predictions for upcoming games.
     - get_games_needing_game_state_update(season, db_path=DB_PATH): Retrieves game_ids for games needing game state updates.
     - get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH): Retrieves game_ids for games with incomplete pre-game data.
     - get_games_for_prediction_update(season, predictor, db_path=DB_PATH): Retrieves game_ids for games needing updated predictions.
@@ -35,7 +35,7 @@ from src.features import create_feature_sets, load_feature_sets, save_feature_se
 from src.game_states import create_game_states, save_game_states
 from src.logging_config import setup_logging
 from src.pbp import get_pbp, save_pbp
-from src.predictions import make_predictions, save_predictions
+from src.predictions import make_pre_game_predictions, save_predictions
 from src.prior_states import determine_prior_states_needed, load_prior_states
 from src.schedule import update_schedule
 from src.utils import log_execution_time, lookup_basic_game_info
@@ -65,7 +65,7 @@ def update_database(season="Current", predictor=None, db_path=DB_PATH):
     update_pre_game_data(season, db_path)
     # STEP 4: Update Predictions
     if predictor:
-        update_predictions(season, predictor, db_path)
+        update_prediction_data(season, predictor, db_path)
 
 
 @log_execution_time()
@@ -140,7 +140,7 @@ def update_pre_game_data(season, db_path=DB_PATH):
 
 
 @log_execution_time()
-def update_predictions(season, predictor, db_path=DB_PATH):
+def update_prediction_data(season, predictor, db_path=DB_PATH):
     """
     Generates and saves predictions for upcoming games.
 
@@ -154,7 +154,7 @@ def update_predictions(season, predictor, db_path=DB_PATH):
     """
     game_ids = get_games_for_prediction_update(season, predictor, db_path)
     feature_sets = load_feature_sets(game_ids, db_path)
-    predictions = make_predictions(feature_sets, predictor)
+    predictions = make_pre_game_predictions(feature_sets, predictor)
     save_predictions(predictions, predictor, db_path)
 
 
@@ -177,7 +177,8 @@ def get_games_needing_game_state_update(season, db_path=DB_PATH):
             """
             SELECT game_id 
             FROM Games 
-            WHERE season = ? 
+            WHERE season = ?
+              AND season_type IN ('Regular Season', 'Post Season') 
               AND (status = 'Completed' OR status = 'In Progress')
               AND game_data_finalized = False;
         """,
@@ -206,6 +207,7 @@ def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
     SELECT game_id
     FROM Games
     WHERE season = ?
+      AND season_type IN ("Regular Season", "Post Season")
       AND pre_game_data_finalized = 0
       AND (status = 'Completed' OR status = 'In Progress')
     
@@ -214,6 +216,7 @@ def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
     SELECT g1.game_id
     FROM Games g1
     WHERE g1.season = ?
+      AND g1.season_type IN ("Regular Season", "Post Season")
       AND g1.pre_game_data_finalized = 0
       AND g1.status = 'Not Started'
       AND NOT EXISTS (
@@ -252,6 +255,7 @@ def get_games_for_prediction_update(season, predictor, db_path=DB_PATH):
         FROM Games g
         LEFT JOIN Predictions p ON g.game_id = p.game_id AND p.predictor = ?
         WHERE g.season = ?
+            AND g.season_type IN ("Regular Season", "Post Season")
             AND g.pre_game_data_finalized = 1
             AND p.game_id IS NULL
         """

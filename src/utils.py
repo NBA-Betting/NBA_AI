@@ -1,8 +1,34 @@
+"""
+utils.py
+
+This module provides utility functions and classes for managing and processing NBA data, including 
+database interactions, HTTP request handling, and data validation. It includes functions for looking 
+up game information, validating game IDs and dates, and converting between different NBA team identifiers.
+
+Core Functions:
+- lookup_basic_game_info(game_ids, db_path=DB_PATH): Retrieves basic game information for given game IDs from the database.
+- log_execution_time(average_over=None): A decorator to log the execution time of functions.
+- requests_retry_session(retries=3, backoff_factor=0.3, status_forcelist=(500, 502, 504), session=None, timeout=10): Creates an HTTP session with retry logic for handling transient errors.
+- game_id_to_season(game_id, abbreviate=False): Converts a game ID to a season string.
+- validate_game_ids(game_ids): Validates game IDs.
+- validate_date_format(date): Validates that a date string is in the format "YYYY-MM-DD".
+- validate_season_format(season, abbreviated=False): Validates the format of a season string.
+- date_to_season(date_str): Converts a date to the corresponding NBA season.
+
+Classes:
+- NBATeamConverter: A class for converting between various identifiers of NBA teams such as team ID, abbreviation, short name, and full name.
+
+Usage:
+- This module can be used to support data validation and transformation tasks in an NBA data pipeline.
+- Functions are typically called to validate inputs, fetch data from the database, or format data for display.
+"""
+
 import logging
 import os
 import re
 import sqlite3
 import time
+from datetime import datetime
 from functools import wraps
 
 import requests
@@ -10,7 +36,6 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
 from src.config import config
-from src.logging_config import setup_logging
 
 # Configuration values
 DB_PATH = config["database"]["path"]
@@ -20,12 +45,13 @@ def lookup_basic_game_info(game_ids, db_path=DB_PATH):
     """
     Looks up basic game information given a game_id or a list of game_ids from the Games table in the SQLite database.
 
-    Parameters:
-    game_ids (str or list): The ID of the game or a list of game IDs to look up.
-    db_path (str): The path to the SQLite database. Defaults to the value in the config file.
+    Args:
+        game_ids (str or list): The ID of the game or a list of game IDs to look up.
+        db_path (str): The path to the SQLite database. Defaults to the value in the config file.
 
     Returns:
-    dict: A dictionary with game IDs as keys and each value being a dictionary representing a game. Each game dictionary contains the home team, away team, date/time, status, season, and season type.
+        dict: A dictionary with game IDs as keys and each value being a dictionary representing a game.
+              Each game dictionary contains the home team, away team, date/time, status, season, and season type.
     """
     if not isinstance(game_ids, list):
         game_ids = [game_ids]
@@ -66,13 +92,12 @@ def log_execution_time(average_over=None):
     """
     Decorator that logs the execution time of a function and optionally averages the time over the output or a specified input.
 
-    Parameters:
+    Args:
         average_over (str or None): Specifies what to average over. Can be None, "output", or the name of an input argument.
 
     Returns:
         function: The wrapped function with added logging for execution time.
     """
-
     if average_over not in (None, "output") and not isinstance(average_over, str):
         raise ValueError(
             "average_over must be None, 'output', or a string representing an input argument name."
@@ -146,15 +171,15 @@ def requests_retry_session(
     """
     Creates a session with retry logic for handling transient HTTP errors.
 
-    Parameters:
-    retries (int): The number of retry attempts.
-    backoff_factor (float): The backoff factor for retries.
-    status_forcelist (tuple): A set of HTTP status codes to trigger a retry.
-    session (requests.Session): An existing session to use, or None to create a new one.
-    timeout (int): The timeout for the request.
+    Args:
+        retries (int): The number of retry attempts.
+        backoff_factor (float): The backoff factor for retries.
+        status_forcelist (tuple): A set of HTTP status codes to trigger a retry.
+        session (requests.Session): An existing session to use, or None to create a new one.
+        timeout (int): The timeout for the request.
 
     Returns:
-    requests.Session: A session configured with retry logic.
+        requests.Session: A session configured with retry logic.
     """
     session = session or requests.Session()
     retry = Retry(
@@ -169,101 +194,6 @@ def requests_retry_session(
     session.mount("https://", adapter)
     session.timeout = timeout
     return session
-
-
-def print_game_info(game_info):
-    are_game_states_finalized = any(
-        state["is_final_state"] for state in reversed(game_info["game_states"])
-    )
-    print()
-    print("-" * 50)
-    print("Game ID:", game_info["game_id"])
-    print("Game Date:", game_info["game_date"])
-    print("Game Time (EST):", game_info["game_time_est"])
-    print("Home Team:", game_info["home"])
-    print("Away Team:", game_info["away"])
-    print("Game Status:", game_info["game_status"])
-    print("Play-by-Play Log Count:", len(game_info["pbp_logs"]))
-    print("Game States Count:", len(game_info["game_states"]))
-    print("Are Game States Finalized:", are_game_states_finalized)
-    if game_info.get("prior_states"):
-        if game_info["prior_states"]:
-            print(
-                f"Prior States Count: Home-{len(game_info['prior_states']['home_prior_states'])} Away-{len(game_info['prior_states']['away_prior_states'])}"
-            )
-            print(
-                "Are Prior States Finalized:",
-                game_info["prior_states"]["are_prior_states_finalized"],
-            )
-    if game_info.get("game_states"):
-        if game_info["game_states"]:
-            most_recent_state = game_info["game_states"][-1]
-            print("Most Recent State:")
-            print("  Remaining Time:", most_recent_state["clock"])
-            print("  Period:", most_recent_state["period"])
-            print("  Home Score:", most_recent_state["home_score"])
-            print("  Away Score:", most_recent_state["away_score"])
-            print("  Total Score:", most_recent_state["total"])
-            print("  Home Margin:", most_recent_state["home_margin"])
-            print("Players:")
-            for team, players in most_recent_state["players_data"].items():
-                print(f"  {team.title()} Team:")
-                sorted_players = sorted(
-                    players.items(), key=lambda x: x[1]["points"], reverse=True
-                )
-                for player_id, player_info in sorted_players:
-                    print(f"    {player_info['name']}: {player_info['points']} points")
-        else:
-            print("No game states available.")
-    print("-" * 50)
-    print()
-
-
-def get_games_for_date(date, db_path):
-    """
-    Fetches the NBA games for a given date from the Games table in the SQLite database.
-
-    Parameters:
-    date (str): The date to fetch the games for, formatted as 'YYYY-MM-DD'.
-    db_path (str): The path to the SQLite database.
-
-    Returns:
-    list: A list of dictionaries, each representing a game. Each dictionary contains the game ID, status, date/time, and the home and away teams.
-    """
-
-    # Validate the date format
-    validate_date_format(date)
-
-    # Prepare the SQL statement to fetch the games
-    sql = """
-    SELECT game_id, home_team, away_team, date_time_est, status
-    FROM Games
-    WHERE date(date_time_est) = :date
-    """
-
-    # Use a context manager to handle the database connection
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-
-        # Execute the SQL statement with the date
-        cursor.execute(sql, {"date": date})
-
-        # Fetch the games from the database
-        games = cursor.fetchall()
-
-    # Convert the games to a list of dictionaries
-    games_on_date = [
-        {
-            "game_id": game[0],
-            "home_team": game[1],
-            "away_team": game[2],
-            "date_time_est": game[3],
-            "status": game[4],
-        }
-        for game in games
-    ]
-
-    return games_on_date
 
 
 def game_id_to_season(game_id, abbreviate=False):
@@ -327,12 +257,12 @@ def validate_game_ids(game_ids):
         ):
             invalid_game_ids.append(game_id)
             logging.warning(
-                f"Invalid game ID {game_id}. Game ID must be a 10-digit string starting with '00'. Example: '0022100001'. Official NBA.com Game ID"
+                f"Invalid game ID {game_id}. Game ID must be a 10-digit string starting with '00'. Example: '0022100001'."
             )
 
     if invalid_game_ids:
         raise ValueError(
-            f"Invalid game IDs: {invalid_game_ids}. Each game ID must be a 10-digit string starting with '00'. Example: '0022100001'. Official NBA.com Game ID"
+            f"Invalid game IDs: {invalid_game_ids}. Each game ID must be a 10-digit string starting with '00'. Example: '0022100001'."
         )
 
 
@@ -383,12 +313,12 @@ def validate_season_format(season, abbreviated=False):
     """
     Validates the format of a season string.
 
-    Parameters:
-    season (str): The season string to validate, formatted as 'XXXX-XX' or 'XXXX-XXXX'.
-    abbreviated (bool): Whether the second year in the season string is abbreviated.
+    Args:
+        season (str): The season string to validate, formatted as 'XXXX-XX' or 'XXXX-XXXX'.
+        abbreviated (bool): Whether the second year in the season string is abbreviated.
 
     Raises:
-    ValueError: If the season string does not match the required format or if the second year does not logically follow the first year.
+        ValueError: If the season string does not match the required format or if the second year does not logically follow the first year.
     """
     FULL_SEASON_PATTERN = r"^(\d{4})-(\d{4})$"
     ABBREVIATED_SEASON_PATTERN = r"^(\d{4})-(\d{2})$"
@@ -419,6 +349,45 @@ def validate_season_format(season, abbreviated=False):
         raise ValueError(
             f"Season years must be between 1900 and 2100. {year1}-{year2} is not a valid season."
         )
+
+
+def date_to_season(date_str):
+    """
+    Converts a date to the NBA season.
+
+    The typical cutoff date between seasons is June 30th.
+    Special cases are handled for seasons affected by lockouts and COVID-19.
+
+    Args:
+        date_str (str): The date in YYYY-MM-DD format.
+
+    Returns:
+        str: The season in YYYY-YYYY format.
+    """
+    # Validate the date format
+    validate_date_format(date_str)
+
+    date = datetime.strptime(date_str, "%Y-%m-%d")
+
+    # Special cases for lockout and COVID-19 seasons (full league year)
+    special_cases = [
+        ("2011-2012", datetime(2011, 7, 1), datetime(2012, 6, 30)),
+        ("2019-2020", datetime(2019, 7, 1), datetime(2020, 10, 11)),
+        ("2020-2021", datetime(2020, 10, 12), datetime(2021, 7, 20)),
+    ]
+
+    for season, start, end in special_cases:
+        if start <= date <= end:
+            return season
+
+    # General case
+    year = date.year
+    if date.month > 6 or (
+        date.month == 6 and date.day > 30
+    ):  # After June 30th, it's the next season
+        return f"{year}-{year + 1}"
+    else:  # Before July 1st, it's the previous season
+        return f"{year - 1}-{year}"
 
 
 class NBATeamConverter:

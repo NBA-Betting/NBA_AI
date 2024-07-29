@@ -1,3 +1,25 @@
+"""
+config.py
+
+This module is responsible for loading and managing the application's configuration settings. 
+It utilizes environment variables for dynamic configuration and reads settings from a YAML file. 
+
+The module performs the following main tasks:
+1. Loads environment variables from a .env file to ensure they are available within the application.
+2. Loads configuration data from 'config.yaml', a YAML configuration file.
+3. Replaces placeholders in the configuration values with corresponding environment variables, 
+   allowing for dynamic and flexible configuration management.
+4. Computes absolute file paths for specific configuration settings, such as database paths, 
+   ensuring consistent and correct file access regardless of the working directory.
+
+Main Functions:
+- `load_config()`: Loads and processes the application configuration.
+
+Global Variables:
+- `config`: A dictionary containing the processed configuration settings, accessible globally 
+  within the application.
+"""
+
 import os
 
 import yaml

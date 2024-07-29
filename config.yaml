@@ -2,7 +2,16 @@ project:
   root: "/home/jeff/Documents/NBA_AI"  # Hardcoded project root. User needs to update when cloning and setting up project
 
 database:
-  path: "data/2023_2024_NBA_AI.sqlite"  # Relative to project root
+  path: "data/NBA_AI.sqlite"  # Relative to project root
+
+api:
+  max_game_ids: 20
+  valid_seasons: 
+    - "2023-2024"
+    - "2024-2025"
+
+web_app:
+  secret_key: ${WEB_APP_SECRET_KEY} # Stored in .env file
 
 nba_api:
   pbp_live_endpoint: "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{}.json"
