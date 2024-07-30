@@ -47,7 +47,7 @@ import torch
 from src.config import config
 from src.features import load_feature_sets
 from src.logging_config import setup_logging
-from src.modeling.mlp_model import MLP
+from src.model_training.mlp_model import MLP
 from src.utils import log_execution_time
 
 # Configuration
@@ -352,6 +352,7 @@ class BasePredictor(ABC):
                 continue
 
             if current_state.get("is_final_state"):
+                # Create the new dictionary item in updated_predictions
                 updated_predictions[game_id] = {
                     "pred_home_score": current_state["home_score"],
                     "pred_away_score": current_state["away_score"],
@@ -364,6 +365,13 @@ class BasePredictor(ABC):
                         "players_data", {"home": {}, "away": {}}
                     ),
                 }
+
+                # Modify the pred_players within the new dictionary item
+                pred_players = updated_predictions[game_id]["pred_players"]
+                for team in ["home", "away"]:
+                    for player_id, player_stats in pred_players[team].items():
+                        if "points" in player_stats:
+                            player_stats["pred_points"] = player_stats.pop("points")
                 continue
 
             pre_home = pre_game_pred["pred_home_score"]
@@ -436,7 +444,7 @@ class LinearPredictor(BasePredictor):
         dict: A dictionary of predictions, including predicted scores and win probabilities for each game.
         """
         game_ids = list(games.keys())
-        features = [games[game_id]["features"] for game_id in game_ids]
+        features = [games[game_id] for game_id in game_ids]
         features_df = pd.DataFrame(features).fillna(0)
 
         scores = self.model.predict(features_df.values)
@@ -496,7 +504,7 @@ class TreePredictor(BasePredictor):
         dict: A dictionary of predictions, including predicted scores and win probabilities for each game.
         """
         game_ids = list(games.keys())
-        features = [games[game_id]["features"] for game_id in game_ids]
+        features = [games[game_id] for game_id in game_ids]
         features_df = pd.DataFrame(features).fillna(0)
 
         scores = self.model.predict(features_df.values)
@@ -529,7 +537,6 @@ class TreePredictor(BasePredictor):
         return super().update_predictions(games)
 
 
-# !!! TODO: Rework MLP model saving and rerun training process
 class MLPPredictor(BasePredictor):
     """
     Predictor that uses a multi-layer perceptron (MLP) model to generate predictions for NBA games.
@@ -561,7 +568,7 @@ class MLPPredictor(BasePredictor):
         dict: A dictionary of predictions, including predicted scores and win probabilities for each game.
         """
         game_ids = list(games.keys())
-        features = [games[game_id]["features"] for game_id in game_ids]
+        features = [games[game_id] for game_id in game_ids]
         features_df = pd.DataFrame(features).fillna(0)  # Handle NaN values
 
         self.model.eval()
@@ -688,6 +695,10 @@ def make_pre_game_predictions(games, predictor_name):
         f"Generating {len(games)} predictions using predictor '{predictor_name}'..."
     )
 
+    if not games:
+        logging.warning("No games to predict.")
+        return {}
+
     predictor_cfg = PREDICTORS[predictor_name]
     class_name = predictor_cfg["class"]
     model_paths = predictor_cfg.get("model_paths", [])
@@ -768,6 +779,10 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
     Returns:
     None
     """
+    if not predictions:
+        logging.info("No predictions to save.")
+        return
+
     if predictor_name == "Best":
         predictor_name = PREDICTORS["Best"]
 

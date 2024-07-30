@@ -40,7 +40,8 @@ def setup_logging(log_level="INFO"):
     if not logging.getLogger().hasHandlers():
         logging.basicConfig(
             level=getattr(logging, log_level),  # Set the logging level
-            format="%(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s",
+            format="%(asctime)s-%(filename)s[%(lineno)d]-%(levelname)s: %(message)s",
+            datefmt="%H:%M",  # Set the date format to HH:MM
         )
     else:
         # If logging is already configured, just update the logging level

@@ -1,19 +1,19 @@
-import os
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import torch
-import wandb
-from dotenv import load_dotenv
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from .evaluation import create_evaluations
-from .modeling_utils import load_featurized_modeling_data
+import wandb
+from src.config import config
+from src.model_training.evaluation import create_evaluations
+from src.model_training.modeling_utils import load_featurized_modeling_data
 
-load_dotenv()
-PROJECT_ROOT = os.getenv("PROJECT_ROOT")
+# Configuration
+DB_PATH = config["database"]["path"]
+PROJECT_ROOT = config["project"]["root"]
 
 
 class MLP(nn.Module):
@@ -29,8 +29,6 @@ class MLP(nn.Module):
 
 
 if __name__ == "__main__":
-    db_path = f"{PROJECT_ROOT}/data/NBA_AI.sqlite"
-
     log_to_wandb = True  # Set to False to disable logging to Weights & Biases
     if log_to_wandb:
         run = wandb.init(project="NBA AI")
@@ -45,15 +43,40 @@ if __name__ == "__main__":
     # -------------------------
 
     # Define the seasons for training and testing
-    training_seasons = ["2020-2021", "2021-2022", "2022-2023"]
+    available_training_seasons = [
+        "2001-2002",
+        "2002-2003",
+        "2003-2004",
+        "2004-2005",
+        "2005-2006",
+        "2006-2007",
+        "2007-2008",
+        "2008-2009",
+        "2009-2010",
+        "2010-2011",
+        "2011-2012",
+        "2012-2013",
+        "2013-2014",
+        "2014-2015",
+        "2015-2016",
+        "2016-2017",
+        "2017-2018",
+        "2018-2019",
+        "2019-2020",
+        "2020-2021",
+        "2021-2022",
+        "2022-2023",
+    ]
+
+    training_seasons = available_training_seasons
     testing_seasons = ["2023-2024"]
 
     # Load featurized modeling data for the defined seasons
     print("\nLoading featurized modeling data...")
     print(f"Training seasons: {training_seasons}")
     print(f"Testing seasons: {testing_seasons}")
-    training_df = load_featurized_modeling_data(training_seasons, db_path)
-    testing_df = load_featurized_modeling_data(testing_seasons, db_path)
+    training_df = load_featurized_modeling_data(training_seasons, DB_PATH)
+    testing_df = load_featurized_modeling_data(testing_seasons, DB_PATH)
     print(f"Training data shape: {training_df.shape}")
     print(f"Testing data shape: {testing_df.shape}")
 
@@ -443,9 +466,11 @@ if __name__ == "__main__":
             "model_state_dict": final_model.state_dict(),
             "mean": final_mean,
             "std": final_std,
+            "input_size": input_size,
         },
         model_filename,
     )
+
     print(f"Model saved to {model_filename}\n")
 
     # ----------------------------------------

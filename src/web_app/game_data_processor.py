@@ -315,7 +315,7 @@ def _get_sorted_players(game, predictions):
         for player_id in all_player_ids:
             player_data = team_players.get(player_id, {})
             player_prediction = current_team_predictions.get(
-                player_id, pre_game_team_predictions.get(player_id, {})
+                player_id, current_team_predictions.get(player_id, {})
             )
 
             player_headshot_url = get_player_image(player_id, files)

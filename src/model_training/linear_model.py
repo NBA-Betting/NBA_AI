@@ -1,25 +1,24 @@
-import os
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
-import wandb
-from dotenv import load_dotenv
-from evaluation import create_evaluations
 from joblib import dump
-from modeling_utils import load_featurized_modeling_data
 from sklearn.linear_model import Ridge
 from sklearn.metrics import log_loss
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-load_dotenv()
-PROJECT_ROOT = os.getenv("PROJECT_ROOT")
+import wandb
+from src.config import config
+from src.model_training.evaluation import create_evaluations
+from src.model_training.modeling_utils import load_featurized_modeling_data
+
+# Configuration
+DB_PATH = config["database"]["path"]
+PROJECT_ROOT = config["project"]["root"]
 
 if __name__ == "__main__":
-    db_path = f"{PROJECT_ROOT}/data/NBA_AI.sqlite"
-
     log_to_wandb = True  # Set to False to disable logging to Weights & Biases
 
     model_type = "Ridge_Regression"
@@ -30,15 +29,40 @@ if __name__ == "__main__":
     # -------------------------
 
     # Define the seasons for training and testing
-    training_seasons = ["2020-2021", "2021-2022", "2022-2023"]
+    available_training_seasons = [
+        "2001-2002",
+        "2002-2003",
+        "2003-2004",
+        "2004-2005",
+        "2005-2006",
+        "2006-2007",
+        "2007-2008",
+        "2008-2009",
+        "2009-2010",
+        "2010-2011",
+        "2011-2012",
+        "2012-2013",
+        "2013-2014",
+        "2014-2015",
+        "2015-2016",
+        "2016-2017",
+        "2017-2018",
+        "2018-2019",
+        "2019-2020",
+        "2020-2021",
+        "2021-2022",
+        "2022-2023",
+    ]
+
+    training_seasons = ["2022-2023"]
     testing_seasons = ["2023-2024"]
 
     # Load featurized modeling data for the defined seasons
     print("Loading featurized modeling data...")
     print(f"Training seasons: {training_seasons}")
     print(f"Testing seasons: {testing_seasons}")
-    training_df = load_featurized_modeling_data(training_seasons, db_path)
-    testing_df = load_featurized_modeling_data(testing_seasons, db_path)
+    training_df = load_featurized_modeling_data(training_seasons, DB_PATH)
+    testing_df = load_featurized_modeling_data(testing_seasons, DB_PATH)
     print(f"Training data shape: {training_df.shape}")
     print(f"Testing data shape: {testing_df.shape}")
 
