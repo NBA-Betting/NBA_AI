@@ -1,0 +1,276 @@
+{
+    "1610612737": {
+        "abbreviation": "ATL",
+        "full_name": "Atlanta Hawks",
+        "short_name": "Hawks",
+        "alternatives": [
+            "STL",
+            "Tri-Cities Blackhawks",
+            "MLH",
+            "TRI",
+            "Milwaukee Hawks",
+            "St. Louis Hawks"
+        ]
+    },
+    "1610612751": {
+        "abbreviation": "BKN",
+        "full_name": "Brooklyn Nets",
+        "short_name": "Nets",
+        "alternatives": [
+            "NJA",
+            "BK",
+            "NYN",
+            "NJN",
+            "New York Nets",
+            "BRK",
+            "New Jersey Americans",
+            "New Jersey Nets"
+        ]
+    },
+    "1610612738": {
+        "abbreviation": "BOS",
+        "full_name": "Boston Celtics",
+        "short_name": "Celtics",
+        "alternatives": []
+    },
+    "1610612766": {
+        "abbreviation": "CHA",
+        "full_name": "Charlotte Hornets",
+        "short_name": "Hornets",
+        "alternatives": [
+            "Charlotte Bobcats",
+            "CHH",
+            "CHO"
+        ]
+    },
+    "1610612739": {
+        "abbreviation": "CLE",
+        "full_name": "Cleveland Cavaliers",
+        "short_name": "Cavaliers",
+        "alternatives": []
+    },
+    "1610612741": {
+        "abbreviation": "CHI",
+        "full_name": "Chicago Bulls",
+        "short_name": "Bulls",
+        "alternatives": []
+    },
+    "1610612742": {
+        "abbreviation": "DAL",
+        "full_name": "Dallas Mavericks",
+        "short_name": "Mavericks",
+        "alternatives": []
+    },
+    "1610612743": {
+        "abbreviation": "DEN",
+        "full_name": "Denver Nuggets",
+        "short_name": "Nuggets",
+        "alternatives": [
+            "Denver Rockets",
+            "DNR"
+        ]
+    },
+    "1610612765": {
+        "abbreviation": "DET",
+        "full_name": "Detroit Pistons",
+        "short_name": "Pistons",
+        "alternatives": [
+            "FTW",
+            "Fort Wayne Pistons"
+        ]
+    },
+    "1610612744": {
+        "abbreviation": "GSW",
+        "full_name": "Golden State Warriors",
+        "short_name": "Warriors",
+        "alternatives": [
+            "PHW",
+            "GS",
+            "Philadelphia Warriors",
+            "San Francisco Warriors",
+            "SFW"
+        ]
+    },
+    "1610612745": {
+        "abbreviation": "HOU",
+        "full_name": "Houston Rockets",
+        "short_name": "Rockets",
+        "alternatives": [
+            "SDR",
+            "San Diego Rockets"
+        ]
+    },
+    "1610612754": {
+        "abbreviation": "IND",
+        "full_name": "Indiana Pacers",
+        "short_name": "Pacers",
+        "alternatives": []
+    },
+    "1610612746": {
+        "abbreviation": "LAC",
+        "full_name": "Los Angeles Clippers",
+        "short_name": "Clippers",
+        "alternatives": [
+            "SDC",
+            "Buffalo Braves",
+            "San Diego Clippers",
+            "LA Clippers",
+            "BUF"
+        ]
+    },
+    "1610612747": {
+        "abbreviation": "LAL",
+        "full_name": "Los Angeles Lakers",
+        "short_name": "Lakers",
+        "alternatives": [
+            "MNL",
+            "Minneapolis Lakers"
+        ]
+    },
+    "1610612763": {
+        "abbreviation": "MEM",
+        "full_name": "Memphis Grizzlies",
+        "short_name": "Grizzlies",
+        "alternatives": [
+            "VAN",
+            "Vancouver Grizzlies"
+        ]
+    },
+    "1610612748": {
+        "abbreviation": "MIA",
+        "full_name": "Miami Heat",
+        "short_name": "Heat",
+        "alternatives": []
+    },
+    "1610612749": {
+        "abbreviation": "MIL",
+        "full_name": "Milwaukee Bucks",
+        "short_name": "Bucks",
+        "alternatives": []
+    },
+    "1610612750": {
+        "abbreviation": "MIN",
+        "full_name": "Minnesota Timberwolves",
+        "short_name": "Timberwolves",
+        "alternatives": []
+    },
+    "1610612752": {
+        "abbreviation": "NYK",
+        "full_name": "New York Knicks",
+        "short_name": "Knicks",
+        "alternatives": [
+            "NY"
+        ]
+    },
+    "1610612740": {
+        "abbreviation": "NOP",
+        "full_name": "New Orleans Pelicans",
+        "short_name": "Pelicans",
+        "alternatives": [
+            "NOH",
+            "New Orleans Hornets",
+            "NOK",
+            "NO",
+            "New Orleans/Oklahoma City Hornets"
+        ]
+    },
+    "1610612760": {
+        "abbreviation": "OKC",
+        "full_name": "Oklahoma City Thunder",
+        "short_name": "Thunder",
+        "alternatives": [
+            "Seattle SuperSonics",
+            "SEA"
+        ]
+    },
+    "1610612753": {
+        "abbreviation": "ORL",
+        "full_name": "Orlando Magic",
+        "short_name": "Magic",
+        "alternatives": []
+    },
+    "1610612755": {
+        "abbreviation": "PHI",
+        "full_name": "Philadelphia 76ers",
+        "short_name": "76ers",
+        "alternatives": [
+            "PHL",
+            "Syracuse Nationals",
+            "SYR"
+        ]
+    },
+    "1610612756": {
+        "abbreviation": "PHX",
+        "full_name": "Phoenix Suns",
+        "short_name": "Suns",
+        "alternatives": [
+            "PHO"
+        ]
+    },
+    "1610612757": {
+        "abbreviation": "POR",
+        "full_name": "Portland Trail Blazers",
+        "short_name": "Trail Blazers",
+        "alternatives": []
+    },
+    "1610612759": {
+        "abbreviation": "SAS",
+        "full_name": "San Antonio Spurs",
+        "short_name": "Spurs",
+        "alternatives": [
+            "DLC",
+            "SAN",
+            "Dallas Chaparrals",
+            "SA"
+        ]
+    },
+    "1610612758": {
+        "abbreviation": "SAC",
+        "full_name": "Sacramento Kings",
+        "short_name": "Kings",
+        "alternatives": [
+            "KCO",
+            "KCK",
+            "Kansas City-Omaha Kings",
+            "Kansas City Kings",
+            "Cincinnati Royals",
+            "CIN",
+            "Rochester Royals",
+            "ROC"
+        ]
+    },
+    "1610612761": {
+        "abbreviation": "TOR",
+        "full_name": "Toronto Raptors",
+        "short_name": "Raptors",
+        "alternatives": []
+    },
+    "1610612762": {
+        "abbreviation": "UTA",
+        "full_name": "Utah Jazz",
+        "short_name": "Jazz",
+        "alternatives": [
+            "NOJ",
+            "New Orleans Jazz",
+            "UTAH"
+        ]
+    },
+    "1610612764": {
+        "abbreviation": "WAS",
+        "full_name": "Washington Wizards",
+        "short_name": "Wizards",
+        "alternatives": [
+            "WSH",
+            "Washington Bullets",
+            "CAP",
+            "BAL",
+            "Baltimore Bullets",
+            "CHP",
+            "CHZ",
+            "Chicago Packers",
+            "WSB",
+            "Capital Bullets",
+            "Chicago Zephyrs"
+        ]
+    }
+}

@@ -44,6 +44,7 @@ function fetchAndUpdateGames() {
 
             if (games.length > 0) {
                 games.forEach(game => {
+                    console.log('Game:', game);
                     const row = document.createElement('tr');
                     row.className = 'game-row custom-vertical-align-middle';
                     row.setAttribute('data-game-id', game.game_id);

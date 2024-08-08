@@ -26,7 +26,7 @@ import sqlite3
 import pandas as pd
 
 from src.config import config
-from src.schedule import update_schedule
+from src.database_updater.schedule import update_schedule
 
 # Configuration
 DB_PATH = config["database"]["path"]

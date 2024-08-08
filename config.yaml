@@ -1,9 +1,11 @@
 project:
-  root: "/home/jeff/Documents/NBA_AI"  # Hardcoded project root. User needs to update when cloning and setting up project
+  root: "${PROJECT_ROOT}"  # Should be updated in the .env file.
 
 database:
-  path: "data/NBA_AI.sqlite"  # Relative to project root
+  path: "data/NBA_AI_BASE.sqlite"  # <<< Set this to point to the database you want to use.
 
+# Limited to avoid large volumes of calls to NBA Stats endpoints and long etl processes.
+# Can be removed if desired. Database Updater should work for all season back to 2000-2001.
 api:
   max_game_ids: 20
   valid_seasons: 
@@ -11,7 +13,7 @@ api:
     - "2024-2025"
 
 web_app:
-  secret_key: ${WEB_APP_SECRET_KEY} # Stored in .env file
+  secret_key: ${WEB_APP_SECRET_KEY} # Should be updated in the .env file. Will be set automatically if not set in .env
 
 nba_api:
   pbp_live_endpoint: "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{}.json"
@@ -45,10 +47,13 @@ nba_api:
     Accept-Language: "en-US,en;q=0.9"
     Cache-Control: "no-cache"
 
+# Manages which predictor is used for the database updates and games api
 predictors:
-  Best: "MLP"
+  Best: "MLP" # Can be changed to any other predictor type based on preference (Random, Baseline, Linear, Tree, MLP)
   Random:
     class: "RandomPredictor"
+  Baseline:
+    class: "BaselinePredictor"
   Linear:
     class: "LinearPredictor"
     model_paths:

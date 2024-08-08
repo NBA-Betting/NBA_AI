@@ -1,11 +1,23 @@
 # Project Specific
-data
-.nba_ai_venv
-models
+
+# Database and data files
+data/*
+!data/NBA_AI_BASE.sqlite
+!data/teams.json
+
+# Model files
+models/*
+!models/MLP_Regression_2024-07-30T14:08:12.793153.pth
+!models/Ridge_Regression_2024-07-29T21:14:57.504620.joblib
+!models/XGBoost_Regression_2024-07-29T21:33:17.702300.joblib
+
 wandb
+.nba_ai_venv
 
 
 # ------------------------------------------------------------------------------
+
+# Generic Gitignore
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

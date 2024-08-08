@@ -11,6 +11,7 @@ The module performs the following main tasks:
    allowing for dynamic and flexible configuration management.
 4. Computes absolute file paths for specific configuration settings, such as database paths, 
    ensuring consistent and correct file access regardless of the working directory.
+5. Ensures a secret key is set for the web application, generating one if necessary.
 
 Main Functions:
 - `load_config()`: Loads and processes the application configuration.
@@ -75,7 +76,14 @@ def load_config():
     # Compute the absolute path for DB_PATH based on PROJECT_ROOT
     # This is useful for ensuring that file paths are correctly handled regardless of the working directory
     project_root = config["project"]["root"]
-    config["database"]["path"] = os.path.join(project_root, config["database"]["path"])
+    if "database" in config and "path" in config["database"]:
+        config["database"]["path"] = os.path.join(
+            project_root, config["database"]["path"]
+        )
+
+    # Ensure the secret key is set
+    if config["web_app"]["secret_key"] in ["${WEB_APP_SECRET_KEY}", ""]:
+        config["web_app"]["secret_key"] = os.urandom(24).hex()  # Generate a random key
 
     return config
 

@@ -24,8 +24,8 @@ import requests
 from flask import Flask, flash, jsonify, render_template, request, url_for
 
 from src.config import config
+from src.games_api.api import api as api_blueprint
 from src.utils import validate_date_format
-from src.web_app.api import api as api_blueprint
 from src.web_app.game_data_processor import get_user_datetime, process_game_data
 
 # Configuration variables
@@ -44,7 +44,7 @@ def create_app(predictor):
         Flask: The configured Flask application instance.
     """
     app = Flask(__name__)
-    app.secret_key = config["web_app"]["secret_key"]
+    app.secret_key = WEB_APP_SECRET_KEY
 
     # Store the predictor in the app configuration
     app.config["PREDICTOR"] = predictor

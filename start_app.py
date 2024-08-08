@@ -53,7 +53,10 @@ def main():
         help="The log level to use for logging. Options are DEBUG, INFO, WARNING, ERROR, CRITICAL.",
     )
     parser.add_argument(
-        "--debug", action="store_true", help="Run the application in Flask debug mode."
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Run the application in Flask debug mode.",
     )
     args = parser.parse_args()
 
