@@ -80,3 +80,6 @@ wandb==0.17.5
 wcwidth==0.2.13
 Werkzeug==3.0.3
 xgboost==2.1.0
+
+# Add the PyTorch repository for custom wheels
+-f https://download.pytorch.org/whl/torch_stable.html
