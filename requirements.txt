@@ -67,7 +67,6 @@ SQLAlchemy==2.0.31
 stack-data==0.6.3
 sympy==1.13.1
 threadpoolctl==3.5.0
-torch==2.4.0+cpu
 tornado==6.4.1
 tqdm==4.66.4
 traitlets==5.14.3
@@ -81,5 +80,8 @@ wcwidth==0.2.13
 Werkzeug==3.0.3
 xgboost==2.1.0
 
-# Add the PyTorch repository for custom wheels
--f https://download.pytorch.org/whl/torch_stable.html
+# Specify the extra index URL for CPU-only PyTorch wheels
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# PyTorch and related packages (CPU version)
+torch==2.4.0+cpu
