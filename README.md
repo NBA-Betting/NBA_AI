@@ -1,8 +1,6 @@
-<img src='images/nba_ai_header.png' alt='NBA AI'/>
+<img src='images/nba_ai_header_15x6.png' alt='NBA AI'/>
 
 # NBA AI
-
-Using AI to predict the outcomes of NBA games.
 
 ## Table of Contents
 * [Project Overview](#project-overview)
@@ -14,6 +12,8 @@ Using AI to predict the outcomes of NBA games.
 * [Installation and Usage](#installation-and-usage)
 
 ## Project Overview
+
+#### Using AI to predict the outcomes of NBA games.
 
 This project aims to streamline the process of predicting NBA game outcomes by focusing on advanced AI prediction models rather than extensive data collection and management. Unlike my previous project, [NBA Betting](https://github.com/NBA-Betting/NBA_Betting/tree/main), which aimed to create a comprehensive feature set for predicting NBA games through extensive data collection, this project simplifies the process. While the previous approach benefited from various industry-derived metrics, the cost and complexity of managing the data collection were too high. This project focuses on a core data set, such as play-by-play data, and leverages deep learning and GenAI to predict game outcomes.
 

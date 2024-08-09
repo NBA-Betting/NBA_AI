@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en-US">
+
+<head>
+    <link rel="canonical" href="https://nba-ai.us/" />
+    <title>NBA AI</title>
+    <meta name="description" content="Using AI to predict the outcomes of NBA games." />
+
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Jekyll v3.9.3" />
+    <meta property="og:title" content="NBA AI" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:description" content="Using AI to predict the outcomes of NBA games." />
+    <meta property="og:url" content="https://nba-ai.us/" />
+    <meta property="og:site_name" content="NBA AI" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
+    <meta property="twitter:title" content="NBA AI" />
+    <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebSite","description":"Using AI to predict the outcomes of NBA games.","headline":"NBA AI","name":"NBA AI","url":"https://nba-ai.us/"}</script>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-5FNXVFZDEQ"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { dataLayer.push(arguments); }
+        gtag('js', new Date());
+
+        gtag('config', 'G-5FNXVFZDEQ');
+    </script>
+
+    <!-- Favicon -->
+    <link rel="shortcut icon" type="image/x-icon" href="images/bball_favicon.png" />
+
+</head>
+
+<body id="top">
+    <!-- Header -->
+    <nav class="navbar navbar-expand-md navbar-light bg-white fixed-top shadow-sm">
+        <div class="container-md d-flex justify-content-between align-items-center">
+            <a class="navbar-brand d-flex align-items-center" href="#top">
+                <!-- Use Bootstrap's width utilities to control image size responsively -->
+                <img src="images/nba_ai_logo.png" alt="Logo" class="d-inline-block align-middle"
+                    style="height: 2rem; width: auto;">
+                <span class="h1 mb-0 ms-2 align-middle" style="line-height: 1; font-size: 2rem;">NBA AI</span>
+            </a>
+            <div class="github-branding">
+                <a href="https://github.com/NBA-Betting/NBA_AI" target="_blank" rel="noopener noreferrer"
+                    class="d-flex align-items-center text-dark text-decoration-none">
+                    <img src="images/GitHub_Logo.png" alt="GitHub Name" class="img-fluid me-2"
+                        style="height: 2rem; width: auto;">
+                    <img src="images/github-mark.png" alt="GitHub Icon" class="img-fluid"
+                        style="height: 2rem; width: auto;">
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Content -->
+    <div class="container-md body-content">
+
+        <!-- Header Image -->
+        <div class="container-md">
+            <img src="images/nba_ai_header_15x6.png" alt="Header Image" class="img-fluid"
+                style="width: 100%; height: auto;">
+        </div>
+
+        <!-- Table of Contents -->
+        <div class="container-md my-4">
+            <h2 id="table-of-contents">Table of Contents</h2>
+            <div class="list-group">
+                <a class="list-group-item list-group-item-action" href="#project-overview"><strong>Project
+                        Overview</strong></a>
+                <div class="list-group list-group-flush ml-3">
+                    <a class="list-group-item list-group-item-action" href="#current-state">• Current State</a>
+                    <a class="list-group-item list-group-item-action" href="#future-goals">• Future Goals</a>
+                    <a class="list-group-item list-group-item-action" href="#guiding-principles">• Guiding
+                        Principles</a>
+                </div>
+                <a class="list-group-item list-group-item-action" href="#web-app"><strong>Web App</strong></a>
+                <a class="list-group-item list-group-item-action" href="#prediction-engines"><strong>Prediction
+                        Engines</strong></a>
+                <a class="list-group-item list-group-item-action" href="#installation-and-usage"><strong>Installation
+                        and Usage</strong></a>
+            </div>
+        </div>
+
+        <!-- Project Overview -->
+        <div class="container my-5">
+            <h1 id="project-overview">Project Overview</h1>
+
+
+            <p id="project-goal" class="lead">Using AI to predict the outcomes of NBA games.</p>
+
+
+            <p>This project aims to streamline the process of predicting NBA game outcomes by focusing on advanced AI
+                prediction
+                models rather than extensive data collection and management. Unlike my previous project, <a
+                    href="https://github.com/NBA-Betting/NBA_Betting/tree/main" target="_blank"
+                    rel="noopener noreferrer">NBA Betting</a>, which aimed to create a
+                comprehensive feature set for predicting NBA games through extensive data collection, this project
+                simplifies
+                the process. While the previous approach benefited from various industry-derived metrics, the cost and
+                complexity of managing the data collection were too high. This project focuses on a core data set, such
+                as
+                play-by-play data, and leverages deep learning and GenAI to predict game outcomes.</p>
+
+            <h2 id="current-state">Current State</h2>
+
+            <p>The project is currently in the early stages of development, with a basic prediction engine that uses
+                simple
+                models like ridge regression, XGBoost, and a basic MLP. The prediction engine is limited to basic game
+                score
+                predictions and win percentages. The web app provides a simple interface for displaying games for the
+                selected
+                date along with current scores and predictions. Fortunately, this is as complicated as the project
+                should
+                become. The goal is to gradually integrate most pieces of the Database Updater and part of the Games API
+                logic
+                into a single prediction engine. This will allow for a more streamlined process and a more capable
+                prediction
+                engine.</p>
+
+            <img src="images/project_flowchart.png" alt="Project Flowchart" class="img-fluid custom-image mx-auto" />
+
+            <p>The project is built around a few key components:</p>
+            <ul>
+                <li><strong>Database Updater</strong>: This component is responsible for updating the database with the
+                    latest
+                    NBA game data. It fetches data from the NBA Stats API, performs ETL operations, generates features,
+                    creates
+                    predictions, and stores the data in a SQLite database. It consists of a few modules:
+                    <ul>
+                        <li><code>database_update_manager.py</code>: The main module that orchestrates the entire
+                            process.
+                        </li>
+                        <li><code>schedule.py</code>: Fetches the schedule from the NBA API and updates the database.
+                        </li>
+                        <li><code>pbp.py</code>: Fetches play-by-play data for games and updates the database.</li>
+                        <li><code>game_states.py</code>: Parses play-by-play data to generate game states and updates
+                            the
+                            database.</li>
+                        <li><code>prior_states.py</code>: Determines prior final game states for teams.</li>
+                        <li><code>features.py</code>: Uses prior final game states to generate features for the
+                            prediction
+                            engine.</li>
+                        <li><code>predictions.py</code>: Generates predictions for games using the chosen prediction
+                            engine.
+                        </li>
+                    </ul>
+                </li>
+                <li><strong>Games API</strong>: This component is responsible for updating predictions for ongoing or
+                    completed
+                    games and providing the data to the web app. It fetches data from the database, generates
+                    predictions,
+                    and
+                    serves the data to the web app.
+                    <ul>
+                        <li><code>games.py</code>: Fetches game data from the database, manages prediction updating and
+                            data
+                            formatting.</li>
+                        <li><code>api.py</code>: Defines the API endpoints.</li>
+                        <li><code>games_api.md</code>: API documentation.</li>
+                    </ul>
+                </li>
+                <li><strong>Web App</strong>: This component is the front end of the project, providing a simple
+                    interface
+                    for
+                    users to view games and predictions. It is built using Flask.
+                    <ul>
+                        <li><code>start_app.py</code>: The main entry point for the web app found in the root directory.
+                        </li>
+                        <li><code>app.py</code>: The main module that defines the Flask app and routes.</li>
+                        <li><code>game_data_processor.py</code>: Formats game data from the API for the web app.</li>
+                        <li><code>templates/</code>: Contains the HTML templates for the web app.</li>
+                        <li><code>static/</code>: Contains the CSS and JavaScript files for the web app.</li>
+                    </ul>
+                </li>
+            </ul>
+
+            <h2 id="future-goals">Future Goals</h2>
+
+            <img src="images/foundational_model_outline.png" alt="Foundational Model Outline"
+                class="img-fluid custom-image mx-auto" />
+
+            <ol>
+                <li><strong>Data Sourcing</strong>: Focus on a minimal number of data sources that fundamentally
+                    describe
+                    basketball. Currently, we use play-by-play data from the NBA API. In the future, incorporating video
+                    and
+                    tracking data would be interesting, though these require considerably more resources and access.
+                </li>
+                <li><strong>Prediction Engine</strong>: This is the core of the project and will be the development
+                    focus
+                    until
+                    the 2024-2025 season begins. The current prediction engine options will be replaced with a DL and
+                    GenAI-based engine, allowing for decreased data parsing and feature engineering while also scaling
+                    to
+                    predict more complex outcomes, including individual player performance.</li>
+                <li><strong>Data Storage</strong>: Future data storage will more seamlessly integrate with the
+                    prediction
+                    engine. The storage requirements will combine the current SQL-based data used for the API and web
+                    app
+                    with
+                    more advanced vector-based storage for RAG-based GenAI models.</li>
+                <li><strong>Web App</strong>: This is the project's front end, displaying the games for the selected
+                    date
+                    along
+                    with current scores and predictions. The interface will remain simple while usability is gradually
+                    improved.
+                    A separate GenAI chat will be added in the future to allow users to interact with the prediction
+                    engine
+                    and
+                    modify individual predictions based on their preferences.</li>
+            </ol>
+
+            <h2 id="guiding-principles">Guiding Principles</h2>
+
+            <img src="images/guiding_principles.png" alt="Project Guiding Principles"
+                class="img-fluid custom-image mx-auto" />
+
+            <ul>
+                <li><strong>Time Series Data Inclusive</strong>: A focus on incorporating the sequential nature of
+                    events in
+                    games and across seasons, recognizing the significance of order and timing in the NBA.</li>
+                <li><strong>Minimal Data Collection</strong>: Streamlining data sourcing to the essentials, aiming for
+                    maximum
+                    impact with minimal data, thereby reducing time and resource investment.</li>
+                <li><strong>Wider Applicability</strong>: Extending the scope to cover more comprehensive outcomes,
+                    moving
+                    beyond standard predictions like point spreads or over/unders.</li>
+                <li><strong>Advanced Modeling System</strong>: Developing a system that is not only a learning tool but
+                    also
+                    potentially novel compared to the methods used by odds setters.</li>
+                <li><strong>Minimal Human Decisions</strong>: Reducing the reliance on human decision-making to minimize
+                    errors
+                    and the limitations of individual expertise.</li>
+            </ul>
+        </div>
+
+        <!-- Web App -->
+        <div class="container my-5">
+            <h1 id="web-app">Web App</h1>
+
+            <img src="images/web_app_homepage.png" alt="Web App Home Page" class="img-fluid custom-image mx-auto" />
+            <img src="images/web_app_game_details.png" alt="Web App Game Details"
+                class="img-fluid custom-image mx-auto" />
+        </div>
+
+        <!-- Prediction Engines -->
+        <div class="container my-5">
+            <h1 id="prediction-engines">Prediction Engines</h1>
+
+            <p>Currently, there are a few basic prediction engines used to predict the outcomes of NBA games. These
+                serve as
+                placeholders for the more advanced DL and GenAI engines that will be implemented in the future. The
+                current
+                engines make pre-game predictions for home and away scores using ML models. These predictions are then
+                used
+                to
+                calculate the win percentage and margin for the home team. Updated (after game start) predictions are
+                based
+                on a
+                combination of the current game score, time remaining, and the pre-game predictions.</p>
+
+            <h3 id="current-prediction-engines">Current Prediction Engines</h3>
+
+            <ul>
+                <li><strong>Linear:</strong> Based on a Ridge Regression model, using features generated by aggregating
+                    prior final game states for the teams involved.</li>
+                <li><strong>Tree:</strong> Based on an XGBoost model, using the same features as the Linear model.</li>
+                <li><strong>MLP:</strong> Based on a PyTorch MLP model, using the same features as the Linear model.
+                </li>
+                <li><strong>Random:</strong> A random predictor that generates random scores for each game.</li>
+                <li><strong>Baseline:</strong> A simple predictor that predicts the home and away scores based on the
+                    home and away teams' PPG and their opponents' PPG. The formula for the baseline predictor is:
+                    <ul>
+                        <li>Home Score: (Home PPG + Away Opponent PPG) / 2</li>
+                        <li>Away Score: (Away PPG + Home Opponent PPG) / 2</li>
+                        <li>Home Margin: Home Score - Away Score</li>
+                        <li>Home Win Probability: Sigmoid(-0.2504 + 0.1949 * Home Margin)</li>
+                    </ul>
+                </li>
+            </ul>
+
+            <h3 id="performance-metrics">Performance Metrics</h3>
+
+            <p>The current metrics are based on pre-game predictions for the home and away team scores, along with
+                downstream
+                metrics such as win percentage and margin. These simple predictors currently outperform the baseline
+                predictor.
+            </p>
+
+            <p>In the future, a more challenging baseline based on the Vegas spread will be added when the DL and GenAI
+                models
+                are implemented.</p>
+
+            <img src="images/predictor_performance.png" alt="Prediction Engine Performance Metrics"
+                class="img-fluid custom-image mx-auto" />
+        </div>
+
+        <!-- Installation and Usage -->
+        <div class="container my-5">
+            <h1 id="installation-and-usage">Installation and Usage</h1>
+
+            <h4 id="step-1-clone-the-repository">Step 1: Clone the Repository</h4>
+
+            <p>Clone the repository to your local machine using the following command:</p>
+
+            <pre><code>git clone https://github.com/NBA-Betting/NBA_AI.git</code></pre>
+
+            <h4 id="step-2-set-up-a-virtual-environment-optional-but-recommended">Step 2: Set Up a Virtual Environment
+                (Optional but Recommended)</h4>
+
+            <p>Navigate to the project directory:</p>
+
+            <pre><code>cd NBA_AI</code></pre>
+
+            <p>Create a virtual environment:</p>
+
+            <pre><code>python -m venv venv</code></pre>
+
+            <p>Activate the virtual environment:</p>
+
+            <pre><code>source venv/bin/activate</code></pre>
+
+            <h4 id="step-3-install-dependencies">Step 3: Install Dependencies</h4>
+
+            <p>Install the required dependencies:</p>
+
+            <pre><code>pip install -r requirements.txt</code></pre>
+
+            <h4 id="step-4-set-up-environment-variables">Step 4: Set Up Environment Variables</h4>
+
+            <p>Rename the <code>.env.template</code> file to <code>.env</code>:</p>
+
+            <pre><code>cp .env.template .env</code></pre>
+
+            <p>Open the <code>.env</code> file in your preferred text editor and set the necessary values:</p>
+
+            <pre><code># .env
+# Flask secret key (Optional, Flask will generate one if not set)
+# WEB_APP_SECRET_KEY=your_generated_secret_key
+
+# Project root path (Mandatory)
+PROJECT_ROOT=/path/to/your/project/root</code></pre>
+
+            <p>Replace <code>/path/to/your/project/root</code> with the actual path to the root directory of your
+                project on your local machine. You can leave <code>WEB_APP_SECRET_KEY</code> commented out if you want
+                Flask to generate it automatically.</p>
+
+            <h4 id="step-5-configure-the-database">Step 5: Configure the Database</h4>
+
+            <p>By default, the configuration will point to the empty database (<code>data/NBA_AI_BASE.sqlite</code>). If
+                you want to use the pre-populated 2023-2024 season data:</p>
+
+            <ol>
+                <li>Download the SQLite database zip file from the GitHub release page:
+                    <ul>
+                        <li>Go to the <a href="https://github.com/NBA-Betting/NBA_AI/releases" target="_blank"
+                                rel="noopener noreferrer">Releases page</a> of the repository.</li>
+                        <li>Find the latest release (e.g., <code>v0.1</code>).</li>
+                        <li>Download the <code>NBA_AI_2023_2024.zip</code> file attached to the release.</li>
+                    </ul>
+                </li>
+                <li>Extract the zip file:</li>
+            </ol>
+
+            <pre><code>    unzip path/to/NBA_AI_2023_2024.zip -d data</code></pre>
+
+            <ol start="3">
+                <li>Update the <code>config.yaml</code> file to point to the extracted database:</li>
+            </ol>
+
+            <pre><code>    database:
+      path: "data/NBA_AI_2023_2024.sqlite"  # <<< Set this to point to the database you want to use.</code></pre>
+
+            <h4 id="step-6-run-the-application">Step 6: Run the Application</h4>
+
+            <p>Run the application using the <code>start_app.py</code> file in the root directory:</p>
+
+            <pre><code>python start_app.py</code></pre>
+
+            <h4 id="accessing-the-application">Accessing the Application</h4>
+
+            <p>Once the application is running, you can access it by opening your web browser and navigating to:</p>
+
+            <pre><code>http://127.0.0.1:5000/</code></pre>
+
+            <h3 id="usage-notes">Usage Notes</h3>
+
+            <ul>
+                <li>The Database Updater processes all games for the specified season each time it's run. On the first
+                    run
+                    for a
+                    given season, when the database is empty, the updater fetches and parses play-by-play data for each
+                    game.
+                    This initial update may take several minutes and require up to a couple of GB of memory, as it makes
+                    approximately 1,500 API calls to the NBA Stats API (one per game). Subsequent updates will be
+                    significantly
+                    faster since the data is already stored in the database.</li>
+                <li>By default, the web app is limited to the 2023-2024 and 2024-2025 seasons to prevent excessive
+                    updating
+                    of
+                    past seasons. These restrictions can be adjusted in the config.yaml file and do not apply when
+                    running
+                    the
+                    code directly. The update process supports seasons as far back as 2000-2001, if desired.</li>
+            </ul>
+
+            <pre><code>    api:
+      valid_seasons:
+      - "2023-2024"
+      - "2024-2025"</code></pre>
+
+            <ul>
+                <li>This is very much a work in progress, and there are many improvements to be made. If you have any
+                    suggestions or feedback, please feel free to open an issue or reach out to me directly. I will be
+                    focusing
+                    on creating the DL and GenAI prediction engines until the 2024-2025 season begins, but will also be
+                    working
+                    on improving the web app and other components as time allows.</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Bootstrap -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
+        crossorigin="anonymous"></script>
+
+    <script>
+        var navbarHeight = document.querySelector('.navbar').offsetHeight;
+        document.querySelector('.body-content').style.paddingTop = navbarHeight + 'px';
+    </script>
+
+</body>
+
+</html>
