@@ -7,7 +7,7 @@ database:
 # Limited to avoid large volumes of calls to NBA Stats endpoints and long etl processes.
 # Can be removed if desired. Database Updater should work for all season back to 2000-2001.
 api:
-  max_game_ids: 20
+  max_game_ids: 20 # Only applies to game_ids input of Games API. Not the date input.
   valid_seasons: 
     - "2023-2024"
     - "2024-2025"

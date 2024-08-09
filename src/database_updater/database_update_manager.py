@@ -28,6 +28,7 @@ Usage:
 """
 
 import argparse
+import logging
 import sqlite3
 
 from src.config import config
@@ -76,33 +77,61 @@ def update_database(season="Current", predictor=None, db_path=DB_PATH):
 
 
 @log_execution_time()
-def update_game_data(season, db_path=DB_PATH):
+def update_game_data(season, db_path=DB_PATH, chunk_size=100):
     """
     Updates play-by-play logs and game states for games needing updates.
 
     Parameters:
         season (str): The season to update.
         db_path (str): The path to the database (default is from config).
+        chunk_size (int): Number of games to process at a time (default is 100).
 
     Returns:
         None
     """
+
     game_ids = get_games_needing_game_state_update(season, db_path)
-    basic_game_info = lookup_basic_game_info(game_ids, db_path)
-    pbp_data = get_pbp(game_ids)
-    save_pbp(pbp_data, db_path)
 
-    game_state_inputs = {}
-    for game_id, game_info in pbp_data.items():
-        game_state_inputs[game_id] = {
-            "home": basic_game_info[game_id]["home"],
-            "away": basic_game_info[game_id]["away"],
-            "date_time_est": basic_game_info[game_id]["date_time_est"],
-            "pbp_logs": game_info,
-        }
+    total_games = len(game_ids)
+    total_chunks = (
+        total_games + chunk_size - 1
+    ) // chunk_size  # Ceiling division to calculate total chunks
 
-    game_states = create_game_states(game_state_inputs)
-    save_game_states(game_states)
+    # Only log chunk information if there will be more than 1 chunk
+    if total_chunks > 1:
+        logging.info(f"Processing {total_games} games in {total_chunks} chunks.")
+
+    # Process the games in chunks
+    for i in range(0, total_games, chunk_size):
+        chunk_game_ids = game_ids[i : i + chunk_size]
+
+        try:
+            basic_game_info = lookup_basic_game_info(chunk_game_ids, db_path)
+            pbp_data = get_pbp(chunk_game_ids)
+            save_pbp(pbp_data, db_path)
+
+            game_state_inputs = {
+                game_id: {
+                    "home": basic_game_info[game_id]["home"],
+                    "away": basic_game_info[game_id]["away"],
+                    "date_time_est": basic_game_info[game_id]["date_time_est"],
+                    "pbp_logs": game_info,
+                }
+                for game_id, game_info in pbp_data.items()
+            }
+
+            game_states = create_game_states(game_state_inputs)
+            save_game_states(game_states)
+
+            # Log progress if there is more than 1 chunk
+            if total_chunks > 1:
+                logging.info(
+                    f"Processed chunk {i // chunk_size + 1} of {total_chunks}."
+                )
+
+        except Exception as e:
+            logging.error(f"Error processing chunk starting at index {i}: {str(e)}")
+            continue
 
 
 @log_execution_time()

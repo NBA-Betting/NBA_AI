@@ -197,17 +197,17 @@ http://127.0.0.1:5000/
 
 ### Usage Notes
 
-- The database updater will attempt to update all games for the requested season, regardless of which database is being used. This may result in a large number of external requests to the NBA Stats API endpoints and a lengthy ETL process.
-- Each season update will take a few minutes, depending on your computer's resources and connection speed. This is a one-time load for each season.
-- To limit this, the API is currently restricted to the 2023-2024 and 2024-2025 seasons. More seasons can be added if desired. The update process should work back to the 2000-2001 season.
+- The Database Updater processes all games for the specified season each time it's run. On the first run for a given season, when the database is empty, the updater fetches and parses play-by-play data for each game. This initial update may take several minutes and require up to a couple of GB of memory, as it makes approximately 1,500 API calls to the NBA Stats API (one per game). Subsequent updates will be significantly faster since the data is already stored in the database.
 
-```yaml
-api:
-  max_game_ids: 20
-  valid_seasons:
-  - "2023-2024"
-  - "2024-2025"
-```
+- By default, the web app is limited to the 2023-2024 and 2024-2025 seasons to prevent excessive updating of past seasons. These restrictions can be adjusted in the config.yaml file and do not apply when running the code directly. The update process supports seasons as far back as 2000-2001, if desired.
 
-- These restrictions are bypassed if the code is run directly (instead of via the web app or Games API).
-- Please see the Prediction Engine section for further notes about setting up predictors.
+    ```yaml
+    api:
+      valid_seasons:
+      - "2023-2024"
+      - "2024-2025"
+    ```
+
+- This is very much a work in progress, and there are many improvements to be made. If you have any suggestions or feedback, please feel free to open an issue or reach out to me directly. I will be focusing on creating the DL and GenAI prediction engines until the 2024-2025 season begins, but will also be working on improving the web app and other components as time allows.
+
+
