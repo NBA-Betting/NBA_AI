@@ -31,7 +31,12 @@ import requests
 
 from src.config import config
 from src.logging_config import setup_logging
-from src.utils import log_execution_time, requests_retry_session, validate_season_format
+from src.utils import (
+    determine_current_season,
+    log_execution_time,
+    requests_retry_session,
+    validate_season_format,
+)
 
 # Configuration values
 DB_PATH = config["database"]["path"]
@@ -259,26 +264,6 @@ def save_schedule(games, season, db_path=DB_PATH):
             conn.rollback()
             logging.error(f"Error saving schedule: {e}")
             raise e
-
-
-def determine_current_season():
-    """
-    Determines the current NBA season based on the current date.
-    Returns the current NBA season in 'XXXX-XXXX' format.
-    """
-
-    current_date = datetime.now()
-    current_year = current_date.year
-
-    # Determine the season based on the league year cutoff (June 30th)
-    league_year_cutoff = datetime(current_year, 6, 30)
-
-    if current_date > league_year_cutoff:
-        season = f"{current_year}-{current_year + 1}"
-    else:
-        season = f"{current_year - 1}-{current_year}"
-
-    return season
 
 
 def main():

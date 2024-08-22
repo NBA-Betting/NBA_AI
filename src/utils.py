@@ -88,6 +88,26 @@ def lookup_basic_game_info(game_ids, db_path=DB_PATH):
     return game_info_dict
 
 
+def determine_current_season():
+    """
+    Determines the current NBA season based on the current date.
+    Returns the current NBA season in 'XXXX-XXXX' format.
+    """
+
+    current_date = datetime.now()
+    current_year = current_date.year
+
+    # Determine the season based on the league year cutoff (June 30th)
+    league_year_cutoff = datetime(current_year, 6, 30)
+
+    if current_date > league_year_cutoff:
+        season = f"{current_year}-{current_year + 1}"
+    else:
+        season = f"{current_year - 1}-{current_year}"
+
+    return season
+
+
 def log_execution_time(average_over=None):
     """
     Decorator that logs the execution time of a function and optionally averages the time over the output or a specified input.

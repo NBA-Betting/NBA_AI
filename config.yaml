@@ -12,6 +12,9 @@ api:
     - "2023-2024"
     - "2024-2025"
 
+openai:
+  api_key: ${OPENAI_API_KEY}
+
 web_app:
   secret_key: ${WEB_APP_SECRET_KEY} # Should be updated in the .env file. Will be set automatically if not set in .env
 
@@ -19,6 +22,7 @@ nba_api:
   pbp_live_endpoint: "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{}.json"
   pbp_stats_endpoint: "https://stats.nba.com/stats/playbyplayv3?GameID={}&StartPeriod=0&EndPeriod=0"
   schedule_endpoint: "https://stats.nba.com/stats/scheduleleaguev2?Season={season}&LeagueID=00"
+  players_endpoint: "https://stats.nba.com/stats/commonallplayers?LeagueID=00&Season={season}"
   pbp_live_headers:
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"
     Accept-Encoding: "gzip, deflate, br"
