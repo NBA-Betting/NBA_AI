@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 import pytz
 from tzlocal import get_localzone
 
-from src.utils import NBATeamConverter
+from src.utils import NBATeamConverter, get_player_image
 
 
 def get_user_datetime(as_eastern_tz=False):
@@ -282,18 +282,7 @@ def _get_sorted_players(game, predictions):
         dict: A dictionary containing sorted home and away players.
     """
 
-    def get_player_image(player_id, files):
-        player_image_file = next(
-            (f for f in files if f.endswith(f"_{player_id}.png")), None
-        )
-        if player_image_file:
-            return f"static/img/player_images/{player_image_file}"
-        else:
-            return "static/img/basketball-player.png"
-
     players = {"home_players": [], "away_players": []}
-
-    files = os.listdir("src/web_app/static/img/player_images")
 
     for team in ["home", "away"]:
         team_players = (
@@ -318,7 +307,7 @@ def _get_sorted_players(game, predictions):
                 player_id, current_team_predictions.get(player_id, {})
             )
 
-            player_headshot_url = get_player_image(player_id, files)
+            player_headshot_url = get_player_image(player_id)
 
             player = {
                 "player_id": player_id,

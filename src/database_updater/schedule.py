@@ -6,32 +6,34 @@ This module fetches and saves NBA schedule data for a given season. It consists 
 - Fetch the schedule from the NBA API.
 - Validate and save the schedule to a SQLite database.
 - Ensure data integrity by checking for empty or corrupted data before updating the database.
-- Determine the current NBA season based on the current date.
 
 Functions:
 - update_schedule(season, db_path): Orchestrates fetching and saving the schedule.
 - fetch_schedule(season): Fetches the NBA schedule for a specified season.
 - save_schedule(games, season, db_path): Saves the fetched schedule to the database.
-- determine_current_season(): Determines the current NBA season based on the current date.
 - main(): Handles command-line arguments to update the schedule, with optional logging level.
 
 Usage:
 - Typically run as part of a larger data collection pipeline.
 - Script can be run directly from the command line (project root) to fetch and save NBA schedule data:
-    python -m src.schedule --season=2023-2024 --log_level=DEBUG
+    python -m src.database_updater.schedule --season=2023-2024 --log_level=DEBUG
 - Successful execution will print the number of games fetched and saved along with logging information.
 """
 
 import argparse
 import logging
 import sqlite3
-from datetime import datetime
 
 import requests
 
 from src.config import config
 from src.logging_config import setup_logging
-from src.utils import log_execution_time, requests_retry_session, validate_season_format
+from src.utils import (
+    determine_current_season,
+    log_execution_time,
+    requests_retry_session,
+    validate_season_format,
+)
 
 # Configuration values
 DB_PATH = config["database"]["path"]
@@ -111,6 +113,7 @@ def fetch_schedule(season):
             "002": "Regular Season",
             "003": "All-Star",
             "004": "Post Season",
+            "005": "Post Season",  # Play-In
         }
 
         game_status_codes = {
@@ -259,26 +262,6 @@ def save_schedule(games, season, db_path=DB_PATH):
             conn.rollback()
             logging.error(f"Error saving schedule: {e}")
             raise e
-
-
-def determine_current_season():
-    """
-    Determines the current NBA season based on the current date.
-    Returns the current NBA season in 'XXXX-XXXX' format.
-    """
-
-    current_date = datetime.now()
-    current_year = current_date.year
-
-    # Determine the season based on the league year cutoff (June 30th)
-    league_year_cutoff = datetime(current_year, 6, 30)
-
-    if current_date > league_year_cutoff:
-        season = f"{current_year}-{current_year + 1}"
-    else:
-        season = f"{current_year - 1}-{current_year}"
-
-    return season
 
 
 def main():

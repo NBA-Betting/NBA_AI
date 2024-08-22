@@ -14,6 +14,8 @@ Core Functions:
 - validate_date_format(date): Validates that a date string is in the format "YYYY-MM-DD".
 - validate_season_format(season, abbreviated=False): Validates the format of a season string.
 - date_to_season(date_str): Converts a date to the corresponding NBA season.
+- determine_current_season(): Determines the current NBA season based on the current date.
+- get_player_image(player_id): Retrieves a player's image from the NBA website or a local cache.
 
 Classes:
 - NBATeamConverter: A class for converting between various identifiers of NBA teams such as team ID, abbreviation, short name, and full name.
@@ -30,6 +32,7 @@ import sqlite3
 import time
 from datetime import datetime
 from functools import wraps
+from pathlib import Path
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -39,6 +42,7 @@ from src.config import config
 
 # Configuration values
 DB_PATH = config["database"]["path"]
+PROJECT_ROOT = Path(config["project"]["root"])
 
 
 def lookup_basic_game_info(game_ids, db_path=DB_PATH):
@@ -86,6 +90,68 @@ def lookup_basic_game_info(game_ids, db_path=DB_PATH):
         logging.warning(f"Game IDs not found in the database: {game_ids_set}")
 
     return game_info_dict
+
+
+def determine_current_season():
+    """
+    Determines the current NBA season based on the current date.
+    Returns the current NBA season in 'XXXX-XXXX' format.
+    """
+
+    current_date = datetime.now()
+    current_year = current_date.year
+
+    # Determine the season based on the league year cutoff (June 30th)
+    league_year_cutoff = datetime(current_year, 6, 30)
+
+    if current_date > league_year_cutoff:
+        season = f"{current_year}-{current_year + 1}"
+    else:
+        season = f"{current_year - 1}-{current_year}"
+
+    return season
+
+
+def get_player_image(player_id):
+    """
+    Gets the player's image by checking locally first, then attempting to download it,
+    and finally falling back to a default image if the first two steps fail.
+
+    Args:
+        player_id (str): The ID of the player whose image is to be retrieved.
+
+    Returns:
+        str: The relative path to the player's image from the static directory.
+    """
+    # Define paths using Path objects based on the PROJECT_ROOT
+    player_images_dir = PROJECT_ROOT / "src/web_app/static/img/player_images"
+    player_image_file = player_images_dir / f"{player_id}.png"
+    default_image = PROJECT_ROOT / "src/web_app/static/img/basketball_player.png"
+
+    # Check if the image exists locally
+    if player_image_file.exists():
+        return f"static/img/player_images/{player_id}.png"
+
+    # Attempt to download the image if it doesn't exist locally
+    try:
+        url = f"https://cdn.nba.com/headshots/nba/latest/260x190/{player_id}.png"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+
+        if response.status_code == 200:
+            # Save the image locally
+            with player_image_file.open("wb") as f:
+                f.write(response.content)
+            return f"static/img/player_images/{player_id}.png"
+        else:
+            print(f"Image not found at {url}, status code: {response.status_code}")
+    except requests.RequestException as e:
+        print(f"Failed to download the image for player {player_id}: {e}")
+
+    # If all else fails, return the default image
+    return str(default_image.relative_to(PROJECT_ROOT / "src/web_app/static"))
 
 
 def log_execution_time(average_over=None):
