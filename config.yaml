@@ -2,7 +2,7 @@ project:
   root: "${PROJECT_ROOT}"  # Should be updated in the .env file.
 
 database:
-  path: "data/NBA_AI_ALL_SEASONS.sqlite"  # <<< Set this to point to the database you want to use.
+  path: "data/NBA_AI_BASE.sqlite"  # <<< Set this to point to the database you want to use.
 
 # Limited to avoid large volumes of calls to NBA Stats endpoints and long etl processes.
 # Can be removed if desired. Database Updater should work for all season back to 2000-2001.
