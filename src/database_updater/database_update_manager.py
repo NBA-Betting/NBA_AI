@@ -39,6 +39,7 @@ from src.database_updater.features import (
 )
 from src.database_updater.game_states import create_game_states, save_game_states
 from src.database_updater.pbp import get_pbp, save_pbp
+from src.database_updater.players import update_players
 from src.database_updater.predictions import make_pre_game_predictions, save_predictions
 from src.database_updater.prior_states import (
     determine_prior_states_needed,
@@ -67,11 +68,13 @@ def update_database(season="Current", predictor=None, db_path=DB_PATH):
     """
     # STEP 1: Update Schedule
     update_schedule(season)
-    # STEP 2: Update Game Data (Play-by-Play Logs, Game States)
+    # STEP 2: Update Players List
+    update_players(db_path)
+    # STEP 3: Update Game Data (Play-by-Play Logs, Game States)
     update_game_data(season, db_path)
-    # STEP 3: Update Pre Game Data (Prior States, Feature Sets)
+    # STEP 4: Update Pre Game Data (Prior States, Feature Sets)
     update_pre_game_data(season, db_path)
-    # STEP 4: Update Predictions
+    # STEP 5: Update Predictions
     if predictor:
         update_prediction_data(season, predictor, db_path)
 
