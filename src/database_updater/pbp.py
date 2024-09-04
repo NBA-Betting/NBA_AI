@@ -16,7 +16,7 @@ Functions:
 Usage:
 - Typically run as part of a larger data collection pipeline.
 - Script can be run directly from the command line (project root) to fetch and save NBA play-by-play data:
-    python -m src.pbp --save --game_ids=0042300401,0022300649 --log_level=DEBUG --pbp_endpoint=both
+    python -m src.database_updater.pbp --save --game_ids=0042300401,0022300649 --log_level=DEBUG --pbp_endpoint=both
 - Successful execution will print the number of games fetched, the number of actions in each game, and the first and last actions in each game.
 """
 

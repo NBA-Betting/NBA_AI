@@ -1,5 +1,5 @@
 """
-database_updater.py
+database_update_manager.py
 
 Description:
 This module handles the core process of updating the database with game data, including schedule updates, play-by-play logs,
@@ -23,7 +23,7 @@ Functions:
 Usage:
 - Typically run as part of a larger data processing pipeline.
 - Script can be run directly from the command line (project root) to update the database with the latest game data and predictions.
-    python -m src.database_updater --log_level=DEBUG --season=2023-2024 --predictor=Random
+    python -m src.database_updater.database_update_manager --log_level=DEBUG --season=2023-2024 --predictor=Random
 - Successful execution will update the database with the latest game data and predictions for the specified season.
 """
 
@@ -32,20 +32,24 @@ import logging
 import sqlite3
 
 from src.config import config
-from src.database_updater.features import (
-    create_feature_sets,
-    load_feature_sets,
-    save_feature_sets,
-)
 from src.database_updater.game_states import create_game_states, save_game_states
 from src.database_updater.pbp import get_pbp, save_pbp
-from src.database_updater.predictions import make_pre_game_predictions, save_predictions
 from src.database_updater.prior_states import (
     determine_prior_states_needed,
     load_prior_states,
 )
 from src.database_updater.schedule import update_schedule
 from src.logging_config import setup_logging
+from src.prediction_engine.features import (
+    create_feature_sets,
+    load_feature_sets,
+    save_feature_sets,
+)
+from src.prediction_engine.predictions import (
+    make_pre_game_predictions,
+    save_predictions,
+)
+from src.prediction_engine.prompt_data import load_prompt_data
 from src.utils import log_execution_time, lookup_basic_game_info
 
 # Configuration
@@ -188,9 +192,17 @@ def update_prediction_data(season, predictor, db_path=DB_PATH):
     Returns:
         None
     """
+    # Get game_ids for games needing updated predictions
     game_ids = get_games_for_prediction_update(season, predictor, db_path)
-    feature_sets = load_feature_sets(game_ids, db_path)
-    predictions = make_pre_game_predictions(feature_sets, predictor)
+
+    # Load data needed for prediction process based on specified predictor
+    if predictor == "GPT4_Mini":
+        predictor_data = load_prompt_data(game_ids, db_path)
+    else:
+        predictor_data = load_feature_sets(game_ids, db_path)
+
+    # Generate and save predictions
+    predictions = make_pre_game_predictions(predictor_data, predictor)
     save_predictions(predictions, predictor, db_path)
 
 

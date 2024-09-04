@@ -27,7 +27,7 @@ Functions:
 Usage:
 - Typically run as part of a larger data processing pipeline.
 - Script can be run directly from the command line to generate and save predictions.
-    python -m src.predictions --save --game_ids=0042300401,0022300649 --log_level=DEBUG --predictor=Linear
+    python -m src.prediction_engine.predictions --save --game_ids=0042300401,0022300649 --log_level=DEBUG --predictor=Linear
 - Successful execution will log the generated predictions and save them to the database.
 """
 
@@ -45,9 +45,10 @@ import pandas as pd
 import torch
 
 from src.config import config
-from src.database_updater.features import load_feature_sets
 from src.logging_config import setup_logging
 from src.model_training.mlp_model import MLP
+from src.prediction_engine.features import load_feature_sets
+from src.prediction_engine.prompt_data import load_prompt_data
 from src.utils import log_execution_time
 
 # Configuration
@@ -417,6 +418,61 @@ class BasePredictor(ABC):
         return updated_predictions
 
 
+class RandomPredictor(BasePredictor):
+    """
+    Predictor that generates random predictions for NBA games.
+
+    This class provides a simple model that generates random scores for demonstration purposes or as a baseline.
+    """
+
+    def load_models(self):
+        """
+        Load models (not applicable for random predictor).
+
+        Since this predictor generates random values, no model loading is necessary.
+        """
+        pass
+
+    def make_pre_game_predictions(self, games):
+        """
+        Generate random pre-game predictions for the given games.
+
+        Parameters:
+        games (dict): A dictionary containing game data.
+
+        Returns:
+        dict: A dictionary of random predictions, including scores and win probabilities for each game.
+        """
+        game_ids = list(games.keys())
+        home_scores = np.random.randint(80, 131, size=len(game_ids))
+        away_scores = np.random.randint(80, 131, size=len(game_ids))
+
+        predictions = {}
+        for game_id, home_score, away_score in zip(game_ids, home_scores, away_scores):
+            home_win_prob = calculate_home_win_prob(home_score, away_score)
+            predictions[game_id] = {
+                "pred_home_score": home_score,
+                "pred_away_score": away_score,
+                "pred_home_win_pct": home_win_prob,
+                "pred_players": games[game_id].get(
+                    "pred_players", {"home": {}, "away": {}}
+                ),
+            }
+        return predictions
+
+    def update_predictions(self, games):
+        """
+        Update predictions based on the current state of the games (random predictor uses base logic).
+
+        Parameters:
+        games (dict): A dictionary containing current game states and pre-game predictions.
+
+        Returns:
+        dict: A dictionary of updated predictions with random values.
+        """
+        return super().update_predictions(games)
+
+
 class BaselinePredictor(BasePredictor):
     """
     Predictor that uses a simple baseline model to generate predictions for NBA games.
@@ -686,35 +742,43 @@ class MLPPredictor(BasePredictor):
         return super().update_predictions(games)
 
 
-class RandomPredictor(BasePredictor):
+class GPT4_Mini_Predictor(BasePredictor):
     """
-    Predictor that generates random predictions for NBA games.
-
-    This class provides a simple model that generates random scores for demonstration purposes or as a baseline.
+    Predictor that uses OpenAI's GPT-4 Mini model to generate predictions.
     """
 
     def load_models(self):
         """
-        Load models (not applicable for random predictor).
-
-        Since this predictor generates random values, no model loading is necessary.
+        Not applicable for GPT-4 Mini predictor.
         """
         pass
 
     def make_pre_game_predictions(self, games):
         """
-        Generate random pre-game predictions for the given games.
+        Generate pre-game predictions using GPT-4 Mini.
 
         Parameters:
         games (dict): A dictionary containing game data.
 
         Returns:
-        dict: A dictionary of random predictions, including scores and win probabilities for each game.
+        dict: A dictionary of predictions, including predicted scores and win probabilities for each game.
         """
-        game_ids = list(games.keys())
-        home_scores = np.random.randint(80, 131, size=len(game_ids))
-        away_scores = np.random.randint(80, 131, size=len(game_ids))
 
+        # TODO: Implement GPT-4 Mini prediction logic
+        # IMPORTANT: Logic for calculating, displaying, and restricting expected costs needs to be included
+
+        # Inbound is the data returned from the prompt_data.py load_prompt_data function
+        # Formatted as a dictionary with game IDs as keys and game data as values
+
+        # Inbound data should be ready for input to the GPT-4 Mini model
+        # Interior Outbound data will need o be parsed from the response(s) of the GPT-4 Mini model
+
+        # Interior Outbound should be a home score and away score for each game
+        # that can be associated with the game ID
+
+        # Outbound should be a dictionary following the below structure:
+
+        # Generate predictions dictionary
         predictions = {}
         for game_id, home_score, away_score in zip(game_ids, home_scores, away_scores):
             home_win_prob = calculate_home_win_prob(home_score, away_score)
@@ -730,13 +794,13 @@ class RandomPredictor(BasePredictor):
 
     def update_predictions(self, games):
         """
-        Update predictions based on the current state of the games (random predictor uses base logic).
+        Update predictions based on the current state of the games.
 
         Parameters:
         games (dict): A dictionary containing current game states and pre-game predictions.
 
         Returns:
-        dict: A dictionary of updated predictions with random values.
+        dict: A dictionary of updated predictions based on real-time game data.
         """
         return super().update_predictions(games)
 
@@ -886,6 +950,8 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
         model_id = "Random"
     elif predictor_name == "Baseline":
         model_id = "Baseline"
+    elif predictor_name == "GPT4_Mini":
+        model_id = "GPT4_Mini"
     else:
         model_id = (
             PREDICTORS[predictor_name]["model_paths"][0].split("/")[-1].split(".")[0]
@@ -961,11 +1027,14 @@ def main():
 
     game_ids = args.game_ids.split(",") if args.game_ids else []
 
-    # Load feature sets from the database
-    feature_sets = load_feature_sets(game_ids=game_ids)
+    # Load data needed for prediction process based on specified predictor
+    if args.predictor == "GPT4_Mini":
+        predictor_data = load_prompt_data(game_ids=game_ids)
+    else:
+        predictor_data = load_feature_sets(game_ids=game_ids)
 
     # Generate predictions using the specified predictor
-    predictions = make_pre_game_predictions(args.predictor, feature_sets)
+    predictions = make_pre_game_predictions(predictor_data, args.predictor)
     if args.save:
         save_predictions(predictions, args.predictor)
 

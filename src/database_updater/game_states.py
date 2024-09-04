@@ -15,7 +15,7 @@ Functions:
 Usage:
 - Typically run as part of a larger data processing pipeline.
 - Script can be run directly from the command line to fetch and save NBA play-by-play data, and create game states:
-    python -m src.game_states --save --game_ids=0042300401,0022300649 --log_level=DEBUG
+    python -m src.database_updater.game_states --save --game_ids=0042300401,0022300649 --log_level=DEBUG
 - Successful execution will print the number of games processed, the number of game states created, and the first and last state of each game.
 """
 

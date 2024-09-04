@@ -66,6 +66,8 @@ predictors:
     class: "MLPPredictor"
     model_paths:
       - "models/MLP_Regression_2024-07-30T14:08:12.793153.pth"
+  GPT4_Mini:
+    class: "GPT4_Mini_Predictor"
 
 
 

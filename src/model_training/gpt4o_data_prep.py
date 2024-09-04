@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import random
 import sqlite3
 
@@ -18,14 +17,33 @@ from src.utils import log_execution_time, validate_season_format
 DB_PATH = config["database"]["path"]
 PROJECT_ROOT = config["project"]["root"]
 
+# Flag to include or exclude player-related data
+INCLUDE_PLAYER_DATA = False  # Set to True to include player data, False to exclude
+
 
 @log_execution_time(average_over="output")
-def load_game_data(season, db_path=DB_PATH):
+def load_game_data(season, historical_game_count, db_path=DB_PATH):
     validate_season_format(season)
-
     logging.info(f"Loading data for season: {season}")
 
-    # Query strings
+    games = fetch_game_data(season, db_path)
+    if not games:
+        logging.warning(f"No games found for season: {season}")
+        return []
+
+    game_ids = [game[0] for game in games]
+    prior_states_dict = load_prior_states(determine_prior_states_needed(game_ids))
+
+    game_records = []
+    for game in games:
+        record = process_game(game, prior_states_dict, db_path, historical_game_count)
+        game_records.append(record)
+
+    logging.info(f"Loaded data for {len(game_records)} games.")
+    return game_records
+
+
+def fetch_game_data(season, db_path):
     query_games = """
     SELECT game_id, date_time_est, home_team, away_team, season, season_type
     FROM Games
@@ -33,317 +51,260 @@ def load_game_data(season, db_path=DB_PATH):
     AND season_type IN ('Regular Season', 'Post Season')
     AND status = 'Completed'
     """
-
-    query_states = """
-    SELECT play_id, clock, period, home_score, away_score, players_data, is_final_state
-    FROM GameStates
-    WHERE game_id = ?
-    ORDER BY play_id
-    """
-
-    result = {}
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute(query_games, (season,))
-        games = cursor.fetchall()
+        return cursor.fetchall()
 
-        game_ids = [game[0] for game in games]
-        prior_states_needed = determine_prior_states_needed(game_ids)
-        prior_states_dict = load_prior_states(prior_states_needed)
 
-        for game in games:
-            game_id, date_time_est, home_team, away_team, season, season_type = game
-
-            # Get current game states
-            cursor.execute(query_states, (game_id,))
-            game_states = cursor.fetchall()
-
-            # Extract only the home_prior_states and away_prior_states keys
-            prior_states = prior_states_dict.get(game_id, {})
-            filtered_prior_states = {
-                "home_prior_states": prior_states.get("home_prior_states", []),
-                "away_prior_states": prior_states.get("away_prior_states", []),
+def fetch_final_state(game_id, db_path):
+    query_final_state = """
+    SELECT home_score, away_score, players_data
+    FROM GameStates
+    WHERE game_id = ?
+    AND is_final_state = 1
+    """
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(query_final_state, (game_id,))
+        result = cursor.fetchone()
+        if result:
+            home_score, away_score, players_data = result
+            response = {
+                "home_team": {"score": home_score},
+                "away_team": {"score": away_score},
             }
-
-            # Search for the final state by checking from the end of the list
-            final_state = None
-            for state in reversed(game_states):
-                if state[6]:  # Check if is_final_state is True (or 1)
-                    final_state = {
-                        "play_id": state[0],
-                        "clock": state[1],
-                        "period": state[2],
-                        "home_score": state[3],
-                        "away_score": state[4],
-                        "players_data": json.loads(state[5]),
-                    }
-                    break  # Stop searching once the final state is found
-
-            result[game_id] = {
-                "prompt": {
-                    "date_time_est": date_time_est,
-                    "home_team": home_team,
-                    "away_team": away_team,
-                    "season": season,
-                    "season_type": season_type,
-                    "game_states": [
-                        {
-                            "play_id": state[0],
-                            "clock": state[1],
-                            "period": state[2],
-                            "home_score": state[3],
-                            "away_score": state[4],
-                            "players_data": json.loads(state[5]),
-                        }
-                        for state in game_states
-                    ],
-                    "prior_states": filtered_prior_states,
-                },
-                "response": final_state,
-            }
-
-    logging.info(f"Loaded data for {len(result)} games.")
-
-    return result
-
-
-@log_execution_time(average_over="inbound_data")
-def parse_game_data(inbound_data):
-    def parse_clock(clock_str):
-        """Parse the clock from 'PT12M00.00S' to '12:00'."""
-        minutes, seconds = clock_str.lstrip("PT").rstrip("S").split("M")
-        minutes = int(minutes)
-        seconds = int(seconds.split(".")[0])
-        return f"{minutes}:{seconds:02}"
-
-    logging.info(f"Parsing prompt-response data for {len(inbound_data)} games.")
-
-    parsed_data = {}
-
-    for game_id, game_info in inbound_data.items():
-        prompt_info = game_info["prompt"]
-        response_info = game_info["response"]
-
-        home_team = prompt_info["home_team"]
-        away_team = prompt_info["away_team"]
-        season_type = "R" if prompt_info["season_type"] == "Regular Season" else "P"
-
-        # Game Metadata
-        game_metadata = f"{away_team}@{home_team}, {season_type}, {prompt_info['date_time_est'][:10]}"
-
-        # Game States
-        game_progress = []
-        for state in prompt_info["game_states"]:
-            game_state = {
-                "play_id": state["play_id"],
-                "clock": parse_clock(state["clock"]),
-                "period": state["period"],
-                home_team: {
-                    "score": state["home_score"],
-                    "player_points": {
-                        pid: pdata["points"]
-                        for pid, pdata in state["players_data"]["home"].items()
-                    },
-                },
-                away_team: {
-                    "score": state["away_score"],
-                    "player_points": {
-                        pid: pdata["points"]
-                        for pid, pdata in state["players_data"]["away"].items()
-                    },
-                },
-            }
-            game_progress.append(game_state)
-
-        # Prior States
-        historical_data = {}
-        for state_type, states in prompt_info["prior_states"].items():
-            team = home_team if "home" in state_type else away_team
-            key = f"{team}_past_games"
-            historical_data[key] = []
-            for state in states:
-                past_game = {
-                    "game_date": state["game_date"],
-                    "matchup": f"{state['away']}@{state['home']}",
-                    state["home"]: {
-                        "score": state["home_score"],
-                        "player_points": {
-                            pid: pdata["points"]
-                            for pid, pdata in state["players_data"]["home"].items()
-                        },
-                    },
-                    state["away"]: {
-                        "score": state["away_score"],
-                        "player_points": {
-                            pid: pdata["points"]
-                            for pid, pdata in state["players_data"]["away"].items()
-                        },
-                    },
+            if INCLUDE_PLAYER_DATA:
+                response["home_team"]["player_points"] = {
+                    player_id: details["points"]
+                    for player_id, details in json.loads(players_data)["home"].items()
                 }
-                historical_data[key].append(past_game)
+                response["away_team"]["player_points"] = {
+                    player_id: details["points"]
+                    for player_id, details in json.loads(players_data)["away"].items()
+                }
+            return response
+        return None
 
-            # Sort past games by game_date in descending order
-            historical_data[key] = sorted(
-                historical_data[key], key=lambda x: x["game_date"], reverse=True
-            )
 
-        # Final State (Response)
-        final_state = None
-        if response_info:
-            final_state = {
-                home_team: {
-                    "score": response_info["home_score"],
-                    "player_points": {
-                        pid: pdata["points"]
-                        for pid, pdata in response_info["players_data"]["home"].items()
-                    },
-                },
-                away_team: {
-                    "score": response_info["away_score"],
-                    "player_points": {
-                        pid: pdata["points"]
-                        for pid, pdata in response_info["players_data"]["away"].items()
-                    },
-                },
+def process_prior_games(prior_states, max_games):
+    sorted_games = []
+
+    for state in prior_states:
+        game_record = {
+            "home_team": state["home"],
+            "away_team": state["away"],
+            "game_date": state["game_date"],
+            "home_team_score": state["home_score"],
+            "away_team_score": state["away_score"],
+        }
+
+        if INCLUDE_PLAYER_DATA:
+            game_record["home_team_player_points"] = {
+                player_id: details["points"]
+                for player_id, details in state["players_data"]["home"].items()
+            }
+            game_record["away_team_player_points"] = {
+                player_id: details["points"]
+                for player_id, details in state["players_data"]["away"].items()
             }
 
-        # Combine into final structure
-        parsed_data[game_id] = {
-            "prompt": {
-                "game_metadata": game_metadata,
-                "game_progress": game_progress,
-                "historical_data": historical_data,
-            },
-            "response": final_state,
-        }
+        sorted_games.append(game_record)
 
-    logging.info(f"Parsed data for {len(parsed_data)} games.")
+    sorted_games.sort(key=lambda x: x["game_date"], reverse=True)
 
-    return parsed_data
+    if max_games == "all":
+        return sorted_games
+    else:
+        return sorted_games[:max_games]
 
 
-def restrict_game_data(parsed_data, historical_game_count="all", num_plays="all"):
-    restricted_data = {}
-
-    historical_game_count = (
-        None if historical_game_count == "all" else historical_game_count
+def generate_prompt(
+    home_team, away_team, date_time_est, season_type, home_prior_games, away_prior_games
+):
+    prompt = (
+        f"Home Team: {home_team}\n"
+        f"Away Team: {away_team}\n"
+        f"Game Date: {date_time_est[:10]}\n"
+        f"Season Type: {season_type}\n"
+        f"Home Teams Most Recent Previous Games: \n{home_prior_games}\n"
+        f"Away Teams Most Recent Previous Games: \n{away_prior_games}"
     )
-    num_plays = None if num_plays == "all" else num_plays
-
-    for game_id, game_info in list(parsed_data.items()):
-        restricted_game_progress = game_info["prompt"]["game_progress"][:num_plays]
-
-        restricted_historical_data = {}
-        for team_key, games in game_info["prompt"]["historical_data"].items():
-            restricted_historical_data[team_key] = games[:historical_game_count]
-
-        restricted_data[game_id] = {
-            "prompt": {
-                "game_metadata": game_info["prompt"]["game_metadata"],
-                "game_progress": restricted_game_progress,
-                "historical_data": restricted_historical_data,
-            },
-            "response": game_info["response"],
-        }
-
-    return restricted_data
+    return prompt
 
 
-@log_execution_time(average_over="inbound_data")
-def finalize_game_data(inbound_data, output_filename="prompt_response_data.jsonl"):
-    logging.info(f"Finalizing prompt-response data for {len(inbound_data)} games.")
+def process_game(game, prior_states_dict, db_path, historical_game_count):
+    game_id, date_time_est, home_team, away_team, season, season_type = game
+
+    final_state = fetch_final_state(game_id, db_path)
+    if final_state is None:
+        logging.error(f"Final state not found for game_id: {game_id}")
+        return None
+
+    home_prior_games = process_prior_games(
+        prior_states_dict.get(game_id, {}).get("home_prior_states", []),
+        max_games=historical_game_count,
+    )
+    away_prior_games = process_prior_games(
+        prior_states_dict.get(game_id, {}).get("away_prior_states", []),
+        max_games=historical_game_count,
+    )
+
+    prompt = generate_prompt(
+        home_team,
+        away_team,
+        date_time_est,
+        season_type,
+        home_prior_games,
+        away_prior_games,
+    )
+
+    return {
+        "game_id": game_id,
+        "home_team": home_team,
+        "away_team": away_team,
+        "game_date": date_time_est[:10],
+        "season": season,
+        "season_type": season_type,
+        "prompt": prompt,
+        "response": final_state,
+    }
+
+
+def count_tokens(game_records):
+    # Pricing
+
+    # gpt-4o-2024-08-06
+    gpt_4o_input_cost_per_million = 2.50
+    gpt_4o_output_cost_per_million = 10.00
+
+    # gpt-4o-mini
+    gpt_4o_mini_input_cost_per_million = 0.15
+    gpt_4o_mini_output_cost_per_million = 0.60
 
     tokenizer = tiktoken.get_encoding("cl100k_base")
 
-    total_tokens = {
-        "prompt": 0,
-        "response": 0,
-        "game_metadata": 0,
-        "game_progress": 0,
-        "historical_data": 0,
+    game_count = len(game_records)
+    total_prompt_tokens = 0
+    total_response_tokens = 0
+
+    for game in game_records:
+        prompt_tokens = tokenizer.encode(json.dumps(game["prompt"]))
+        total_prompt_tokens += len(prompt_tokens)
+
+        response_tokens = tokenizer.encode(json.dumps(game.get("response", {})))
+        total_response_tokens += len(response_tokens)
+
+    average_prompt_tokens = total_prompt_tokens / game_count if game_count > 0 else 0
+    average_response_tokens = (
+        total_response_tokens / game_count if game_count > 0 else 0
+    )
+
+    logging.info(
+        f"Token Counts:\nPrompt: {total_prompt_tokens} total. Average: {average_prompt_tokens:.2f} per game."
+    )
+    logging.info(
+        f"Response: {total_response_tokens} total. Average: {average_response_tokens:.2f} per game."
+    )
+
+    # Calculate costs per 100 records
+    prompt_tokens_per_100 = total_prompt_tokens / game_count * 100
+    response_tokens_per_100 = total_response_tokens / game_count * 100
+
+    gpt_4o_cost_per_100 = (
+        prompt_tokens_per_100 / 1000000
+    ) * gpt_4o_input_cost_per_million + (
+        response_tokens_per_100 / 1000000
+    ) * gpt_4o_output_cost_per_million
+
+    gpt_4o_mini_cost_per_100 = (
+        prompt_tokens_per_100 / 1000000
+    ) * gpt_4o_mini_input_cost_per_million + (
+        response_tokens_per_100 / 1000000
+    ) * gpt_4o_mini_output_cost_per_million
+
+    logging.info(
+        f"Pricing per 100 records:\n"
+        f"gpt-4o-2024-08-06: ${gpt_4o_cost_per_100:.2f}\n"
+        f"gpt-4o-mini: ${gpt_4o_mini_cost_per_100:.2f}"
+    )
+
+
+def create_sample(
+    game_records,
+    regular_season_sample_size=None,
+    postseason_sample_size=None,
+    random_seed=None,
+):
+    """
+    Creates a random sample of game records with optionality for separate Regular Season and Post Season sampling,
+    and stratification by season quarters for Regular Season games.
+
+    Parameters:
+    - game_records (list of dicts): List of game records to sample from.
+    - regular_season_sample_size (int, optional): Number of Regular Season records to include in the sample. Default is None.
+    - postseason_sample_size (int, optional): Number of Post Season records to include in the sample. Default is None.
+    - random_seed (int, optional): Seed for random number generator for reproducibility. Default is None.
+
+    Returns:
+    - list of dicts: A random sample of game records based on specified sample sizes and season quarters.
+    """
+
+    # Set the random seed for reproducibility (optional)
+    if random_seed is not None:
+        random.seed(random_seed)
+
+    # Separate the records into Regular Season and Post Season
+    regular_season_records = [
+        record for record in game_records if record["season_type"] == "Regular Season"
+    ]
+    postseason_records = [
+        record for record in game_records if record["season_type"] == "Post Season"
+    ]
+
+    # Sort the regular season records by date
+    regular_season_records.sort(key=lambda x: x["game_date"])
+
+    # Determine the number of games in each quarter
+    total_regular_season_games = len(regular_season_records)
+    quarter_size = total_regular_season_games // 4
+
+    # Initialize quarters
+    quarters = {
+        "Q1": regular_season_records[:quarter_size],
+        "Q2": regular_season_records[quarter_size : 2 * quarter_size],
+        "Q3": regular_season_records[2 * quarter_size : 3 * quarter_size],
+        "Q4": regular_season_records[3 * quarter_size :],
     }
-    game_count = len(inbound_data)
 
-    # Add optional instructions to the top-level prompt data and count tokens
-    for game_id, game_info in inbound_data.items():
-        # Ensure there is a "prompt" key if not already present
-        if "prompt" not in game_info:
-            game_info["prompt"] = {}
+    # Adjust if there are any leftover games due to integer division
+    remaining_games = total_regular_season_games - 4 * quarter_size
+    if remaining_games > 0:
+        quarters["Q4"].extend(regular_season_records[-remaining_games:])
 
-        # Tokenize and count tokens for the prompt sections
-        game_metadata_tokens = tokenizer.encode(
-            "game_metadata: " + json.dumps(game_info["prompt"]["game_metadata"])
-        )
-        game_progress_tokens = tokenizer.encode(
-            "game_progress: " + json.dumps(game_info["prompt"]["game_progress"])
-        )
-        historical_data_tokens = tokenizer.encode(
-            "historical_data: " + json.dumps(game_info["prompt"]["historical_data"])
-        )
+    # Initialize the sample list
+    sample = []
 
-        # Add to the total prompt tokens
-        total_tokens["game_metadata"] += len(game_metadata_tokens)
-        total_tokens["game_progress"] += len(game_progress_tokens)
-        total_tokens["historical_data"] += len(historical_data_tokens)
+    # Sample an equal number of games from each quarter if requested
+    if regular_season_sample_size is not None:
+        quarter_sample_size = regular_season_sample_size // 4
 
-        total_tokens["prompt"] += (
-            len(game_metadata_tokens)
-            + len(game_progress_tokens)
-            + len(historical_data_tokens)
-        )
+        for quarter in quarters.values():
+            if quarter_sample_size > len(quarter):
+                raise ValueError(
+                    "Quarter sample size cannot be larger than the number of available games in that quarter."
+                )
+            sample += random.sample(quarter, quarter_sample_size)
 
-        # Tokenize and count tokens for the response sections
-        response_tokens = tokenizer.encode(json.dumps(game_info.get("response", {})))
-        total_tokens["response"] += len(response_tokens)
+    # Sample Post Season games if requested
+    if postseason_sample_size is not None:
+        if postseason_sample_size > len(postseason_records):
+            raise ValueError(
+                "Post season sample size cannot be larger than the number of available post season game records."
+            )
+        sample += random.sample(postseason_records, postseason_sample_size)
 
-    # Calculate averages
-    average_tokens = {
-        "prompt": total_tokens["prompt"] / game_count if game_count > 0 else 0,
-        "game_metadata": (
-            total_tokens["game_metadata"] / game_count if game_count > 0 else 0
-        ),
-        "game_progress": (
-            total_tokens["game_progress"] / game_count if game_count > 0 else 0
-        ),
-        "historical_data": (
-            total_tokens["historical_data"] / game_count if game_count > 0 else 0
-        ),
-        "response": total_tokens["response"] / game_count if game_count > 0 else 0,
-    }
-
-    logging.info(f"Finalized data for {game_count} games.")
-
-    # Writing to a JSONL file
-    with open(output_filename, "w") as outfile:
-        for game_id, game_info in inbound_data.items():
-            json_line = json.dumps({game_id: game_info})
-            outfile.write(json_line + "\n")
-
-    # Calculate the filesize of the output file
-    file_size_bytes = os.path.getsize(output_filename)
-    file_size_mb = file_size_bytes / 1024 / 1024
-
-    logging.info(
-        f"Data has been saved to {output_filename}.\nGame count: {game_count}\nFilesize: {file_size_mb:.2f} MB"
-    )
-
-    logging.info(
-        f"Token Counts:\nPrompt: {total_tokens['prompt']} total. Average: {average_tokens['prompt']:.2f} per game."
-    )
-    logging.info(
-        f"\tGame Metadata: {total_tokens['game_metadata']} total. Average: {average_tokens['game_metadata']:.2f} per game."
-    )
-    logging.info(
-        f"\tGame Progress: {total_tokens['game_progress']} total. Average: {average_tokens['game_progress']:.2f} per game."
-    )
-    logging.info(
-        f"\tHistorical Data: {total_tokens['historical_data']} total. Average: {average_tokens['historical_data']:.2f} per game."
-    )
-    logging.info(
-        f"Response: {total_tokens['response']} total. Average: {average_tokens['response']:.2f} per game."
-    )
-
-    return inbound_data
+    return sample
 
 
 if __name__ == "__main__":
@@ -351,28 +312,45 @@ if __name__ == "__main__":
     setup_logging(log_level="INFO")
 
     # PARAMS
-    season = "2023-2024"
+    season = "2022-2023"
     historical_game_count = 10
-    in_progress_game_state_count = 0
 
     # Load and process the game data
-    d1 = load_game_data(season)
-    d2 = parse_game_data(d1)
-    d3 = restrict_game_data(
-        d2,
-        historical_game_count=historical_game_count,
-        num_plays=in_progress_game_state_count,
-    )
-    instructions = None
-    d4 = finalize_game_data(
-        d3,
-        instructions=instructions,
-        output_filename=f"{PROJECT_ROOT}/data/prompt_response_data_{season}.jsonl",
+    game_records = load_game_data(season, historical_game_count)
+
+    # Count tokens
+    count_tokens(game_records)
+
+    # Save the game data to a JSON Lines file
+    if not INCLUDE_PLAYER_DATA:
+        full_filepath = f"{PROJECT_ROOT}/data/{season}_{historical_game_count}H_no_player_data.jsonl"
+    else:
+        full_filepath = f"{PROJECT_ROOT}/data/{season}_{historical_game_count}H.jsonl"
+
+    with open(full_filepath, "w") as f:
+        for game in game_records:
+            f.write(json.dumps(game) + "\n")
+
+    logging.info(f"Game data saved to: {full_filepath}")
+
+    # Sample the data
+    regular_season_sample_size = 100
+    postseason_sample_size = 0
+    sample = create_sample(
+        game_records,
+        regular_season_sample_size=regular_season_sample_size,
+        postseason_sample_size=postseason_sample_size,
+        random_seed=42,
     )
 
-    # Take a random sample of 5 games
-    sampled_game_ids = random.sample(list(d4.keys()), 5)
-    sampled_game_data = {game_id: d4[game_id] for game_id in sampled_game_ids}
-    # Save the sampled data to a JSON file
-    with open("delme.json", "w") as f:
-        json.dump(sampled_game_data, f, indent=4)
+    # Save the sample to a JSON Lines file
+    if not INCLUDE_PLAYER_DATA:
+        sample_filepath = f"{PROJECT_ROOT}/data/sample_{season}_{regular_season_sample_size}R_{postseason_sample_size}P_{historical_game_count}H_no_player_data.jsonl"
+    else:
+        sample_filepath = f"{PROJECT_ROOT}/data/sample_{season}_{regular_season_sample_size}R_{postseason_sample_size}P_{historical_game_count}H.jsonl"
+
+    with open(sample_filepath, "w") as f:
+        for game in sample:
+            f.write(json.dumps(game) + "\n")
+
+    logging.info(f"Sample data saved to: {sample_filepath}")
