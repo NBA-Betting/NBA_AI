@@ -22,7 +22,7 @@ Helper Functions for Feature Creation:
 Usage:
 - Typically run as part of a larger data processing pipeline.
 - Script can be run directly from the command line (project root) to generate and save feature sets for specific games.
-    python -m src.features --save --game_ids=0042300401,0022300649 --log_level=DEBUG
+    python -m src.prediction_engine.features --save --game_ids=0042300401,0022300649 --log_level=DEBUG
 - Successful execution will log the number of games processed and the time taken to generate the feature sets.
 """
 

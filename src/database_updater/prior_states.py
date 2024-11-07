@@ -15,11 +15,12 @@ Functions:
 Usage:
 - Typically run as part of a larger data processing pipeline.
 - Script can be run directly from the command line to determine and load prior game states:
-    python -m src.prior_states --game_ids=0042300401,0022300649 --log_level=DEBUG
+    python -m src.database_updater.prior_states --game_ids=0042300401,0022300649 --log_level=DEBUG
 - Successful execution will log detailed information about the prior states loaded and any missing data.
 """
 
 import argparse
+import json
 import logging
 import sqlite3
 
@@ -160,6 +161,10 @@ def load_prior_states(game_ids_dict, db_path=DB_PATH):
                     all_game_ids,
                 )
                 all_prior_states = [dict(row) for row in cursor.fetchall()]
+
+                # Parse players_data for each state
+                for state in all_prior_states:
+                    state["players_data"] = json.loads(state["players_data"])
 
                 states_dict = {state["game_id"]: state for state in all_prior_states}
 

@@ -19,7 +19,7 @@ Usage:
 - The output can be directed to a file, printed to the screen, or both, depending on the command-line arguments provided.
 
 Example:
-    python -m src.games --date="2024-04-01" --predictor="Best" --output="file" --log_level="DEBUG"
+    python -m src.games_api.games --date="2024-04-01" --predictor="Best" --output="file" --log_level="DEBUG"
 """
 
 import argparse
@@ -29,8 +29,8 @@ import sqlite3
 
 from src.config import config
 from src.database_updater.database_update_manager import update_database
-from src.database_updater.predictions import make_current_predictions
 from src.logging_config import setup_logging
+from src.predictions.prediction_manager import make_current_predictions
 from src.utils import (
     date_to_season,
     game_id_to_season,
