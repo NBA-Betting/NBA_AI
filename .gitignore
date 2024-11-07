@@ -1,5 +1,8 @@
 # Project Specific
 
+# Diagram files
+diagrams/*
+
 # Database and data files
 data/*
 !data/NBA_AI_BASE.sqlite
