@@ -47,27 +47,9 @@ nba_api:
     Accept-Language: "en-US,en;q=0.9"
     Cache-Control: "no-cache"
 
-# Manages which predictor is used for the database updates and games api
-predictors:
-  Best: "MLP" # Can be changed to any other predictor type based on preference (Random, Baseline, Linear, Tree, MLP)
-  Random:
-    class: "RandomPredictor"
-  Baseline:
-    class: "BaselinePredictor"
-  Linear:
-    class: "LinearPredictor"
-    model_paths:
-      - "models/Ridge_Regression_2024-07-29T21:14:57.504620.joblib"
-  Tree:
-    class: "TreePredictor"
-    model_paths:
-      - "models/XGBoost_Regression_2024-07-29T21:33:17.702300.joblib"
-  MLP:
-    class: "MLPPredictor"
-    model_paths:
-      - "models/MLP_Regression_2024-07-30T14:08:12.793153.pth"
-  GPT4_Mini:
-    class: "GPT4_Mini_Predictor"
+
+# Set Default Predictor
+default_predictor: "Baseline"
 
 
 

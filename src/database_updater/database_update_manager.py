@@ -40,16 +40,12 @@ from src.database_updater.prior_states import (
 )
 from src.database_updater.schedule import update_schedule
 from src.logging_config import setup_logging
-from src.prediction_engine.features import (
-    create_feature_sets,
-    load_feature_sets,
-    save_feature_sets,
-)
-from src.prediction_engine.predictions import (
+from src.predictions.features import create_feature_sets, save_feature_sets
+from src.predictions.prediction_manager import (
     make_pre_game_predictions,
     save_predictions,
 )
-from src.prediction_engine.prompt_data import load_prompt_data
+from src.predictions.prompt_data import load_prompt_data
 from src.utils import log_execution_time, lookup_basic_game_info
 
 # Configuration
@@ -195,14 +191,8 @@ def update_prediction_data(season, predictor, db_path=DB_PATH):
     # Get game_ids for games needing updated predictions
     game_ids = get_games_for_prediction_update(season, predictor, db_path)
 
-    # Load data needed for prediction process based on specified predictor
-    if predictor == "GPT4_Mini":
-        predictor_data = load_prompt_data(game_ids, db_path)
-    else:
-        predictor_data = load_feature_sets(game_ids, db_path)
-
     # Generate and save predictions
-    predictions = make_pre_game_predictions(predictor_data, predictor)
+    predictions = make_pre_game_predictions(game_ids, predictor)
     save_predictions(predictions, predictor, db_path)
 
 

@@ -30,7 +30,7 @@ import sqlite3
 from src.config import config
 from src.database_updater.database_update_manager import update_database
 from src.logging_config import setup_logging
-from src.prediction_engine.predictions import make_current_predictions
+from src.predictions.prediction_manager import make_current_predictions
 from src.utils import (
     date_to_season,
     game_id_to_season,
