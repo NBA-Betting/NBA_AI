@@ -26,7 +26,8 @@ from src.logging_config import setup_logging
 from src.web_app.app import create_app
 
 # Configuration
-VALID_PREDICTORS = list(config["predictors"].keys())
+
+VALID_PREDICTORS = config["predictors"]
 
 
 def main():
@@ -42,9 +43,8 @@ def main():
     )
     parser.add_argument(
         "--predictor",
-        default="Best",
         type=str,
-        help=f"The predictor to use for predictions. Default is 'Best'. Valid options are: {', '.join(VALID_PREDICTORS)}",
+        help=f"The predictor to use for predictions. Valid options are: {', '.join(VALID_PREDICTORS)}",
     )
     parser.add_argument(
         "--log_level",
@@ -60,17 +60,13 @@ def main():
     )
     args = parser.parse_args()
 
-    predictor = args.predictor
+    predictor = (
+        args.predictor
+        if args.predictor
+        else config.get("default_predictor", "Baseline")
+    )
     log_level = args.log_level.upper()
     debug_mode = args.debug
-
-    # Map "Best" to the actual predictor
-    if predictor == "Best":
-        best_predictor = config["predictors"].get("Best", None)
-        if best_predictor:
-            predictor = best_predictor
-        else:
-            raise ValueError("No predictor found for 'Best' in the configuration.")
 
     # Validate log level and predictor
     valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
