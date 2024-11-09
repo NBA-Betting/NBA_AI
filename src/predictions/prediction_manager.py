@@ -197,7 +197,7 @@ def main():
 
     # Generate predictions using the specified predictor
     pre_game_predictions = make_pre_game_predictions(
-        game_ids, args.predictor, args.save
+        game_ids, args.predictor, save=args.save  # Explicitly set save to args.save
     )
 
     # Create predictions based on the current game state

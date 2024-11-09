@@ -34,6 +34,7 @@ import sqlite3
 from src.config import config
 from src.database_updater.game_states import create_game_states, save_game_states
 from src.database_updater.pbp import get_pbp, save_pbp
+from src.database_updater.players import update_players
 from src.database_updater.prior_states import (
     determine_prior_states_needed,
     load_prior_states,
@@ -45,7 +46,6 @@ from src.predictions.prediction_manager import (
     make_pre_game_predictions,
     save_predictions,
 )
-from src.predictions.prompt_data import load_prompt_data
 from src.utils import log_execution_time, lookup_basic_game_info
 
 # Configuration
@@ -195,7 +195,6 @@ def update_prediction_data(season, predictor, db_path=DB_PATH):
 
     # Generate and save predictions
     predictions = make_pre_game_predictions(game_ids, predictor)
-    save_predictions(predictions, predictor, db_path)
 
 
 @log_execution_time()
