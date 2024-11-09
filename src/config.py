@@ -70,8 +70,13 @@ def load_config():
 
     # Iterate through the config dictionary to replace placeholders with env vars
     for section, settings in config.items():
-        for key, value in settings.items():
-            config[section][key] = replace_env_vars(value)
+        if isinstance(settings, dict):
+            for key, value in settings.items():
+                config[section][key] = replace_env_vars(value)
+        elif isinstance(settings, list):
+            config[section] = [replace_env_vars(item) for item in settings]
+        else:
+            config[section] = replace_env_vars(settings)
 
     # Compute the absolute path for DB_PATH based on PROJECT_ROOT
     # This is useful for ensuring that file paths are correctly handled regardless of the working directory

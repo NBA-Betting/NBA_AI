@@ -51,21 +51,13 @@ nba_api:
     Accept-Language: "en-US,en;q=0.9"
     Cache-Control: "no-cache"
 
-
 # Set Default Predictor
 default_predictor: "Baseline"
 
-
-
-
-
-
-
-
-
-
-
-
-  
-
-
+# Valid Predictors
+predictors:
+  - "Baseline"
+  - "Linear"
+  - "Tree"
+  - "MLP"
+  - "GPT_4o_Mini"
