@@ -31,7 +31,6 @@ import pandas as pd
 from src.config import config
 from src.logging_config import setup_logging
 from src.predictions.prediction_engines.baseline_predictor import BaselinePredictor
-from src.predictions.prediction_engines.gpt4_mini_predictor import GPT4MiniPredictor
 from src.predictions.prediction_engines.linear_predictor import LinearPredictor
 from src.predictions.prediction_engines.mlp_predictor import MLPPredictor
 from src.predictions.prediction_engines.tree_predictor import TreePredictor
@@ -47,7 +46,6 @@ PREDICTOR_MAP = {
     "Linear": LinearPredictor,
     "Tree": TreePredictor,
     "MLP": MLPPredictor,
-    "GPT4_Mini": GPT4MiniPredictor,
 }
 
 

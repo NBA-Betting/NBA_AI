@@ -60,4 +60,3 @@ predictors:
   - "Linear"
   - "Tree"
   - "MLP"
-  - "GPT_4o_Mini"
