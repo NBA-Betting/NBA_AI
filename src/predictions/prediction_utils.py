@@ -194,7 +194,7 @@ def calculate_home_win_prob(
 
     # Pre-game scenario: use the base logistic parameters without adjustment
     if minutes_remaining is None:
-        win_prob = 1 / (1 + np.exp(-(base_a + base_b * score_diff)))
+        win_prob = float(1 / (1 + np.exp(-(base_a + base_b * score_diff))))
     else:
         # In-game scenario: Adjust the logistic function based on time remaining
         # Linear and logarithmic adjustments increase certainty as time decreases
@@ -214,7 +214,7 @@ def calculate_home_win_prob(
         adjusted_b = base_b * (1 + time_factor)
 
         # Calculate the win probability using the adjusted logistic function
-        win_prob = 1 / (1 + np.exp(-(base_a + adjusted_b * score_diff)))
+        win_prob = float(1 / (1 + np.exp(-(base_a + adjusted_b * score_diff))))
 
     return win_prob
 

@@ -1,66 +1,72 @@
-class MLPPredictor(BasePredictor):
+import pandas as pd
+import torch
+
+from src.model_training.mlp_model import MLP
+from src.predictions.features import load_feature_sets
+from src.predictions.prediction_utils import calculate_home_win_prob
+
+
+class MLPPredictor:
     """
     Predictor that uses a multi-layer perceptron (MLP) model to generate predictions for NBA games.
 
     This class loads an MLP model to make pre-game predictions and update them based on the current game state.
     """
 
+    def __init__(self, model_paths=None):
+        self.model_paths = model_paths or []
+        self.models = []
+        self.load_models()
+
     def load_models(self):
         """
-        Load the MLP model from the specified path and set up normalization parameters.
+        Load the MLP models from the specified paths and set up normalization parameters.
 
-        This method initializes the MLP model using a pre-trained model checkpoint file. It also sets up
+        This method initializes the MLP models using pre-trained model checkpoint files. It also sets up
         normalization parameters required for the model's inputs.
         """
-        checkpoint = torch.load(self.model_paths[0])
-        self.model = MLP(input_size=checkpoint["input_size"])
-        self.model.load_state_dict(checkpoint["model_state_dict"])
-        self.mean = checkpoint["mean"]
-        self.std = checkpoint["std"]
+        for model_path in self.model_paths:
+            checkpoint = torch.load(model_path)
+            model = MLP(input_size=checkpoint["input_size"])
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model.mean = checkpoint["mean"]
+            model.std = checkpoint["std"]
+            self.models.append(model)
 
-    def make_pre_game_predictions(self, games):
-        """
-        Generate pre-game predictions using the MLP model.
+    def make_pre_game_predictions(self, game_ids):
+        predictions = {}
+        games = self.load_pre_game_data(game_ids)
 
-        Parameters:
-        games (dict): A dictionary containing game data, with each game having associated features.
-
-        Returns:
-        dict: A dictionary of predictions, including predicted scores and win probabilities for each game.
-        """
-        game_ids = list(games.keys())
         features = [games[game_id] for game_id in game_ids]
-        features_df = pd.DataFrame(features).fillna(0)  # Handle NaN values
+        features_df = pd.DataFrame(features).fillna(0)
 
-        self.model.eval()
+        # Use the first model for predictions (modify as needed for multiple models)
+        model = self.models[0]
+        model.eval()
         with torch.no_grad():
             features_tensor = torch.tensor(features_df.values, dtype=torch.float32)
-            features_normalized = (features_tensor - self.mean) / self.std
-            scores = self.model(features_normalized).numpy()
+            features_normalized = (features_tensor - model.mean) / model.std
+            scores = model(features_normalized).numpy()
             home_scores, away_scores = scores[:, 0], scores[:, 1]
 
-        # Generate predictions dictionary
-        predictions = {}
         for game_id, home_score, away_score in zip(game_ids, home_scores, away_scores):
             home_win_prob = calculate_home_win_prob(home_score, away_score)
             predictions[game_id] = {
-                "pred_home_score": home_score,
-                "pred_away_score": away_score,
-                "pred_home_win_pct": home_win_prob,
+                "pred_home_score": float(home_score),
+                "pred_away_score": float(away_score),
+                "pred_home_win_pct": float(home_win_prob),
                 "pred_players": games[game_id].get(
                     "pred_players", {"home": {}, "away": {}}
                 ),
             }
         return predictions
 
-    def update_predictions(self, games):
-        """
-        Update predictions based on the current state of the games.
+    def load_pre_game_data(self, game_ids):
+        feature_sets = load_feature_sets(game_ids)
+        return feature_sets
 
-        Parameters:
-        games (dict): A dictionary containing current game states and pre-game predictions.
+    def make_current_predictions(self, game_ids):
+        pass
 
-        Returns:
-        dict: A dictionary of updated predictions based on real-time game data.
-        """
-        return super().update_predictions(games)
+    def load_current_game_data(self, game_ids):
+        pass

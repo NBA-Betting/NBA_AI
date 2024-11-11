@@ -39,6 +39,7 @@ from src.utils import log_execution_time
 # Configuration
 DB_PATH = config["database"]["path"]
 DEFAULT_PREDICTOR = config["default_predictor"]
+PREDICTORS_CONFIG = config["predictors"]
 
 # Define the PREDICTOR_MAP with actual class references
 PREDICTOR_MAP = {
@@ -70,8 +71,14 @@ def make_pre_game_predictions(game_ids, predictor_name=None, save=True):
         f"Generating pre-game predictions for {len(game_ids)} games using predictor '{predictor_name}'."
     )
 
+    # Get the model paths from the configuration
+    model_paths = PREDICTORS_CONFIG.get(predictor_name, {}).get("model_paths", [])
+
+    # Instantiate the predictor class
+    predictor_instance = predictor_class(model_paths=model_paths)
+
     # Create the predictions
-    pre_game_predictions = predictor_class.make_pre_game_predictions(game_ids)
+    pre_game_predictions = predictor_instance.make_pre_game_predictions(game_ids)
 
     logging.info(
         f"Pre-game predictions generated successfully for {len(pre_game_predictions)} games using predictor '{predictor_name}'."
@@ -94,8 +101,11 @@ def make_current_predictions(game_ids, predictor_name=None):
         f"Generating current predictions for {len(game_ids)} games using predictor '{predictor_name}'."
     )
 
+    # Instantiate the predictor class without model paths
+    predictor_instance = predictor_class()
+
     # Create the predictions
-    current_predictions = predictor_class.make_current_predictions(game_ids)
+    current_predictions = predictor_instance.make_current_predictions(game_ids)
 
     logging.info(
         f"Current predictions generated successfully for {len(current_predictions)} games using predictor '{predictor_name}'."
@@ -200,8 +210,8 @@ def main():
         game_ids, args.predictor, save=args.save  # Explicitly set save to args.save
     )
 
-    # Create predictions based on the current game state
-    current_predictions = make_current_predictions(game_ids, args.predictor)
+    # # Create predictions based on the current game state
+    # current_predictions = make_current_predictions(game_ids, args.predictor)
 
 
 if __name__ == "__main__":

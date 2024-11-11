@@ -23,7 +23,7 @@ Functions:
 Usage:
 - Typically run as part of a larger data processing pipeline.
 - Script can be run directly from the command line (project root) to update the database with the latest game data and predictions.
-    python -m src.database_updater.database_update_manager --log_level=DEBUG --season=2023-2024 --predictor=Random
+    python -m src.database_updater.database_update_manager --log_level=DEBUG --season=2023-2024 --predictor=Linear
 - Successful execution will update the database with the latest game data and predictions for the specified season.
 """
 

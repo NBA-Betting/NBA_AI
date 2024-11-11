@@ -3,10 +3,18 @@ from src.predictions.prediction_utils import calculate_home_win_prob
 
 
 class BaselinePredictor:
+    def __init__(self, model_paths=None):
+        self.model_paths = model_paths or []
+        self.models = []
+        self.load_models()
+
+    def load_models(self):
+        pass
+
     def make_pre_game_predictions(self, game_ids):
         predictions = {}
 
-        games = self.load_data_pre_game(game_ids)
+        games = self.load_pre_game_data(game_ids)
 
         for game_id, game_data in games.items():
             # Ensure all required features are present
@@ -34,9 +42,9 @@ class BaselinePredictor:
 
                 # Store predictions for the current game
                 predictions[game_id] = {
-                    "pred_home_score": pred_home_score,
-                    "pred_away_score": pred_away_score,
-                    "pred_home_win_pct": pred_home_win_pct,
+                    "pred_home_score": float(pred_home_score),
+                    "pred_away_score": float(pred_away_score),
+                    "pred_home_win_pct": float(pred_home_win_pct),
                     "pred_players": game_data.get(
                         "pred_players", {"home": {}, "away": {}}
                     ),
@@ -48,12 +56,12 @@ class BaselinePredictor:
 
         return predictions
 
-    def make_current_predictions(self, game_ids):
-        pass
-
-    def load_data_pre_game(self, game_ids):
+    def load_pre_game_data(self, game_ids):
         feature_sets = load_feature_sets(game_ids)
         return feature_sets
 
-    def load_data_current(self, game_ids):
+    def make_current_predictions(self, game_ids):
+        pass
+
+    def load_current_game_data(self, game_ids):
         pass
