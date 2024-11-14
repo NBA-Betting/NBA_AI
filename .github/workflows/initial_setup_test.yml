@@ -58,24 +58,24 @@ jobs:
           set -x
           sed -i 's|path: "data/NBA_AI_2023_2024.sqlite"|path: "data/NBA_AI_BASE.sqlite"|g' config.yaml
 
-      # Step 7: Start the application
-      - name: Start the application
+      # Step 7: Start the application and display output
+      - name: Start the application and show output
         run: |
           set -e
           set -x
           source venv/bin/activate
-          nohup python start_app.py &
+          # Run start_app.py in the foreground to capture output
+          python start_app.py &
+          APP_PID=$!
           sleep 5  # Give the app some time to start
 
-      # Step 8: Run basic web app checks
-      - name: Test application response
-        run: |
-          set -e
-          set -x
-          # Test if the app is running and responding on the expected port
+          # Optional: Run a test to confirm the app is responding
           if curl --fail http://127.0.0.1:5000; then
             echo "Web app responded successfully."
           else
             echo "Web app did not respond as expected."
             exit 1
           fi
+
+          # Stop the application gracefully after the test
+          kill $APP_PID
