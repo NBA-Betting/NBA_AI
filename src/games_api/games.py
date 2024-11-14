@@ -3,15 +3,14 @@ games.py
 
 This module provides functionality to fetch and process NBA game data from a SQLite database.
 It consists of functions to:
-- Retrieve basic or detailed game data based on game IDs.
+- Retrieve detailed game data based on game IDs.
 - Retrieve game data for a specific date.
 - Update predictions using various predictive models.
 
 Functions:
-- get_basic_data(conn, game_ids, predictor_name): Fetch basic game data for specified game IDs.
 - get_normal_data(conn, game_ids, predictor_name): Fetch detailed game data including play-by-play logs for specified game IDs.
-- get_games(game_ids, predictor="Best", detail_level="Normal", update_predictions=True): Retrieve game data for specified game IDs.
-- get_games_for_date(date, predictor="Best", detail_level="Normal", update_predictions=True): Retrieve game data for games on a specific date.
+- get_games(game_ids, predictor=DEFAULT_PREDICTOR, update_predictions=True): Retrieve game data for specified game IDs.
+- get_games_for_date(date, predictor=DEFAULT_PREDICTOR, update_predictions=True): Retrieve game data for games on a specific date.
 - main(): Main function to handle command-line arguments and invoke appropriate data fetching and output functions.
 
 Usage:
@@ -19,7 +18,7 @@ Usage:
 - The output can be directed to a file, printed to the screen, or both, depending on the command-line arguments provided.
 
 Example:
-    python -m src.games_api.games --date="2024-04-01" --predictor="Best" --output="file" --log_level="DEBUG"
+    python -m src.games_api.games --date="2024-04-01" --predictor="Baseline" --output="file" --log_level="DEBUG"
 """
 
 import argparse
@@ -29,6 +28,7 @@ import sqlite3
 
 from src.config import config
 from src.database_updater.database_update_manager import update_database
+from src.database_updater.schedule import update_schedule
 from src.logging_config import setup_logging
 from src.predictions.prediction_manager import make_current_predictions
 from src.utils import (
@@ -42,93 +42,7 @@ from src.utils import (
 # Configurations
 DB_PATH = config["database"]["path"]
 VALID_PREDICTORS = list(config["predictors"].keys()) + [None]
-
-
-def get_basic_data(conn, game_ids, predictor_name):
-    """
-    Fetch basic game data for the given game IDs.
-
-    Args:
-        conn (sqlite3.Connection): Database connection object.
-        game_ids (list): List of game IDs to fetch data for.
-        predictor_name (str): Name of the predictor to use.
-
-    Returns:
-        dict: Dictionary containing game data including the latest game state and pre-game predictions.
-    """
-    query = """
-    WITH LatestGameStates AS (
-        SELECT
-            s.game_id, s.play_id, s.game_date, s.home, s.away, s.clock, s.period, s.home_score, s.away_score, s.total, s.home_margin, s.is_final_state, s.players_data
-        FROM GameStates s
-        WHERE s.play_id = (
-            SELECT MAX(inner_s.play_id)
-            FROM GameStates inner_s
-            WHERE inner_s.game_id = s.game_id
-        )
-    )
-    SELECT
-        g.game_id, g.date_time_est, g.home_team, g.away_team, g.status, g.season, g.season_type, g.pre_game_data_finalized, g.game_data_finalized,
-        s.play_id AS state_play_id, s.game_date, s.home, s.away, s.clock, s.period, s.home_score, s.away_score, s.total, s.home_margin, s.is_final_state, s.players_data,
-        pr.predictor, pr.model_id, pr.prediction_datetime, pr.prediction_set
-    FROM Games g
-    LEFT JOIN LatestGameStates s ON g.game_id = s.game_id
-    LEFT JOIN Predictions pr ON g.game_id = pr.game_id AND pr.predictor = ?
-    WHERE g.game_id IN ({})
-    """.format(
-        ",".join("?" * len(game_ids))
-    )
-
-    cursor = conn.cursor()
-    cursor.execute(query, [predictor_name] + game_ids)
-    rows = cursor.fetchall()
-
-    result = {}
-    for row in rows:
-        game_id = row["game_id"]
-        if game_id not in result:
-            result[game_id] = {
-                "date_time_est": row["date_time_est"],
-                "home_team": row["home_team"],
-                "away_team": row["away_team"],
-                "status": row["status"],
-                "season": row["season"],
-                "season_type": row["season_type"],
-                "pre_game_data_finalized": row["pre_game_data_finalized"],
-                "game_data_finalized": row["game_data_finalized"],
-                "game_states": [],
-                "predictions": {"pre_game": {}},
-            }
-
-        # Adding the latest game state (only one per game)
-        if not result[game_id]["game_states"]:
-            game_state = {
-                "play_id": row["state_play_id"],
-                "game_date": row["game_date"],
-                "home": row["home"],
-                "away": row["away"],
-                "clock": row["clock"],
-                "period": row["period"],
-                "home_score": row["home_score"],
-                "away_score": row["away_score"],
-                "total": row["total"],
-                "home_margin": row["home_margin"],
-                "is_final_state": row["is_final_state"],
-                "players_data": (
-                    json.loads(row["players_data"]) if row["players_data"] else {}
-                ),
-            }
-            result[game_id]["game_states"].append(game_state)
-
-        # Adding prediction data for the specified predictor
-        if row["predictor"] == predictor_name:
-            result[game_id]["predictions"]["pre_game"] = {
-                "model_id": row["model_id"],
-                "prediction_datetime": row["prediction_datetime"],
-                "prediction_set": json.loads(row["prediction_set"]),
-            }
-
-    return result
+DEFAULT_PREDICTOR = config["default_predictor"]
 
 
 def get_normal_data(conn, game_ids, predictor_name):
@@ -158,7 +72,7 @@ def get_normal_data(conn, game_ids, predictor_name):
         g.game_id, g.date_time_est, g.home_team, g.away_team, g.status, g.season, g.season_type, g.pre_game_data_finalized, g.game_data_finalized,
         p.play_id, p.log_data,
         s.play_id AS state_play_id, s.game_date, s.home, s.away, s.clock, s.period, s.home_score, s.away_score, s.total, s.home_margin, s.is_final_state, s.players_data,
-        pr.predictor, pr.model_id, pr.prediction_datetime, pr.prediction_set
+        pr.predictor, pr.prediction_datetime, pr.prediction_set
     FROM Games g
     LEFT JOIN PbP_Logs p ON g.game_id = p.game_id
     LEFT JOIN LatestGameStates s ON g.game_id = s.game_id
@@ -205,29 +119,29 @@ def get_normal_data(conn, game_ids, predictor_name):
             result[game_id]["play_by_play"].append(play_log)
 
         # Adding the latest game state (only one per game)
-        if not result[game_id]["game_states"]:
-            game_state = {
-                "play_id": row["state_play_id"],
-                "game_date": row["game_date"],
-                "home": row["home"],
-                "away": row["away"],
-                "clock": row["clock"],
-                "period": row["period"],
-                "home_score": row["home_score"],
-                "away_score": row["away_score"],
-                "total": row["total"],
-                "home_margin": row["home_margin"],
-                "is_final_state": row["is_final_state"],
-                "players_data": (
-                    json.loads(row["players_data"]) if row["players_data"] else {}
-                ),
-            }
-            result[game_id]["game_states"].append(game_state)
+        if row["state_play_id"] is not None:
+            if not result[game_id]["game_states"]:
+                game_state = {
+                    "play_id": row["state_play_id"],
+                    "game_date": row["game_date"],
+                    "home": row["home"],
+                    "away": row["away"],
+                    "clock": row["clock"],
+                    "period": row["period"],
+                    "home_score": row["home_score"],
+                    "away_score": row["away_score"],
+                    "total": row["total"],
+                    "home_margin": row["home_margin"],
+                    "is_final_state": row["is_final_state"],
+                    "players_data": (
+                        json.loads(row["players_data"]) if row["players_data"] else {}
+                    ),
+                }
+                result[game_id]["game_states"].append(game_state)
 
         # Adding prediction data for the specified predictor
         if row["predictor"] == predictor_name:
             result[game_id]["predictions"]["pre_game"] = {
-                "model_id": row["model_id"],
                 "prediction_datetime": row["prediction_datetime"],
                 "prediction_set": json.loads(row["prediction_set"]),
             }
@@ -237,7 +151,9 @@ def get_normal_data(conn, game_ids, predictor_name):
 
 @log_execution_time(average_over="game_ids")
 def get_games(
-    game_ids, predictor="Best", detail_level="Normal", update_predictions=True
+    game_ids,
+    predictor=DEFAULT_PREDICTOR,
+    update_predictions=True,
 ):
     """
     Retrieve game data for the specified game IDs.
@@ -245,7 +161,6 @@ def get_games(
     Args:
         game_ids (list): List of game IDs to fetch data for.
         predictor (str): Name of the predictor to use.
-        detail_level (str): Level of detail for the data ("Basic" or "Normal").
         update_predictions (bool): Whether to update the predictions.
 
     Returns:
@@ -256,8 +171,6 @@ def get_games(
 
     # Validate inputs
     validate_game_ids(game_ids)
-    if detail_level not in ["Basic", "Normal"]:
-        raise ValueError(f"Invalid detail level: {detail_level}")
     if predictor not in VALID_PREDICTORS:
         raise ValueError(f"Invalid predictor: {predictor}")
 
@@ -270,27 +183,14 @@ def get_games(
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
 
-        if detail_level == "Basic":
-            data = get_basic_data(conn, game_ids, predictor_name=predictor)
-        else:  # detail_level == "Normal"
-            data = get_normal_data(conn, game_ids, predictor_name=predictor)
+        data = get_normal_data(conn, game_ids, predictor_name=predictor)
 
     # Prepare data for updating predictions if required
     if update_predictions:
-        games_for_update = {}
-        for game_id, game_data in data.items():
-            if game_data["predictions"]["pre_game"] and game_data["game_states"]:
-                games_for_update[game_id] = {
-                    "pre_game_predictions": game_data["predictions"]["pre_game"],
-                    "current_game_state": game_data["game_states"][0],
-                }
-
-        # Call update_predictions and integrate the current predictions
-        if games_for_update:
-            current_predictions = make_current_predictions(games_for_update, predictor)
-            for game_id, current_prediction_dict in current_predictions.items():
-                if game_id in data:
-                    data[game_id]["predictions"]["current"] = current_prediction_dict
+        current_predictions = make_current_predictions(game_ids, predictor)
+        for game_id, current_prediction_dict in current_predictions.items():
+            if game_id in data:
+                data[game_id]["predictions"]["current"] = current_prediction_dict
 
     logging.info(f"Game info retrieval complete for {len(data)} games.")
 
@@ -298,16 +198,13 @@ def get_games(
 
 
 @log_execution_time(average_over="output")
-def get_games_for_date(
-    date, predictor="Best", detail_level="Normal", update_predictions=True
-):
+def get_games_for_date(date, predictor=DEFAULT_PREDICTOR, update_predictions=True):
     """
     Retrieve game data for games on a specific date.
 
     Args:
         date (str): The date to fetch games for (YYYY-MM-DD).
         predictor (str): Name of the predictor to use.
-        detail_level (str): Level of detail for the data ("Basic" or "Normal").
         update_predictions (bool): Whether to update the predictions.
 
     Returns:
@@ -317,14 +214,12 @@ def get_games_for_date(
 
     # Validate inputs
     validate_date_format(date)
-    if detail_level not in ["Basic", "Normal"]:
-        raise ValueError(f"Invalid detail level: {detail_level}")
     if predictor not in VALID_PREDICTORS:
         raise ValueError(f"Invalid predictor: {predictor}")
 
-    # Update the database
+    # Update the schedule
     season = date_to_season(date)
-    update_database(season, predictor, DB_PATH)
+    update_schedule(season, DB_PATH)
 
     # Get game_ids for the given date
     with sqlite3.connect(DB_PATH) as conn:
@@ -342,7 +237,6 @@ def get_games_for_date(
     games = get_games(
         game_ids,
         predictor=predictor,
-        detail_level=detail_level,
         update_predictions=update_predictions,
     )
 
@@ -364,12 +258,6 @@ def main():
     )
     parser.add_argument("--date", type=str, help="The date to get games for.")
     parser.add_argument(
-        "--detail_level",
-        type=str,
-        default="Normal",
-        help="The detail level for the data.",
-    )
-    parser.add_argument(
         "--update_predictions",
         type=bool,
         default=True,
@@ -383,7 +271,7 @@ def main():
     )
     parser.add_argument(
         "--predictor",
-        default="Best",
+        default=DEFAULT_PREDICTOR,
         type=str,
         help="The predictor to use for predictions.",
     )
@@ -403,7 +291,6 @@ def main():
 
     game_ids = args.game_ids.split(",") if args.game_ids else None
     date = args.date
-    detail_level = args.detail_level
     update_predictions = args.update_predictions
     predictor = args.predictor
     output_choice = args.output
@@ -419,7 +306,6 @@ def main():
         games = get_games(
             game_ids,
             predictor=predictor,
-            detail_level=detail_level,
             update_predictions=update_predictions,
         )
     elif date:
@@ -427,7 +313,6 @@ def main():
         games = get_games_for_date(
             date,
             predictor=predictor,
-            detail_level=detail_level,
             update_predictions=update_predictions,
         )
 

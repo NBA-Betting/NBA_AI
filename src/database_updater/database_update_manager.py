@@ -149,8 +149,11 @@ def update_pre_game_data(season, db_path=DB_PATH):
         None
     """
     game_ids = get_games_with_incomplete_pre_game_data(season, db_path)
+    print("--------------------")
+    print(game_ids)
     prior_states_needed = determine_prior_states_needed(game_ids, db_path)
     prior_states_dict = load_prior_states(prior_states_needed, db_path)
+    print(prior_states_dict)
     feature_sets = create_feature_sets(prior_states_dict, db_path)
     save_feature_sets(feature_sets, db_path)
 
@@ -262,6 +265,7 @@ def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
           SELECT 1
           FROM Games g2
           WHERE g2.season = ?
+            AND g2.season_type IN ("Regular Season", "Post Season")
             AND g2.date_time_est < g1.date_time_est
             AND (g2.home_team = g1.home_team OR g2.away_team = g1.home_team OR g2.home_team = g1.away_team OR g2.away_team = g1.away_team)
             AND g2.game_data_finalized = 0

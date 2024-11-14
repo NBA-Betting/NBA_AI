@@ -1,6 +1,14 @@
+import json
 import re
+import sqlite3
 
 import numpy as np
+import pandas as pd
+
+from src.config import config
+
+# Configuration
+DB_PATH = config["database"]["path"]
 
 
 def calculate_updated_scores(
@@ -308,3 +316,74 @@ def update_predictions(games):
         }
 
     return updated_predictions
+
+
+def load_current_game_data(game_ids, predictor_name):
+    """
+    Load current game data including pre-game predictions from the database.
+
+    Parameters:
+    game_ids (list): List of game IDs to load data for.
+    predictor_name (str): The name of the predictor to filter the predictions.
+
+    Returns:
+    dict: A dictionary containing the game data with pre-game predictions and current game state.
+    """
+    game_data = {}
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+
+        # Load pre-game predictions for all game_ids in a single query
+        cursor.execute(
+            f"""
+            SELECT game_id, prediction_set
+            FROM predictions
+            WHERE game_id IN ({','.join(['?']*len(game_ids))}) AND predictor = ?
+            ORDER BY prediction_datetime DESC
+            """,
+            (*game_ids, predictor_name),
+        )
+        prediction_results = cursor.fetchall()
+        for game_id, prediction_set in prediction_results:
+            game_data[game_id] = {
+                "pre_game_predictions": json.loads(prediction_set),
+                "current_game_state": {},  # Placeholder for current game state
+            }
+
+        # Load the most recent game state for all game_ids using a CTE
+        cursor.execute(
+            f"""
+            WITH RecentGameStates AS (
+                SELECT game_id, clock, period, home_score, away_score, is_final_state, players_data,
+                       ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY play_id DESC) AS rn
+                FROM GameStates
+                WHERE game_id IN ({','.join(['?']*len(game_ids))})
+            )
+            SELECT game_id, clock, period, home_score, away_score, is_final_state, players_data
+            FROM RecentGameStates
+            WHERE rn = 1
+            """,
+            (*game_ids,),
+        )
+        game_state_results = cursor.fetchall()
+        for game_state_result in game_state_results:
+            (
+                game_id,
+                clock,
+                period,
+                home_score,
+                away_score,
+                is_final_state,
+                players_data,
+            ) = game_state_result
+            if game_id in game_data:
+                game_data[game_id]["current_game_state"] = {
+                    "clock": clock,
+                    "period": period,
+                    "home_score": home_score,
+                    "away_score": away_score,
+                    "is_final_state": is_final_state,
+                    "players_data": json.loads(players_data),
+                }
+
+    return game_data

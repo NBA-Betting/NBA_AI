@@ -13,8 +13,7 @@ Required Query Parameters:
 - `date` (string): Date to retrieve games for, in the format "YYYY-MM-DD".
 
 Optional Query Parameters:
-- `predictor` (optional, string): Specifies the predictive model to use. Must be one of the valid predictors defined in the config file. Defaults to "Best".
-- `detail_level` (optional, string): Specifies the level of detail for the data. Must be "Basic" or "Normal". Defaults to "Basic".
+- `predictor` (optional, string): Specifies the predictive model to use. Must be one of the valid predictors defined in the config file. Defaults to default predictor set in the config.
 - `update_predictions` (optional, string): Indicates whether to update predictions. Must be "True" or "False". Defaults to "True".
 
 Functions:
@@ -53,8 +52,7 @@ def games():
     Query Parameters:
     - game_ids (str): Comma-separated list of game IDs to retrieve data for. (e.g., "0042300401,0022300649"). Maximum 20 IDs allowed.
     - date (str): Date to retrieve games for, in the format "YYYY-MM-DD". Only the 2023-2024 or 2024-2025 season is allowed.
-    - predictor (str, optional): Predictive model to use. Defaults to "Best".
-    - detail_level (str, optional): Level of detail for the data. Can be "Basic" or "Normal". Defaults to "Basic".
+    - predictor (str, optional): Predictive model to use. Defaults to the default predictor set in the config.
     - update_predictions (str, optional): Whether to update predictions. Must be "True" or "False". Defaults to "True".
 
     Returns:
@@ -67,8 +65,7 @@ def games():
     try:
         game_ids = request.args.get("game_ids")
         date = request.args.get("date")
-        predictor = request.args.get("predictor", "Best")
-        detail_level = request.args.get("detail_level", "Basic").lower()
+        predictor = request.args.get("predictor")
         update_predictions_str = request.args.get("update_predictions", "True").lower()
 
         # Validate that only one of game_ids or date is provided
@@ -78,17 +75,8 @@ def games():
                 400,
             )
 
-        # Validate detail_level
-        if detail_level not in ["basic", "normal"]:
-            return (
-                jsonify(
-                    {"error": "Invalid detail_level. Must be 'Basic' or 'Normal'."}
-                ),
-                400,
-            )
-
-        # Validate predictor
-        if predictor not in VALID_PREDICTORS:
+        # Validate predictor if provided
+        if predictor and predictor not in VALID_PREDICTORS:
             return (
                 jsonify(
                     {
@@ -141,7 +129,6 @@ def games():
             data = get_games(
                 game_ids_list,
                 predictor=predictor,
-                detail_level=detail_level.capitalize(),  # Normalize to "Basic" or "Normal"
                 update_predictions=update_predictions,
             )
         elif date:
@@ -164,7 +151,6 @@ def games():
             data = get_games_for_date(
                 date,
                 predictor=predictor,
-                detail_level=detail_level.capitalize(),  # Normalize to "Basic" or "Normal"
                 update_predictions=update_predictions,
             )
         else:

@@ -210,8 +210,9 @@ def main():
         game_ids, args.predictor, save=args.save  # Explicitly set save to args.save
     )
 
-    # # Create predictions based on the current game state
-    # current_predictions = make_current_predictions(game_ids, args.predictor)
+    # Create predictions based on the current game state
+    current_predictions = make_current_predictions(game_ids, args.predictor)
+    print(current_predictions)
 
 
 if __name__ == "__main__":

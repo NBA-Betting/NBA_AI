@@ -18,7 +18,6 @@ Usage:
 - Typically integrated into web applications or dashboards for displaying NBA game information.
 """
 
-import os
 from datetime import datetime, timedelta
 
 import pytz
@@ -77,9 +76,14 @@ def process_game_data(games):
         }
 
         # Current scores if available
-        game_state = game.get("game_states", [{}])[0]
-        outbound_game_data["home_score"] = game_state.get("home_score", "")
-        outbound_game_data["away_score"] = game_state.get("away_score", "")
+        game_states = game.get("game_states", [])
+        if game_states:
+            game_state = game_states[0]
+            outbound_game_data["home_score"] = game_state.get("home_score", "")
+            outbound_game_data["away_score"] = game_state.get("away_score", "")
+        else:
+            outbound_game_data["home_score"] = ""
+            outbound_game_data["away_score"] = ""
 
         # Process team names and generate logo URLs
         outbound_game_data.update(
@@ -122,8 +126,8 @@ def process_game_data(games):
             pred_winner = ""
             pred_win_pct = ""
 
-        outbound_game_data["pred_home_score"] = pred_home_score
-        outbound_game_data["pred_away_score"] = pred_away_score
+        outbound_game_data["pred_home_score"] = round(pred_home_score)
+        outbound_game_data["pred_away_score"] = round(pred_away_score)
         outbound_game_data["pred_winner"] = pred_winner
 
         # Format predicted win percentage
@@ -132,7 +136,7 @@ def process_game_data(games):
         elif pred_win_pct >= 0.995:
             pred_win_pct_str = ">99%"
         elif pred_win_pct < 0.995:
-            pred_win_pct_str = "99%"
+            pred_win_pct_str = f"{pred_win_pct:.0%}"
         else:
             pred_win_pct_str = ""
 
@@ -213,6 +217,7 @@ def _format_date_time_display(game):
     Returns:
         dict: A dictionary containing the formatted date and time display.
     """
+
     if game["status"] == "In Progress" or (
         game["game_states"] and not game["game_states"][-1].get("is_final_state", False)
     ):

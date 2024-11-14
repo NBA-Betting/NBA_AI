@@ -336,5 +336,5 @@ def print_summary_and_mismatches(
 
 
 if __name__ == "__main__":
-    season = "2023-2024"
+    season = "2024-2025"
     final_df = database_audit(season, output_file="audit.csv")

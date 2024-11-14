@@ -111,11 +111,11 @@ def create_app(predictor):
                 else:
                     query_date_str = inbound_query_date_str
 
-                api_param_kv = {"date": query_date_str, "detail_level": "Basic"}
+                api_param_kv = {"date": query_date_str}
 
             elif "game_id" in request.args:
                 game_id = request.args.get("game_id")
-                api_param_kv = {"game_ids": game_id, "detail_level": "Normal"}
+                api_param_kv = {"game_ids": game_id}
 
             else:
                 return (

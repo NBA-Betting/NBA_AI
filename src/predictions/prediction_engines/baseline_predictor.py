@@ -1,5 +1,9 @@
 from src.predictions.features import load_feature_sets
-from src.predictions.prediction_utils import calculate_home_win_prob
+from src.predictions.prediction_utils import (
+    calculate_home_win_prob,
+    load_current_game_data,
+    update_predictions,
+)
 
 
 class BaselinePredictor:
@@ -61,7 +65,9 @@ class BaselinePredictor:
         return feature_sets
 
     def make_current_predictions(self, game_ids):
-        pass
+        games = self.load_current_game_data(game_ids)
+        current_predictions = update_predictions(games)
+        return current_predictions
 
     def load_current_game_data(self, game_ids):
-        pass
+        return load_current_game_data(game_ids, predictor_name="Baseline")
