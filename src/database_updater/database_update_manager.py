@@ -149,11 +149,8 @@ def update_pre_game_data(season, db_path=DB_PATH):
         None
     """
     game_ids = get_games_with_incomplete_pre_game_data(season, db_path)
-    print("--------------------")
-    print(game_ids)
     prior_states_needed = determine_prior_states_needed(game_ids, db_path)
     prior_states_dict = load_prior_states(prior_states_needed, db_path)
-    print(prior_states_dict)
     feature_sets = create_feature_sets(prior_states_dict, db_path)
     save_feature_sets(feature_sets, db_path)
 

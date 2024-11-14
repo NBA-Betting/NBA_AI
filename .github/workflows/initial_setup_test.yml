@@ -1,4 +1,4 @@
-name: Test Initial Setup
+name: Test Initial Setup with Full Logging
 
 on:
   push:
@@ -33,8 +33,8 @@ jobs:
           source venv/bin/activate
           echo "Virtual environment activated."
 
-      # Step 4: Install dependencies
-      - name: Install dependencies
+      # Step 4: Install Python dependencies
+      - name: Install Python dependencies
         run: |
           set -e
           set -x
@@ -58,24 +58,31 @@ jobs:
           set -x
           sed -i 's|path: "data/NBA_AI_2023_2024.sqlite"|path: "data/NBA_AI_BASE.sqlite"|g' config.yaml
 
-      # Step 7: Start the application and display output
-      - name: Start the application and show output
+      # Step 7: Start the application and log output to a file
+      - name: Start the application and capture output
         run: |
           set -e
           set -x
           source venv/bin/activate
-          # Run start_app.py in the foreground to capture output
-          python start_app.py &
+          # Start the app and redirect both stdout and stderr to app.log
+          python start_app.py > app.log 2>&1 &
           APP_PID=$!
-          sleep 5  # Give the app some time to start
+          sleep 5  # Allow some time for the app to initialize
 
-          # Optional: Run a test to confirm the app is responding
-          if curl --fail http://127.0.0.1:5000; then
-            echo "Web app responded successfully."
-          else
-            echo "Web app did not respond as expected."
-            exit 1
-          fi
+      # Step 8: Access the web page to trigger data loading and log output
+      - name: Trigger data loading
+        run: |
+          set -e
+          set -x
+          # Access the main page to trigger data loading and logging
+          curl --fail http://127.0.0.1:5000
 
-          # Stop the application gracefully after the test
-          kill $APP_PID
+      # Step 9: Display the captured application log to see full output
+      - name: Show application log output
+        run: |
+          echo "Displaying application log output:"
+          cat app.log
+
+      # Step 10: Stop the application
+      - name: Stop the application
+        run: kill $APP_PID
