@@ -1,4 +1,4 @@
-name: Test Initial Setup with Full Logging
+name: Test Initial Setup
 
 on:
   push:
@@ -15,17 +15,17 @@ jobs:
 
     steps:
       # Step 1: Check out the repository
-      - name: Check out repository
+      - name: Check Out Repository
         uses: actions/checkout@v2
 
       # Step 2: Set up Python
-      - name: Set up Python
+      - name: Set Up Python
         uses: actions/setup-python@v2
         with:
           python-version: "3.x"
 
       # Step 3: Create and activate virtual environment
-      - name: Create and activate virtual environment
+      - name: Create and Activate Virtual Environment
         run: |
           set -e
           set -x
@@ -34,7 +34,7 @@ jobs:
           echo "Virtual environment activated."
 
       # Step 4: Install Python dependencies
-      - name: Install Python dependencies
+      - name: Install Python Dependencies from requirements.txt
         run: |
           set -e
           set -x
@@ -43,7 +43,7 @@ jobs:
           pip install -r requirements.txt
 
       # Step 5: Set up environment variables
-      - name: Set up .env file
+      - name: Set Up .env file
         run: |
           set -e
           set -x
@@ -51,38 +51,49 @@ jobs:
           PROJECT_ROOT=$(pwd)
           sed -i "s|/path/to/your/project/root|$PROJECT_ROOT|g" .env
 
-      # Step 6: Configure database in config.yaml
-      - name: Configure database to use BASE database
+      # Step 6: Configure Database and Show Table Info
+      - name: Configure Database
         run: |
           set -e
           set -x
+          # Configure database
           sed -i 's|path: "data/NBA_AI_2023_2024.sqlite"|path: "data/NBA_AI_BASE.sqlite"|g' config.yaml
+          # Display database tables and record counts
+          DB_PATH="data/NBA_AI_BASE.sqlite"
+          echo "Database tables and record counts:"
+          sqlite3 $DB_PATH <<EOF
+          .tables
+          EOF
 
-      # Step 7: Start the application and log output to a file
+          # Loop through each table and display the record count
+          for table in $(sqlite3 $DB_PATH ".tables"); do
+            count=$(sqlite3 $DB_PATH "SELECT COUNT(*) FROM $table;")
+            echo "Table: $table, Record Count: $count"
+          done
+
+      # Step 8: Start the application and capture output
       - name: Start the application and capture output
         run: |
           set -e
           set -x
           source venv/bin/activate
-          # Start the app and redirect both stdout and stderr to app.log
           python start_app.py > app.log 2>&1 &
           APP_PID=$!
           sleep 5  # Allow some time for the app to initialize
 
-      # Step 8: Access the web page to trigger data loading and log output
+      # Step 9: Trigger data loading
       - name: Trigger data loading
         run: |
           set -e
           set -x
-          # Access the main page to trigger data loading and logging
           curl --fail http://127.0.0.1:5000
 
-      # Step 9: Display the captured application log to see full output
+      # Step 10: Show application log output
       - name: Show application log output
         run: |
           echo "Displaying application log output:"
           cat app.log
 
-      # Step 10: Stop the application
+      # Step 11: Stop the application
       - name: Stop the application
         run: kill $APP_PID
