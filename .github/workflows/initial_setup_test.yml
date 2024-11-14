@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       use-cache:
-        description: 'Use cached dependencies'
+        description: "Use cached dependencies"
         required: false
-        default: 'true'
+        default: "true"
 
 jobs:
   initial_setup:
@@ -39,21 +39,23 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      # Step 4: Create and activate virtual environment
-      - name: Create and Activate Virtual Environment
+      # Step 4: Create Virtual Environment
+      - name: Create Virtual Environment
         run: |
           set -e
           python -m venv venv
           echo "Virtual environment created."
 
-      # Step 5: Install Python Dependencies from requirements.txt
+      # Step 5: Install Python Dependencies
+      - name: Install Python Dependencies
         run: |
           set -e
           source venv/bin/activate
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Step 6: Set Up .env file
+      # Step 6: Set Up .env File
+      - name: Set Up .env File
         run: |
           set -e
           source venv/bin/activate
@@ -62,22 +64,52 @@ jobs:
           sed -i "s|/path/to/your/project/root|$PROJECT_ROOT|g" .env
 
       # Step 7: Configure Database and Show Table Info
+      - name: Configure Database and Show Table Info
         run: |
           set -e
           source venv/bin/activate
-          # Configure database
+          # Configure database path in config.yaml
           sed -i 's|path: "data/NBA_AI_2023_2024.sqlite"|path: "data/NBA_AI_BASE.sqlite"|g' config.yaml
-          # Display database tables and record counts
-          DB_PATH="data/NBA_AI_BASE.sqlite"
-          echo "Database tables and record counts:"
-          sqlite3 $DB_PATH <<EOF
-          .tables
-          EOF
 
-          # Loop through each table and display the record count
+          # Display database tables and record counts in a formatted table
+          DB_PATH="data/NBA_AI_BASE.sqlite"
+          echo -e "\nDatabase Tables and Record Counts:"
+          echo "------------------------------------"
+          printf "%-20s | %-10s\n" "Table Name" "Record Count"
+          echo "------------------------------------"
+
           for table in $(sqlite3 $DB_PATH ".tables"); do
             count=$(sqlite3 $DB_PATH "SELECT COUNT(*) FROM $table;")
-            echo "Table: $table, Record Count: $count"
+            printf "%-20s | %-10s\n" "$table" "$count"
           done
+          echo "------------------------------------"
 
+      # Step 8: Launch the Application
+      - name: Launch Application
+        run: |
+          set -e
+          source venv/bin/activate
+          # Start the app in the background and log output to app.log
+          python start_app.py > app.log 2>&1 &
+          APP_PID=$!
+          sleep 5  # Allow some time for the app to initialize
 
+      # Step 9: Trigger Data Processing by Accessing the Web Address
+      - name: Trigger Data Processing
+        run: |
+          set -e
+          # Access the main page to trigger data processing
+          curl --fail http://127.0.0.1:5000 || (echo "Web app did not respond with 200 OK" && exit 1)
+
+      # Step 10: Continuously Display Application Logs (Real-time Output)
+      - name: Display Application Logs in Real-Time
+        run: |
+          # Continuously output app.log for real-time log monitoring
+          tail -f app.log &
+          LOG_TAIL_PID=$!
+          sleep 10  # Adjust this sleep time to cover the data processing duration
+          kill $LOG_TAIL_PID
+
+      # Step 11: Stop the Application
+      - name: Stop Application
+        run: kill $APP_PID
