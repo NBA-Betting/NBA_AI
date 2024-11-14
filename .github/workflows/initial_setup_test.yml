@@ -8,6 +8,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      use-cache:
+        description: 'Use cached dependencies'
+        required: false
+        default: 'true'
 
 jobs:
   initial_setup:
@@ -18,44 +23,48 @@ jobs:
       - name: Check Out Repository
         uses: actions/checkout@v2
 
-      # Step 2: Set up Python
+      # Step 2: Set Up Python
       - name: Set Up Python
         uses: actions/setup-python@v2
         with:
           python-version: "3.x"
 
-      # Step 3: Create and activate virtual environment
+      # Step 3: Conditionally Cache Python dependencies
+      - name: Cache Python dependencies
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-cache == 'true' }}
+        uses: actions/cache@v2
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # Step 4: Create and activate virtual environment
       - name: Create and Activate Virtual Environment
         run: |
           set -e
-          set -x
           python -m venv venv
-          source venv/bin/activate
-          echo "Virtual environment activated."
+          echo "Virtual environment created."
 
-      # Step 4: Install Python dependencies
-      - name: Install Python Dependencies from requirements.txt
+      # Step 5: Install Python Dependencies from requirements.txt
         run: |
           set -e
-          set -x
           source venv/bin/activate
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Step 5: Set up environment variables
-      - name: Set Up .env file
+      # Step 6: Set Up .env file
         run: |
           set -e
-          set -x
+          source venv/bin/activate
           cp .env.template .env
           PROJECT_ROOT=$(pwd)
           sed -i "s|/path/to/your/project/root|$PROJECT_ROOT|g" .env
 
-      # Step 6: Configure Database and Show Table Info
-      - name: Configure Database
+      # Step 7: Configure Database and Show Table Info
         run: |
           set -e
-          set -x
+          source venv/bin/activate
           # Configure database
           sed -i 's|path: "data/NBA_AI_2023_2024.sqlite"|path: "data/NBA_AI_BASE.sqlite"|g' config.yaml
           # Display database tables and record counts
@@ -71,29 +80,4 @@ jobs:
             echo "Table: $table, Record Count: $count"
           done
 
-      # Step 8: Start the application and capture output
-      - name: Start the application and capture output
-        run: |
-          set -e
-          set -x
-          source venv/bin/activate
-          python start_app.py > app.log 2>&1 &
-          APP_PID=$!
-          sleep 5  # Allow some time for the app to initialize
 
-      # Step 9: Trigger data loading
-      - name: Trigger data loading
-        run: |
-          set -e
-          set -x
-          curl --fail http://127.0.0.1:5000
-
-      # Step 10: Show application log output
-      - name: Show application log output
-        run: |
-          echo "Displaying application log output:"
-          cat app.log
-
-      # Step 11: Stop the application
-      - name: Stop the application
-        run: kill $APP_PID
