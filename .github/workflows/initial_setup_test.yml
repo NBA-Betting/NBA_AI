@@ -83,7 +83,7 @@ jobs:
           done
           echo "------------------------------------"
 
-      # Step 8: Launch the Application and Get Basic Info
+      # Step 8: Launch the Application and Get Basic Info with Retry Logic
       - name: Launch Application and Get Basic Info
         run: |
           set -e
@@ -91,15 +91,28 @@ jobs:
           # Start the app in the background and log output to app.log
           python start_app.py > app.log 2>&1 &
           APP_PID=$!
-          sleep 5  # Allow some time for the app to initialize
+          sleep 10  # Increased delay for initialization
 
-          # Get HTTP status and <title> tag content
-          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5000)
-          echo "HTTP Status Code: $STATUS_CODE"
+          # Retry loop for HTTP status check
+          MAX_RETRIES=5
+          RETRY_DELAY=5
+          STATUS_CODE=0
+          for ((i=1; i<=MAX_RETRIES; i++)); do
+              STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5000)
+              if [ "$STATUS_CODE" -eq 200 ]; then
+              echo "Web app is responding with 200 OK"
+              break
+              else
+              echo "Attempt $i: Web app not responding yet. Status code: $STATUS_CODE"
+              sleep $RETRY_DELAY
+              fi
+          done
+
+          # If the status code isn't 200 after retries, exit with an error
           if [ "$STATUS_CODE" -ne 200 ]; then
-            echo "Web app did not respond with 200 OK"
-            kill $APP_PID
-            exit 1
+              echo "Web app did not respond with 200 OK after $MAX_RETRIES attempts."
+              kill $APP_PID
+              exit 1
           fi
 
           # Extract <title> tag content
