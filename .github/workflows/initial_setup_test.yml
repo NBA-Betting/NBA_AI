@@ -68,7 +68,6 @@ jobs:
         run: |
           set -e
           source venv/bin/activate
-          # Configure database path in config.yaml
           sed -i 's|path: "data/NBA_AI_2023_2024.sqlite"|path: "data/NBA_AI_BASE.sqlite"|g' config.yaml
 
           # Display database tables and record counts in a formatted table
@@ -94,22 +93,60 @@ jobs:
           APP_PID=$!
           sleep 5  # Allow some time for the app to initialize
 
-      # Step 9: Trigger Data Processing by Accessing the Web Address
-      - name: Trigger Data Processing
+      # Step 9: Check the Status Code
+      - name: Check Status Code
         run: |
           set -e
-          # Access the main page to trigger data processing
-          curl --fail http://127.0.0.1:5000 || (echo "Web app did not respond with 200 OK" && exit 1)
+          # Capture and print only the HTTP status code
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5000)
+          echo "HTTP Status Code: $STATUS_CODE"
+          if [ "$STATUS_CODE" -ne 200 ]; then
+            echo "Web app did not respond with 200 OK"
+            exit 1
+          fi
 
-      # Step 10: Continuously Display Application Logs (Real-time Output)
-      - name: Display Application Logs in Real-Time
+      # Step 10: Install Node.js and Puppeteer (for testing only)
+      - name: Set up Node.js and Install Puppeteer
+        uses: actions/setup-node@v2
+        with:
+          node-version: "14"
+      - run: npm install puppeteer
+
+      # Step 11: Inline Puppeteer Script to Verify Content Load Status
+      - name: Verify Content Load with Puppeteer
         run: |
-          # Continuously output app.log for real-time log monitoring
-          tail -f app.log &
-          LOG_TAIL_PID=$!
-          sleep 10  # Adjust this sleep time to cover the data processing duration
-          kill $LOG_TAIL_PID
+          node -e "
+            const puppeteer = require('puppeteer');
+            (async () => {
+              const browser = await puppeteer.launch();
+              const page = await browser.newPage();
+              try {
+                // Navigate to the web app's URL and wait for the initial page load
+                await page.goto('http://127.0.0.1:5000', { waitUntil: 'networkidle2' });
 
-      # Step 11: Stop the Application
+                // Wait specifically for the 'get-game-data' request to complete
+                await page.waitForResponse(response =>
+                  response.url().includes('get-game-data') && response.status() === 200, 
+                  { timeout: 120000 }  // Set a timeout for 2 minutes
+                );
+
+                console.log('Main data loaded. Waiting an additional 10 seconds for images and icons to load...');
+
+                // Wait an additional 10 seconds to allow images and other assets to load
+                await page.waitForTimeout(10000);
+
+                console.log('All main data and assets should now be loaded.');
+                process.exit(0);  // Exit successfully
+              } catch (error) {
+                console.error('Content did not fully load within the expected duration.', error);
+                process.exit(1);  // Exit with failure
+              } finally {
+                await browser.close();
+              }
+            })();
+          "
+
+      # Step 12: Stop the Application
       - name: Stop Application
-        run: kill $APP_PID
+        if: ${{ always() }}
+        run: kill $APP_PID || true
