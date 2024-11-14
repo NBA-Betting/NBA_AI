@@ -1,0 +1,81 @@
+name: Test Initial Setup
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  initial_setup:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Check out the repository
+      - name: Check out repository
+        uses: actions/checkout@v2
+
+      # Step 2: Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: "3.x"
+
+      # Step 3: Create and activate virtual environment
+      - name: Create and activate virtual environment
+        run: |
+          set -e
+          set -x
+          python -m venv venv
+          source venv/bin/activate
+          echo "Virtual environment activated."
+
+      # Step 4: Install dependencies
+      - name: Install dependencies
+        run: |
+          set -e
+          set -x
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Step 5: Set up environment variables
+      - name: Set up .env file
+        run: |
+          set -e
+          set -x
+          cp .env.template .env
+          PROJECT_ROOT=$(pwd)
+          sed -i "s|/path/to/your/project/root|$PROJECT_ROOT|g" .env
+
+      # Step 6: Configure database in config.yaml
+      - name: Configure database to use BASE database
+        run: |
+          set -e
+          set -x
+          sed -i 's|path: "data/NBA_AI_2023_2024.sqlite"|path: "data/NBA_AI_BASE.sqlite"|g' config.yaml
+
+      # Step 7: Start the application
+      - name: Start the application
+        run: |
+          set -e
+          set -x
+          source venv/bin/activate
+          nohup python start_app.py &
+          sleep 5  # Give the app some time to start
+
+      # Step 8: Run basic web app checks
+      - name: Test application response
+        run: |
+          set -e
+          set -x
+          # Test if the app is running and responding on the expected port
+          if curl --fail http://127.0.0.1:5000; then
+            echo "Web app responded successfully."
+          else
+            echo "Web app did not respond as expected."
+            exit 1
+          fi
