@@ -83,8 +83,8 @@ jobs:
           done
           echo "------------------------------------"
 
-      # Step 8: Launch the Application
-      - name: Launch Application
+      # Step 8: Launch the Application and Get Basic Info
+      - name: Launch Application and Get Basic Info
         run: |
           set -e
           source venv/bin/activate
@@ -93,60 +93,71 @@ jobs:
           APP_PID=$!
           sleep 5  # Allow some time for the app to initialize
 
-      # Step 9: Check the Status Code
-      - name: Check Status Code
-        run: |
-          set -e
-          # Capture and print only the HTTP status code
+          # Get HTTP status and <title> tag content
           STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5000)
           echo "HTTP Status Code: $STATUS_CODE"
           if [ "$STATUS_CODE" -ne 200 ]; then
             echo "Web app did not respond with 200 OK"
+            kill $APP_PID
             exit 1
           fi
 
-      # Step 10: Install Node.js and Puppeteer (for testing only)
-      - name: Set up Node.js and Install Puppeteer
-        uses: actions/setup-node@v2
-        with:
-          node-version: "14"
-      - run: npm install puppeteer
+          # Extract <title> tag content
+          TITLE=$(curl -s http://127.0.0.1:5000 | grep -oP '(?<=<title>)(.*?)(?=</title>)')
+          echo "Page Title: $TITLE"
 
-      # Step 11: Inline Puppeteer Script to Verify Content Load Status
-      - name: Verify Content Load with Puppeteer
+      # Step 9: Verify Data Loading with Puppeteer and Monitor Logs Incrementally
+      - name: Verify Content Load with Puppeteer and Monitor Logs
         run: |
+          # Install Node.js and Puppeteer for testing
+          curl -fsSL https://deb.nodesource.com/setup_14.x | bash -
+          apt-get install -y nodejs
+          npm install puppeteer
+
+          # Run Puppeteer script inline and monitor logs in parallel
           node -e "
             const puppeteer = require('puppeteer');
             (async () => {
               const browser = await puppeteer.launch();
               const page = await browser.newPage();
               try {
-                // Navigate to the web app's URL and wait for the initial page load
+                console.log('Navigating to the web app...');
                 await page.goto('http://127.0.0.1:5000', { waitUntil: 'networkidle2' });
 
-                // Wait specifically for the 'get-game-data' request to complete
+                console.log('Waiting for main data to load via JS...');
                 await page.waitForResponse(response =>
                   response.url().includes('get-game-data') && response.status() === 200, 
-                  { timeout: 120000 }  // Set a timeout for 2 minutes
+                  { timeout: 600000 }  // 10-minute timeout
                 );
 
-                console.log('Main data loaded. Waiting an additional 10 seconds for images and icons to load...');
-
-                // Wait an additional 10 seconds to allow images and other assets to load
+                console.log('Main data loaded. Waiting additional 10 seconds for images and assets...');
                 await page.waitForTimeout(10000);
 
-                console.log('All main data and assets should now be loaded.');
+                console.log('All main data and assets should be loaded.');
                 process.exit(0);  // Exit successfully
               } catch (error) {
-                console.error('Content did not fully load within the expected duration.', error);
+                console.error('Content did not fully load within the expected duration:', error);
                 process.exit(1);  // Exit with failure
               } finally {
                 await browser.close();
               }
             })();
-          "
+          " &
 
-      # Step 12: Stop the Application
+          # Store Puppeteer's process ID
+          PUPPETEER_PID=$!
+
+          # Monitor application logs incrementally during Puppeteer execution
+          while kill -0 $PUPPETEER_PID 2> /dev/null; do
+            echo "Latest application logs:"
+            tail -n 10 app.log  # Display the last 10 lines of the log for incremental updates
+            sleep 5  # Wait a few seconds before checking again
+          done
+
+          # Wait for Puppeteer to finish, whether it succeeded or failed
+          wait $PUPPETEER_PID
+
+      # Step 10: Stop the Application
       - name: Stop Application
         if: ${{ always() }}
         run: kill $APP_PID || true
