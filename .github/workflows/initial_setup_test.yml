@@ -32,7 +32,7 @@ jobs:
       # Step 3: Conditionally Cache Python dependencies
       - name: Cache Python dependencies
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-cache == 'true' }}
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
@@ -119,11 +119,11 @@ jobs:
           TITLE=$(curl -s http://127.0.0.1:5000 | grep -oP '(?<=<title>)(.*?)(?=</title>)')
           echo "Page Title: $TITLE"
 
-      # Step 9: Verify Data Loading with Puppeteer and Monitor Logs Incrementally
+      # Step 9: Verify Content Load with Puppeteer and Monitor Logs
       - name: Verify Content Load with Puppeteer and Monitor Logs
         run: |
           # Install Node.js and Puppeteer for testing
-          curl -fsSL https://deb.nodesource.com/setup_14.x | bash -
+          curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
           apt-get install -y nodejs
           npm install puppeteer
 
