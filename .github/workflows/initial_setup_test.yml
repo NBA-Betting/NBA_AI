@@ -153,8 +153,9 @@ jobs:
 
           # Monitor application logs incrementally during Puppeteer execution
           while kill -0 $PUPPETEER_PID 2> /dev/null; do
+            echo "------------------------------------"
             echo "Latest application logs:"
-            tail -n 10 app.log  # Display the last 10 lines of the log for incremental updates
+            cat app.log  # Display all lines of the log for incremental updates
             sleep 5  # Wait a few seconds before checking again
           done
 
