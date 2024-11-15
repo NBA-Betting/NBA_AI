@@ -131,7 +131,7 @@ jobs:
                 console.log('Waiting for main data to load via JS...');
                 await page.waitForResponse(response =>
                   response.url().includes('get-game-data') && response.status() === 200, 
-                  { timeout: 600000 }  // 10-minute timeout
+                  { timeout: 60000 }  // 10-minute timeout
                 );
 
                 console.log('Main data loaded. Waiting additional 10 seconds for images and assets...');
