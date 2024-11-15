@@ -25,19 +25,10 @@ jobs:
 
       # Step 2: Set Up Python
       - name: Set Up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-
-      # Step 3: Conditionally Cache Python dependencies
-      - name: Cache Python dependencies
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-cache == 'true' }}
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          cache: "pip"
 
       # Step 4: Create Virtual Environment
       - name: Create Virtual Environment
@@ -123,8 +114,8 @@ jobs:
       - name: Verify Content Load with Puppeteer and Monitor Logs
         run: |
           # Install Node.js and Puppeteer for testing
-          curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-          apt-get install -y nodejs
+          curl -fsSL https://deb.nodesource.com/setup_18.x | sudo bash -
+          sudo apt-get install -y nodejs
           npm install puppeteer
 
           # Run Puppeteer script inline and monitor logs in parallel
