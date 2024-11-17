@@ -126,12 +126,18 @@ def process_game_data(games):
             pred_winner = ""
             pred_win_pct = ""
 
-        outbound_game_data["pred_home_score"] = round(pred_home_score)
-        outbound_game_data["pred_away_score"] = round(pred_away_score)
+        # Round the predicted scores
+        pred_home_score = round(pred_home_score) if pred_home_score != "" else ""
+        pred_away_score = round(pred_away_score) if pred_away_score != "" else ""
+
+        outbound_game_data["pred_home_score"] = pred_home_score
+        outbound_game_data["pred_away_score"] = pred_away_score
         outbound_game_data["pred_winner"] = pred_winner
 
         # Format predicted win percentage
-        if pred_win_pct == 1:
+        if pred_win_pct == "":
+            pred_win_pct_str = ""
+        elif pred_win_pct == 1:
             pred_win_pct_str = "100%"
         elif pred_win_pct >= 0.995:
             pred_win_pct_str = ">99%"
