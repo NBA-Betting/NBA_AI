@@ -1,3 +1,31 @@
+"""
+baseline_predictor.py
+
+This module provides a predictor that uses a baseline model to generate predictions for NBA games.
+It consists of a class to:
+- Generate pre-game predictions.
+- Generate current predictions.
+
+Classes:
+- BaselinePredictor: Predictor that uses a baseline model to generate predictions.
+
+Methods:
+- load_models(): Loads the baseline models (no-op for baseline predictor).
+- make_pre_game_predictions(game_ids): Generates pre-game predictions for the given game IDs.
+- load_pre_game_data(game_ids): Loads pre-game data for the given game IDs.
+- make_current_predictions(game_ids): Generates current predictions for the given game IDs.
+- load_current_game_data(game_ids): Loads current game data for the given game IDs.
+
+Usage:
+- Typically used as part of the prediction generation process in the prediction_manager module.
+- Can be instantiated and used to generate predictions for specified game IDs.
+
+Example:
+    predictor = BaselinePredictor()
+    pre_game_predictions = predictor.make_pre_game_predictions(game_ids)
+    current_predictions = predictor.make_current_predictions(game_ids)
+"""
+
 from src.predictions.features import load_feature_sets
 from src.predictions.prediction_utils import (
     calculate_home_win_prob,
