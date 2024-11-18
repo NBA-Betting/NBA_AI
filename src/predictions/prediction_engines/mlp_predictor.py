@@ -1,3 +1,31 @@
+"""
+mlp_predictor.py
+
+This module provides a predictor that uses a multi-layer perceptron (MLP) model to generate predictions for NBA games.
+It consists of a class to:
+- Generate pre-game predictions.
+- Generate current predictions.
+
+Classes:
+- MLPPredictor: Predictor that uses an MLP model to generate predictions.
+
+Methods:
+- load_models(): Loads the MLP models from the specified paths and sets up normalization parameters.
+- make_pre_game_predictions(game_ids): Generates pre-game predictions for the given game IDs.
+- load_pre_game_data(game_ids): Loads pre-game data for the given game IDs.
+- make_current_predictions(game_ids): Generates current predictions for the given game IDs.
+- load_current_game_data(game_ids): Loads current game data for the given game IDs.
+
+Usage:
+- Typically used as part of the prediction generation process in the prediction_manager module.
+- Can be instantiated and used to generate predictions for specified game IDs.
+
+Example:
+    predictor = MLPPredictor(model_paths=["path/to/model1.pth", "path/to/model2.pth"])
+    pre_game_predictions = predictor.make_pre_game_predictions(game_ids)
+    current_predictions = predictor.make_current_predictions(game_ids)
+"""
+
 import pandas as pd
 import torch
 
