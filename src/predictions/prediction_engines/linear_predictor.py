@@ -69,6 +69,8 @@ class LinearPredictor:
         Returns:
         dict: A dictionary of predictions, including predicted scores and win probabilities for each game.
         """
+        if not game_ids:
+            return {}
         if not self.models:
             raise ValueError(
                 "Models are not loaded. Please load the models before making predictions."
@@ -101,6 +103,8 @@ class LinearPredictor:
         return feature_sets
 
     def make_current_predictions(self, game_ids):
+        if not game_ids:
+            return {}
         games = self.load_current_game_data(game_ids)
         current_predictions = update_predictions(games)
         return current_predictions

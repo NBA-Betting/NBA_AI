@@ -66,6 +66,8 @@ class MLPPredictor:
             self.models.append(model)
 
     def make_pre_game_predictions(self, game_ids):
+        if not game_ids:
+            return {}
         predictions = {}
         games = self.load_pre_game_data(game_ids)
 
@@ -98,6 +100,8 @@ class MLPPredictor:
         return feature_sets
 
     def make_current_predictions(self, game_ids):
+        if not game_ids:
+            return {}
         games = self.load_current_game_data(game_ids)
         current_predictions = update_predictions(games)
         return current_predictions
