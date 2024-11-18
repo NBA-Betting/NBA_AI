@@ -1,3 +1,31 @@
+"""
+gpt4o_testing.py
+
+Warning:
+- Using the OpenAI API will incur costs. Make sure to set usage limits and monitor usage to avoid unexpected charges.
+
+This module handles the testing of the GPT-4o model for predicting NBA game outcomes.
+It consists of functions to:
+- Prepare the prompt for the model.
+- Make requests to the GPT-4o model.
+- Compare predictions to actual results.
+- Evaluate the predictions.
+- Extract score probabilities from the model's response.
+
+Functions:
+- prepare_prompt(record): Prepares the prompt for the GPT-4o model based on the given record.
+- make_gpt4o_request(messages): Makes a request to the GPT-4o model with the given messages.
+- compare_predictions_to_actual(record, response_dict): Compares the model's predictions to the actual results.
+- evaluate_predictions(game_comparisons): Evaluates the predictions using various metrics.
+- extract_score_probs(response, record): Extracts predicted scores and their probabilities from the model's response.
+
+Usage:
+- Typically run as part of a larger data processing pipeline.
+- Script can be run directly from the command line (project root) to test the GPT-4o model and evaluate its predictions.
+    Example: python -m src.model_training.gpt4o_testing
+- Successful execution will display evaluation metrics and save the results to JSON files.
+"""
+
 import json
 import math
 from typing import List

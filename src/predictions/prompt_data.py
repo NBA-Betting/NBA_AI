@@ -1,3 +1,28 @@
+"""
+prompt_data.py
+
+Warning:
+- Using the OpenAI API will incur costs. Make sure to set usage limits and monitor usage to avoid unexpected charges.
+
+This module handles the loading and processing of prompt data for NBA game predictions.
+It consists of functions to:
+- Load prompt data from the database.
+- Generate prompt data for individual games.
+- Format prior game states for teams.
+
+Functions:
+- load_prompt_data(game_ids, db_path=DB_PATH): Loads prompt data for a list of game IDs from the database.
+- generate_game_prompt(game, prior_states): Generates prompt data for a single game.
+- format_prior_games(prior_states): Formats and sorts prior games for either home or away team.
+- main(): Main function to handle command-line arguments and orchestrate the prompt data loading process.
+
+Usage:
+- Typically run as part of a larger data processing pipeline.
+- Script can be run directly from the command line to generate prompt data for specified game IDs.
+    Example: python -m src.predictions.prompt_data --game_ids=0042300401,0022300649 --log_level=DEBUG
+- Successful execution will display logs for prompt data loading and processing.
+"""
+
 import argparse
 import logging
 import sqlite3
@@ -140,6 +165,7 @@ def main():
     game_ids = args.game_ids.split(",") if args.game_ids else []
 
     prompt_data = load_prompt_data(game_ids)
+    print(prompt_data)
 
 
 if __name__ == "__main__":

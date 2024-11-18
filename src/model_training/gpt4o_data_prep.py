@@ -1,3 +1,35 @@
+"""
+gpt4o_data_prep.py
+
+Warning:
+- Using the OpenAI API will incur costs. Make sure to set usage limits and monitor usage to avoid unexpected charges.
+
+This module handles the preparation of data for training and testing the GPT-4o model.
+It consists of functions to:
+- Load game data from the database.
+- Fetch game and final state data.
+- Process prior games.
+- Generate prompts for the model.
+- Count tokens in the game records.
+- Create samples of game records.
+
+Functions:
+- load_game_data(season, historical_game_count, db_path=DB_PATH): Loads game data for the specified season.
+- fetch_game_data(season, db_path): Fetches game data from the database.
+- fetch_final_state(game_id, db_path): Fetches the final state of a game from the database.
+- process_prior_games(prior_states, max_games): Processes prior games for a given set of states.
+- generate_prompt(home_team, away_team, date_time_est, season_type, home_prior_games, away_prior_games): Generates a prompt for the model.
+- process_game(game, prior_states_dict, db_path, historical_game_count): Processes a single game record.
+- count_tokens(game_records): Counts the tokens in the game records.
+- create_sample(game_records, regular_season_sample_size=None, postseason_sample_size=None, random_seed=None): Creates a random sample of game records.
+
+Usage:
+- Typically run as part of a larger data processing pipeline.
+- Script can be run directly from the command line (project root) to prepare data for the GPT-4o model.
+    Example: python -m src.model_training.gpt4o_data_prep
+- Successful execution will load game data, count tokens, and save the data to JSON files.
+"""
+
 import json
 import logging
 import random

@@ -13,10 +13,10 @@ api:
     - "2024-2025"
 
 openai:
-  api_key: ${OPENAI_API_KEY}
+  api_key: ${OPENAI_API_KEY} # Should be set in the .env file. Required for GPT4Mini Predictor. Beware usage costs.
 
 web_app:
-  secret_key: ${WEB_APP_SECRET_KEY} # Should be updated in the .env file. Will be set automatically if not set in .env
+  secret_key: ${WEB_APP_SECRET_KEY} # Should be set in the .env file. Will be set automatically if not set in .env
 
 nba_api:
   pbp_live_endpoint: "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{}.json"
@@ -66,3 +66,4 @@ predictors:
   MLP:
     model_paths:
       - "models/MLP_Regression_2024-07-30T14:08:12.793153.pth"
+  GPT4Mini: {}  # Requires OpenAI API Key. Warning: Using the OpenAI API can be expensive. Make sure to set usage limits and monitor usage to avoid unexpected charges.
