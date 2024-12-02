@@ -7,6 +7,8 @@ diagrams/*
 data/*
 !data/NBA_AI_BASE.sqlite
 !data/teams.json
+!data/new_database_structure.md
+!data/new_database_creation.sql
 
 # Model files
 models/*
