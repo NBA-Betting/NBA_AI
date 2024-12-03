@@ -176,8 +176,8 @@ CREATE TABLE TeamBox (
     FOREIGN KEY (game_id) REFERENCES Games(game_id)
 );
 
--- Create ESPNWinPercentage Table
-CREATE TABLE ESPNWinPercentage (
+-- Create WinProbability Table
+CREATE TABLE WinProbability (
     game_id INTEGER NOT NULL,
     action_id INTEGER NOT NULL,
     period INTEGER,

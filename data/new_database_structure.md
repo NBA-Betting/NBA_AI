@@ -15,7 +15,7 @@ This document describes the NBA project's database schema. It stores comprehensi
 - [GameStates](#gamestates): Captures a running summary of the game state.
 - [PlayerBox](#playerbox): Stores individual player statistics for each game.
 - [TeamBox](#teambox): Stores team-level statistics for each game.
-- [ESPN_WinPercentage](#espnwinpercentage): Stores ESPN's win probability data for each game.
+- [WinProbability](#winprobability): Stores win probability data for each game.
 
 ## **Games**
 
@@ -250,7 +250,7 @@ Stores game-level statistics for teams, summarizing essential performance metric
   - `team_id` references `Teams(team_id)`.
   - `game_id` references `Games(game_id)`.
 
-## **ESPNWinPercentage**
+## **WinProbability**
 
 Stores win percentage predictions at each point during the game, with an entry for each action in the game.
 
