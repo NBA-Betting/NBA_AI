@@ -24,20 +24,21 @@ Core table of the database structure. Includes the schedule and basic game metad
 - **Columns**:
   | Column Name              | Data Type | Description                                   | Constraints                      |
   |--------------------------|-----------|-----------------------------------------------|----------------------------------|
-  | `game_id`                | INTEGER   | Unique identifier for the game.               | Primary Key                      |
+  | `game_id`                | TEXT      | Unique identifier for the game.               | Primary Key                      |
+  | `gamecode`               | TEXT      | Unique game code.                             | Not Null                         |
   | `date_time_est`          | TEXT      | Date and time of the game in ISO-8601 format. | Not Null                         |
-  | `home_team`              | TEXT      | Abbreviation of the home team.                | Foreign Key (Teams) |
-  | `away_team`              | TEXT      | Abbreviation of the away team.                | Foreign Key (Teams) |
+  | `home_team_id`           | INTEGER   | Identifier for the home team.                 | Foreign Key (Teams)              |
+  | `away_team_id`           | INTEGER   | Identifier for the away team.                 | Foreign Key (Teams)              |
   | `status`                 | TEXT      | Status of the game (e.g., "Scheduled", "Completed"). | Nullable                       |
-  | `season`                 | TEXT      | NBA season (e.g., "2024-2025").              | Nullable                         |
+  | `season`                 | TEXT      | NBA season (e.g., "2024-2025").               | Nullable                         |
   | `season_type`            | TEXT      | Type of season (e.g., "Regular Season", "Playoffs"). | Nullable                      |
-  | `pre_game_data_finalized`| INTEGER   | Flag indicating if pre-game data is finalized (1 for Yes, 0 for No). | Nullable         |
-  | `game_data_finalized`    | INTEGER   | Flag indicating if game data is finalized (1 for Yes, 0 for No). | Nullable           |
+  | `boxscores_finalized`    | INTEGER   | Flag indicating if boxscores are finalized (1 for Yes, 0 for No). | Default 0         |
+  | `game_states_finalized`  | INTEGER   | Flag indicating if game states are finalized (1 for Yes, 0 for No). | Default 0           |
 
 - **Primary Key**: `game_id`.
 - **Foreign Keys**:
-  - `home_team` references `Teams(team_id)`.
-  - `away_team` references `Teams(team_id)`.
+  - `home_team_id` references `Teams(team_id)`.
+  - `away_team_id` references `Teams(team_id)`.
 
 ## **Teams**
 
@@ -51,7 +52,7 @@ Stores data for NBA teams, both current and historical.
   | `abbreviation_normalized`| TEXT      | Lowercase normalized version of abbreviation. | Not Null |
   | `full_name`              | TEXT      | Full name of the team (e.g., "Atlanta Hawks"). | Not Null |
   | `full_name_normalized`   | TEXT      | Lowercase normalized version of full name.    | Not Null |
-  | `short_name`             | TEXT      | Short name of the team (e.g., "Hawks").      | Nullable |
+  | `short_name`             | TEXT      | Short name of the team (e.g., "Hawks").       | Nullable |
   | `short_name_normalized`  | TEXT      | Lowercase normalized version of short name.   | Nullable |
   | `alternatives`           | TEXT      | JSON array of alternative names and abbreviations (e.g., ["STL", "Tri-Cities Blackhawks"]). | Nullable |
   | `alternatives_normalized`| TEXT      | JSON array of normalized alternative names.   | Nullable |
@@ -67,22 +68,22 @@ Stores basic biographical data for current and historical NBA players.
   | Column Name    | Data Type | Description                                 | Constraints    |
   |----------------|-----------|---------------------------------------------|----------------|
   | `player_id`    | INTEGER   | Unique identifier for the player.           | Primary Key    |
-  | `first_name`   | TEXT      | First name of the player.                   | Not Null       |
-  | `last_name`    | TEXT      | Last name of the player.                    | Not Null       |
-  | `full_name`    | TEXT      | Full name of the player (e.g., "Byron Scott"). | Not Null    |
+  | `first_name`   | TEXT      | First name of the player.                   | Nullable       |
+  | `last_name`    | TEXT      | Last name of the player.                    | Nullable       |
+  | `full_name`    | TEXT      | Full name of the player (e.g., "Byron Scott"). | Nullable    |
   | `from_year`    | INTEGER   | Year the player started their career.       | Nullable       |
   | `to_year`      | INTEGER   | Year the player ended their career (or NULL if active). | Nullable |
   | `roster_status`| INTEGER   | Indicates if the player is on a roster (1 for active, 0 for inactive). | Nullable |
   | `team_id`      | INTEGER   | Current team ID for active players.         | Foreign Key (Teams) |
-  | `height`       | REAL      | Height of the player in meters.             | Nullable       |
-  | `weight`       | REAL      | Weight of the player in kilograms.          | Nullable       |
+  | `height`       | INTEGER   | Height of the player in centimeters.        | Nullable       |
+  | `weight`       | INTEGER   | Weight of the player in kilograms.          | Nullable       |
   | `position`     | TEXT      | Primary position of the player (e.g., "G", "F", "C"). | Nullable |
   | `age`          | INTEGER   | Current age of the player (calculated or stored). | Nullable |
   | `is_active`    | INTEGER   | Current status flag (1 for active, 0 for inactive). | Default 0 |
 
 - **Primary Key**: `player_id`.
 - **Foreign Keys**:
-  - `team_id` references `Teams(team_id)`.  
+  - `team_id` references `Teams(team_id)`.
 
 ## **Betting**
 
@@ -197,22 +198,27 @@ Stores game-level statistics for individual players, capturing essential perform
   | `player_id`            | INTEGER   | Identifier for the player.                    | Primary Key, Foreign Key (Players) |
   | `game_id`              | INTEGER   | Identifier for the game.                      | Primary Key, Foreign Key (Games)   |
   | `team_id`              | INTEGER   | Identifier for the player's team.             | Foreign Key (Teams)              |
-  | `minutes`              | REAL      | Minutes played by the player.                 | Nullable                         |
-  | `points`               | INTEGER   | Total points scored by the player.            | Nullable                         |
-  | `rebounds`             | INTEGER   | Total rebounds by the player.                 | Nullable                         |
-  | `assists`              | INTEGER   | Total assists by the player.                  | Nullable                         |
-  | `steals`               | INTEGER   | Total steals by the player.                   | Nullable                         |
-  | `blocks`               | INTEGER   | Total blocks by the player.                   | Nullable                         |
-  | `turnovers`            | INTEGER   | Total turnovers by the player.                | Nullable                         |
-  | `fouls`                | INTEGER   | Total personal fouls committed by the player. | Nullable                         |
-  | `offensive_rebounds`   | INTEGER   | Total offensive rebounds by the player.       | Nullable                         |
-  | `defensive_rebounds`   | INTEGER   | Total defensive rebounds by the player.       | Nullable                         |
-  | `field_goals_attempted`| INTEGER   | Number of field goal attempts.                | Nullable                         |
-  | `field_goals_made`     | INTEGER   | Number of field goals made.                   | Nullable                         |
-  | `three_points_attempted` | INTEGER | Number of three-point attempts.               | Nullable                         |
-  | `three_points_made`    | INTEGER   | Number of three-point shots made.             | Nullable                         |
-  | `free_throws_attempted` | INTEGER  | Number of free throw attempts.                | Nullable                         |
-  | `free_throws_made`     | INTEGER   | Number of free throws made.                   | Nullable                         |
+  | `player_name`          | TEXT      | Name of the player.                           | Nullable                         |
+  | `start_position`       | TEXT      | Starting position of the player.              | Nullable                         |
+  | `min`                  | REAL      | Minutes played by the player.                 | Nullable                         |
+  | `pts`                  | INTEGER   | Total points scored by the player.            | Nullable                         |
+  | `reb`                  | INTEGER   | Total rebounds by the player.                 | Nullable                         |
+  | `ast`                  | INTEGER   | Total assists by the player.                  | Nullable                         |
+  | `stl`                  | INTEGER   | Total steals by the player.                   | Nullable                         |
+  | `blk`                  | INTEGER   | Total blocks by the player.                   | Nullable                         |
+  | `tov`                  | INTEGER   | Total turnovers by the player.                | Nullable                         |
+  | `pf`                   | INTEGER   | Total personal fouls committed by the player. | Nullable                         |
+  | `oreb`                 | INTEGER   | Total offensive rebounds by the player.       | Nullable                         |
+  | `dreb`                 | INTEGER   | Total defensive rebounds by the player.       | Nullable                         |
+  | `fga`                  | INTEGER   | Number of field goal attempts.                | Nullable                         |
+  | `fgm`                  | INTEGER   | Number of field goals made.                   | Nullable                         |
+  | `fg_pct`               | REAL      | Field goal percentage.                        | Nullable                         |
+  | `fg3a`                 | INTEGER   | Number of three-point attempts.               | Nullable                         |
+  | `fg3m`                 | INTEGER   | Number of three-point shots made.             | Nullable                         |
+  | `fg3_pct`              | REAL      | Three-point percentage.                       | Nullable                         |
+  | `fta`                  | INTEGER   | Number of free throw attempts.                | Nullable                         |
+  | `ftm`                  | INTEGER   | Number of free throws made.                   | Nullable                         |
+  | `ft_pct`               | REAL      | Free throw percentage.                        | Nullable                         |
   | `plus_minus`           | INTEGER   | Plus-minus statistic for the player.          | Nullable                         |
 
 - **Primary Key**: Composite key (`player_id`, `game_id`).
@@ -230,51 +236,28 @@ Stores game-level statistics for teams, summarizing essential performance metric
   |------------------------|-----------|-----------------------------------------------|----------------------------------|
   | `team_id`              | INTEGER   | Identifier for the team.                      | Primary Key, Foreign Key (Teams) |
   | `game_id`              | INTEGER   | Identifier for the game.                      | Primary Key, Foreign Key (Games) |
-  | `points`               | INTEGER   | Total points scored by the team.              | Nullable                         |
-  | `points_allowed`       | INTEGER   | Total points allowed by the team.             | Nullable                         |
-  | `rebounds`             | INTEGER   | Total rebounds by the team.                   | Nullable                         |
-  | `assists`              | INTEGER   | Total assists by the team.                    | Nullable                         |
-  | `steals`               | INTEGER   | Total steals by the team.                     | Nullable                         |
-  | `blocks`               | INTEGER   | Total blocks by the team.                     | Nullable                         |
-  | `turnovers`            | INTEGER   | Total turnovers committed by the team.        | Nullable                         |
-  | `fouls`                | INTEGER   | Total fouls committed by the team.            | Nullable                         |
-  | `field_goals_attempted`| INTEGER   | Number of field goal attempts by the team.    | Nullable                         |
-  | `field_goals_made`     | INTEGER   | Number of field goals made by the team.       | Nullable                         |
-  | `three_points_attempted` | INTEGER | Number of three-point attempts by the team.   | Nullable                         |
-  | `three_points_made`    | INTEGER   | Number of three-point shots made by the team. | Nullable                         |
-  | `free_throws_attempted` | INTEGER  | Number of free throw attempts by the team.    | Nullable                         |
-  | `free_throws_made`     | INTEGER   | Number of free throws made by the team.       | Nullable                         |
+  | `pts`                  | INTEGER   | Total points scored by the team.              | Nullable                         |
+  | `pts_allowed`          | INTEGER   | Total points allowed by the team.             | Nullable                         |
+  | `reb`                  | INTEGER   | Total rebounds by the team.                   | Nullable                         |
+  | `ast`                  | INTEGER   | Total assists by the team.                    | Nullable                         |
+  | `stl`                  | INTEGER   | Total steals by the team.                     | Nullable                         |
+  | `blk`                  | INTEGER   | Total blocks by the team.                     | Nullable                         |
+  | `tov`                  | INTEGER   | Total turnovers committed by the team.        | Nullable                         |
+  | `pf`                   | INTEGER   | Total fouls committed by the team.            | Nullable                         |
+  | `fga`                  | INTEGER   | Number of field goal attempts by the team.    | Nullable                         |
+  | `fgm`                  | INTEGER   | Number of field goals made by the team.       | Nullable                         |
+  | `fg_pct`               | REAL      | Field goal percentage.                        | Nullable                         |
+  | `fg3a`                 | INTEGER   | Number of three-point attempts by the team.   | Nullable                         |
+  | `fg3m`                 | INTEGER   | Number of three-point shots made by the team. | Nullable                         |
+  | `fg3_pct`              | REAL      | Three-point percentage.                       | Nullable                         |
+  | `fta`                  | INTEGER   | Number of free throw attempts by the team.    | Nullable                         |
+  | `ftm`                  | INTEGER   | Number of free throws made by the team.       | Nullable                         |
+  | `ft_pct`               | REAL      | Free throw percentage.                        | Nullable                         |
+  | `plus_minus`           | INTEGER   | Plus-minus statistic for the team.            | Nullable                         |
 
 - **Primary Key**: Composite key (`team_id`, `game_id`).
 - **Foreign Keys**:
   - `team_id` references `Teams(team_id)`.
   - `game_id` references `Games(game_id)`.
-
-## **WinProbability**
-
-Stores win percentage predictions at each point during the game, with an entry for each action in the game.
-
-- **Columns**:
-
-  | Column Name             | Data Type | Description                                   | Constraints                      |
-  | ------------------------| --------- | --------------------------------------------- | -------------------------------- |
-  | `game_id`               | INTEGER   | Identifier for the game.                      | Primary Key, Foreign Key (Games) |
-  | `action_id`             | INTEGER   | Identifier for the action within the game.    | Primary Key, Foreign Key (PBP)   |
-  | `period`                | INTEGER   | Period number (e.g., 1 for Q1, 2 for Q2).     | Nullable                         |
-  | `clock`                 | TEXT      | Time remaining in the period.                 | Nullable                         |
-  | `home_win_percentage`   | REAL      | Probability of the home team winning.         | Nullable                         |
-  | `away_win_percentage`   | REAL      | Probability of the away team winning.         | Nullable                         |
-  | `tie_percentage`        | REAL      | Probability of a tie.                         | Nullable                         |
-  | `home_score`            | INTEGER   | Total score for the home team.                | Nullable                         |
-  | `away_score`            | INTEGER   | Total score for the away team.                | Nullable                         |
-  | `home_team`             | TEXT      | Abbreviation of the home team.                | Foreign Key (Teams)              |
-  | `away_team`             | TEXT      | Abbreviation of the away team.                | Foreign Key (Teams)              |
-
-- **Primary Key**: Composite key (`game_id`, `action_id`).
-- **Foreign Keys**:
-  - `game_id` references `Games(game_id)`.
-  - `action_id` references `PBP(action_id)`.
-  - `home_team` references `Teams(team_id)`.
-  - `away_team` references `Teams(team_id)`.
 
 
