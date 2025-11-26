@@ -1,74 +1,72 @@
 """
 tree_predictor.py
 
-This module provides a predictor that uses a decision tree model to generate predictions for NBA games.
-It consists of a class to:
-- Generate pre-game predictions.
-- Generate current predictions.
+This module provides an XGBoost predictor for NBA games.
 
 Classes:
-- TreePredictor: Predictor that uses a decision tree model to generate predictions.
+- TreePredictor: Uses XGBoost (gradient boosted trees) to generate predictions.
 
-Methods:
-- load_models(): Loads the decision tree models from the specified paths.
-- make_pre_game_predictions(game_ids): Generates pre-game predictions for the given game IDs.
-- load_pre_game_data(game_ids): Loads pre-game data for the given game IDs.
-- make_current_predictions(game_ids): Generates current predictions for the given game IDs.
-- load_current_game_data(game_ids): Loads current game data for the given game IDs.
+Model:
+- XGBoost trained on 34 features from FeatureSets.
+- Outputs [home_score, away_score] predictions.
 
 Usage:
-- Typically used as part of the prediction generation process in the prediction_manager module.
-- Can be instantiated and used to generate predictions for specified game IDs.
-
-Example:
-    predictor = TreePredictor(model_paths=["path/to/model1.pkl", "path/to/model2.pkl"])
+    predictor = TreePredictor(model_paths=["path/to/xgboost_model.joblib"])
     pre_game_predictions = predictor.make_pre_game_predictions(game_ids)
-    current_predictions = predictor.make_current_predictions(game_ids)
 """
 
 import joblib
 import pandas as pd
 
-from src.predictions.features import load_feature_sets
-from src.predictions.prediction_utils import (
-    calculate_home_win_prob,
-    load_current_game_data,
-    update_predictions,
-)
+from src.predictions.prediction_engines.base_predictor import BaseMLPredictor
+from src.predictions.prediction_utils import calculate_home_win_prob
 
 
-class TreePredictor:
+class TreePredictor(BaseMLPredictor):
     """
-    Predictor that uses a decision tree model to generate predictions for NBA games.
+    XGBoost predictor for NBA game scores.
 
-    This class loads a decision tree model to make pre-game predictions and update them
-    based on the current game state.
+    Loads pre-trained XGBoost model(s) from .joblib files.
+    Uses first model in list for predictions.
     """
-
-    def __init__(self, model_paths=None):
-        self.model_paths = model_paths or []
-        self.models = []
-        self.load_models()
 
     def load_models(self):
         """
-        Load the decision tree models from the specified paths.
+        Load XGBoost models from .joblib files.
 
-        This method initializes the decision tree models using pre-trained model files.
+        Raises:
+            ValueError: If model files cannot be loaded.
         """
         for model_path in self.model_paths:
             self.models.append(joblib.load(model_path))
 
     def make_pre_game_predictions(self, game_ids):
+        """
+        Generate predictions using XGBoost model.
+
+        Args:
+            game_ids (list): List of game IDs to predict.
+
+        Returns:
+            dict: Predictions for each game.
+
+        Raises:
+            ValueError: If models are not loaded.
+        """
         if not game_ids:
             return {}
+        if not self.models:
+            raise ValueError(
+                "Models are not loaded. Please load the models before making predictions."
+            )
+
         predictions = {}
         games = self.load_pre_game_data(game_ids)
 
         features = [games[game_id] for game_id in game_ids]
         features_df = pd.DataFrame(features).fillna(0)
 
-        # Use the first model for predictions (modify as needed for multiple models)
+        # Use the first model for predictions
         scores = self.models[0].predict(features_df.values)
         home_scores, away_scores = scores[:, 0], scores[:, 1]
 
@@ -83,17 +81,3 @@ class TreePredictor:
                 ),
             }
         return predictions
-
-    def load_pre_game_data(self, game_ids):
-        feature_sets = load_feature_sets(game_ids)
-        return feature_sets
-
-    def make_current_predictions(self, game_ids):
-        if not game_ids:
-            return {}
-        games = self.load_current_game_data(game_ids)
-        current_predictions = update_predictions(games)
-        return current_predictions
-
-    def load_current_game_data(self, game_ids):
-        return load_current_game_data(game_ids, predictor_name="Tree")

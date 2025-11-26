@@ -1,61 +1,49 @@
 """
 mlp_predictor.py
 
-This module provides a predictor that uses a multi-layer perceptron (MLP) model to generate predictions for NBA games.
-It consists of a class to:
-- Generate pre-game predictions.
-- Generate current predictions.
+This module provides a PyTorch MLP predictor for NBA games.
 
 Classes:
-- MLPPredictor: Predictor that uses an MLP model to generate predictions.
+- MLPPredictor: Uses PyTorch neural network to generate predictions.
 
-Methods:
-- load_models(): Loads the MLP models from the specified paths and sets up normalization parameters.
-- make_pre_game_predictions(game_ids): Generates pre-game predictions for the given game IDs.
-- load_pre_game_data(game_ids): Loads pre-game data for the given game IDs.
-- make_current_predictions(game_ids): Generates current predictions for the given game IDs.
-- load_current_game_data(game_ids): Loads current game data for the given game IDs.
+Model:
+- Multi-layer perceptron trained on 34 features from FeatureSets.
+- Outputs [home_score, away_score] predictions.
+- Includes normalization parameters (mean, std) in checkpoint.
 
 Usage:
-- Typically used as part of the prediction generation process in the prediction_manager module.
-- Can be instantiated and used to generate predictions for specified game IDs.
-
-Example:
-    predictor = MLPPredictor(model_paths=["path/to/model1.pth", "path/to/model2.pth"])
+    predictor = MLPPredictor(model_paths=["path/to/mlp_model.pth"])
     pre_game_predictions = predictor.make_pre_game_predictions(game_ids)
-    current_predictions = predictor.make_current_predictions(game_ids)
 """
 
 import pandas as pd
 import torch
 
 from src.model_training.mlp_model import MLP
-from src.predictions.features import load_feature_sets
-from src.predictions.prediction_utils import (
-    calculate_home_win_prob,
-    load_current_game_data,
-    update_predictions,
-)
+from src.predictions.prediction_engines.base_predictor import BaseMLPredictor
+from src.predictions.prediction_utils import calculate_home_win_prob
 
 
-class MLPPredictor:
+class MLPPredictor(BaseMLPredictor):
     """
-    Predictor that uses a multi-layer perceptron (MLP) model to generate predictions for NBA games.
+    PyTorch MLP predictor for NBA game scores.
 
-    This class loads an MLP model to make pre-game predictions and update them based on the current game state.
+    Loads pre-trained PyTorch model(s) from .pth checkpoint files.
+    Uses first model in list for predictions.
     """
-
-    def __init__(self, model_paths=None):
-        self.model_paths = model_paths or []
-        self.models = []
-        self.load_models()
 
     def load_models(self):
         """
-        Load the MLP models from the specified paths and set up normalization parameters.
+        Load PyTorch MLP models from .pth checkpoint files.
 
-        This method initializes the MLP models using pre-trained model checkpoint files. It also sets up
-        normalization parameters required for the model's inputs.
+        Checkpoint must contain:
+        - input_size: Number of input features
+        - model_state_dict: Model weights
+        - mean: Feature normalization mean
+        - std: Feature normalization std
+
+        Raises:
+            ValueError: If checkpoint files cannot be loaded.
         """
         for model_path in self.model_paths:
             checkpoint = torch.load(model_path)
@@ -66,15 +54,32 @@ class MLPPredictor:
             self.models.append(model)
 
     def make_pre_game_predictions(self, game_ids):
+        """
+        Generate predictions using PyTorch MLP model.
+
+        Args:
+            game_ids (list): List of game IDs to predict.
+
+        Returns:
+            dict: Predictions for each game.
+
+        Raises:
+            ValueError: If models are not loaded.
+        """
         if not game_ids:
             return {}
+        if not self.models:
+            raise ValueError(
+                "Models are not loaded. Please load the models before making predictions."
+            )
+
         predictions = {}
         games = self.load_pre_game_data(game_ids)
 
         features = [games[game_id] for game_id in game_ids]
         features_df = pd.DataFrame(features).fillna(0)
 
-        # Use the first model for predictions (modify as needed for multiple models)
+        # Use the first model for predictions
         model = self.models[0]
         model.eval()
         with torch.no_grad():
@@ -94,17 +99,3 @@ class MLPPredictor:
                 ),
             }
         return predictions
-
-    def load_pre_game_data(self, game_ids):
-        feature_sets = load_feature_sets(game_ids)
-        return feature_sets
-
-    def make_current_predictions(self, game_ids):
-        if not game_ids:
-            return {}
-        games = self.load_current_game_data(game_ids)
-        current_predictions = update_predictions(games)
-        return current_predictions
-
-    def load_current_game_data(self, game_ids):
-        return load_current_game_data(game_ids, predictor_name="MLP")

@@ -31,7 +31,6 @@ import pandas as pd
 from src.config import config
 from src.logging_config import setup_logging
 from src.predictions.prediction_engines.baseline_predictor import BaselinePredictor
-from src.predictions.prediction_engines.gpt4_mini_predictor import GPT4MiniPredictor
 from src.predictions.prediction_engines.linear_predictor import LinearPredictor
 from src.predictions.prediction_engines.mlp_predictor import MLPPredictor
 from src.predictions.prediction_engines.tree_predictor import TreePredictor
@@ -48,7 +47,6 @@ PREDICTOR_MAP = {
     "Linear": LinearPredictor,
     "Tree": TreePredictor,
     "MLP": MLPPredictor,
-    "GPT4Mini": GPT4MiniPredictor,  # Warning: Using the OpenAI API will incur costs. Make sure to set usage limits and monitor usage to avoid unexpected charges.
 }
 
 
@@ -96,18 +94,57 @@ def make_pre_game_predictions(game_ids, predictor_name=None, save=True):
 
 @log_execution_time(average_over="game_ids")
 def make_current_predictions(game_ids, predictor_name=None):
-    # Determine the predictor class based on the provided name
-    predictor_class, predictor_name = determine_predictor_class(predictor_name)
+    """
+    Generate current predictions by blending pre-game predictions with current game state.
+
+    This function loads pre-game predictions from the database and blends them with
+    the current game state (score, clock, period) using a weighted averaging formula.
+
+    For games in progress:
+    - Blends pre-game prediction with extrapolated current score based on pace
+    - Weight shifts from pre-game prediction to current score as game progresses
+
+    For completed games:
+    - Returns actual final scores as prediction
+
+    Args:
+        game_ids (list): List of game IDs to generate predictions for.
+        predictor_name (str, optional): Name of predictor (used to load pre-game predictions).
+                                       Defaults to DEFAULT_PREDICTOR.
+
+    Returns:
+        dict: Dictionary mapping game_id to current prediction dict.
+
+    Note:
+        This function does NOT use ML models - it uses formula-based blending regardless
+        of predictor type. ML models are only used for pre-game predictions.
+    """
+    from src.predictions.prediction_utils import (
+        load_current_game_data,
+        update_predictions,
+    )
+
+    # Determine predictor name
+    if predictor_name is None:
+        predictor_name = DEFAULT_PREDICTOR
+
+    if predictor_name not in PREDICTOR_MAP:
+        raise ValueError(
+            f"Predictor '{predictor_name}' not found in PREDICTOR_MAP. Current options include: {PREDICTOR_MAP.keys()}"
+        )
 
     logging.info(
         f"Generating current predictions for {len(game_ids)} games using predictor '{predictor_name}'."
     )
 
-    # Instantiate the predictor class without model paths
-    predictor_instance = predictor_class()
+    # Load pre-game predictions from DB and current game state
+    if not game_ids:
+        return {}
 
-    # Create the predictions
-    current_predictions = predictor_instance.make_current_predictions(game_ids)
+    games = load_current_game_data(game_ids, predictor_name)
+
+    # Blend pre-game predictions with current state using formula
+    current_predictions = update_predictions(games)
 
     logging.info(
         f"Current predictions generated successfully for {len(current_predictions)} games using predictor '{predictor_name}'."
@@ -121,6 +158,7 @@ def make_current_predictions(game_ids, predictor_name=None):
 def save_predictions(predictions, predictor_name, db_path=DB_PATH):
     """
     Save predictions to the Predictions table.
+    Validates that predictions are made before game start time.
 
     Parameters:
     predictions (dict): The predictions to save.
@@ -129,6 +167,9 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
 
     Returns:
     None
+
+    Raises:
+    ValueError: If prediction is made after game start time.
     """
     if not predictions:
         logging.info("No predictions to save.")
@@ -137,16 +178,52 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
     logging.info(
         f"Saving {len(predictions)} predictions for predictor '{predictor_name}'..."
     )
-    prediction_datetime = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    prediction_datetime = pd.Timestamp.now(tz="UTC")
+    prediction_datetime_str = prediction_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
+
+        # Validate prediction times against game start times
+        game_ids = list(predictions.keys())
+        placeholders = ",".join("?" * len(game_ids))
+        cursor.execute(
+            f"SELECT game_id, date_time_est FROM Games WHERE game_id IN ({placeholders})",
+            game_ids,
+        )
+        game_times = {
+            row[0]: pd.to_datetime(row[1], utc=True) for row in cursor.fetchall()
+        }
+
+        # Check each game
+        for game_id in game_ids:
+            if game_id not in game_times:
+                logging.warning(
+                    f"Game {game_id} not found in database - skipping time validation"
+                )
+                continue
+
+            game_time = game_times[game_id]
+            time_until_game = (game_time - prediction_datetime).total_seconds() / 60
+
+            if time_until_game < 0:
+                raise ValueError(
+                    f"Cannot save prediction for game {game_id}: prediction time "
+                    f"({prediction_datetime_str}) is after game start time ({game_time}). "
+                    f"Predictions must be made before games start."
+                )
+
+            if time_until_game < 10:
+                logging.warning(
+                    f"Prediction for game {game_id} made within {time_until_game:.1f} minutes "
+                    f"of game start - very tight window!"
+                )
 
         data = [
             (
                 game_id,
                 predictor_name,
-                prediction_datetime,
+                prediction_datetime_str,
                 json.dumps(
                     {
                         k: (

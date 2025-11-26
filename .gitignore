@@ -16,10 +16,11 @@ models/*
 !models/Ridge_Regression_2024-07-29T21:14:57.504620.joblib
 !models/XGBoost_Regression_2024-07-29T21:33:17.702300.joblib
 
+# Documentation build
+docs/_site/
+
 # Environment and build files
-wandb
 .nba_ai_venv
-airflow
 .env
 .venv
 env/
@@ -27,10 +28,6 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
-# Airflow specific
-airflow
-!airflow/dags/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

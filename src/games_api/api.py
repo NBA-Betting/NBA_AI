@@ -163,4 +163,9 @@ def games():
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 400
     except Exception as e:
+        import logging
+        import traceback
+
+        logging.error(f"API error: {str(e)}")
+        logging.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500

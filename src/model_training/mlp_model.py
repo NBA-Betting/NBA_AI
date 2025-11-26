@@ -6,7 +6,6 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-import wandb
 from src.config import config
 from src.model_training.evaluation import create_evaluations
 from src.model_training.modeling_utils import load_featurized_modeling_data
@@ -29,11 +28,7 @@ class MLP(nn.Module):
 
 
 if __name__ == "__main__":
-    log_to_wandb = True  # Set to False to disable logging to Weights & Biases
-    if log_to_wandb:
-        run = wandb.init(project="NBA AI")
-    if not log_to_wandb:
-        print("\nLogging to Weights & Biases disabled.")
+    print("\nWandb experiment tracking disabled (removed Nov 2025).")
 
     model_type = "MLP_Regression"
     run_datetime = datetime.now().isoformat()
@@ -160,9 +155,6 @@ if __name__ == "__main__":
     # Initialize the model
     model = MLP(input_size)
 
-    if log_to_wandb:
-        wandb.watch(model)
-
     print("\nModel Architecture:")
     print(model)
 
@@ -253,22 +245,6 @@ if __name__ == "__main__":
         else:
             print(
                 f"Epoch {epoch+1}/{epochs}, Train Loss: {epoch_loss:.2f}, Test Loss: {test_loss:.2f}"
-            )
-
-        # Log to Weights and Biases
-        if log_to_wandb:
-            wandb.log(
-                {
-                    "epoch": epoch + 1,
-                    "train_loss": epoch_loss,
-                    "test_loss": test_loss,
-                    "train_home_margin_mae": epoch_mae_margin,
-                    "train_home_score_mae": epoch_mae_home,
-                    "train_away_score_mae": epoch_mae_away,
-                    "test_home_margin_mae": test_mae_margin,
-                    "test_home_score_mae": test_mae_home,
-                    "test_away_score_mae": test_mae_away,
-                }
             )
 
     # -------------------------------
@@ -472,52 +448,3 @@ if __name__ == "__main__":
     )
 
     print(f"Model saved to {model_filename}\n")
-
-    # ----------------------------------------
-    # Section 10: Logging to Weights & Biases
-    # ----------------------------------------
-
-    if not log_to_wandb:
-        exit()
-
-    # Log configuration and model details
-    wandb.config.update(
-        {
-            "model_type": model_type,
-            "train_seasons": training_seasons,
-            "train_season_count": len(training_seasons),
-            "test_seasons": testing_seasons,
-            "train_shape": X_train.shape,
-            "test_shape": X_test.shape,
-            "targets": ["home_score", "away_score"],
-            "features": feature_names,
-            "run_datetime": run_datetime,
-            "learning_rate": learning_rate,
-            "batch_size": batch_size,
-            "epochs": epochs,
-            "optimizer": str(optimizer),
-            "criterion": str(criterion),
-        }
-    )
-
-    # Log core metrics
-    wandb.summary.update(
-        {
-            "home_score_mae": home_score_mae,
-            "away_score_mae": away_score_mae,
-            "home_margin_mae": home_margin_mae,
-            "home_win_prob_log_loss": home_win_prob_log_loss,
-        }
-    )
-
-    # Log the full evaluation suite
-    train_evaluations_table = wandb.Table(dataframe=train_evaluations)
-    test_evaluations_table = wandb.Table(dataframe=test_evaluations)
-    wandb.summary.update({"Train Evals": train_evaluations_table})
-    wandb.summary.update({"Test Evals": test_evaluations_table})
-
-    # Save the model to wandb
-    wandb.save(model_filename, base_path=PROJECT_ROOT)
-
-    # End the wandb run
-    run.finish()

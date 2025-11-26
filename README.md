@@ -9,7 +9,7 @@
     * [Guiding Principles](#guiding-principles)
 * [Web App](#web-app)
 * [Prediction Engines](#prediction-engines)
-* [Installation and Usage](#installation-and-usage)
+* [Development Status](#development-status)
 
 ## Project Overview
 
@@ -19,7 +19,9 @@ This project aims to streamline the process of predicting NBA game outcomes by f
 
 ### Current State
 
-The project is currently in the early stages of development, with a basic prediction engine that uses simple models like ridge regression, XGBoost, and a basic MLP. The prediction engine is limited to basic game score predictions and win percentages. The web app provides a simple interface for displaying games for the selected date along with current scores and predictions. Fortunately, this is as complicated as the project should become. The goal is to gradually integrate most pieces of the Database Updater and part of the Games API logic into a single prediction engine. This will allow for a more streamlined process and a more capable prediction engine.
+The project is in active development with a complete data collection pipeline and basic prediction engines. **Recent infrastructure cleanup (Nov 2025)** removed unnecessary complexity (Airflow orchestration, Wandb experiment tracking) to focus on the core GenAI prediction engine development.
+
+The current system processes 3 seasons of data (2023-2026) with complete PBP → GameStates → PlayerBox/TeamBox → Features → Predictions pipeline. The web app provides a simple interface for displaying games with current scores and predictions.
 
 ![Project Flowchart](images/project_flowchart.png)
 
@@ -97,117 +99,28 @@ In the future, a more challenging baseline based on the Vegas spread will be add
 
 ![Prediction Engine Performance Metrics](images/predictor_performance.png)
 
-## Installation and Usage
+## Development Status
 
-### Step 1: Clone the Repository
+**⚠️ This project is in active development and not ready for public use.**
 
-Clone the repository to your local machine using the following command:
+The project is currently being refactored and improved. Public installation instructions and sample databases will be provided once the core prediction engine and infrastructure are stable.
 
-```sh
-git clone https://github.com/NBA-Betting/NBA_AI.git
-```
+### For Developers
 
-### Step 2: Set Up a Virtual Environment (Optional but Recommended)
+If you're interested in contributing or following development progress:
 
-Navigate to the project directory:
+* Monitor the [Issues](https://github.com/NBA-Betting/NBA_AI/issues) page for active work
+* Check the TODO.md file for current development priorities
+* The project focuses on building DL/GenAI prediction engines using play-by-play data
 
-```sh
-cd NBA_AI
-```
+### Technical Notes
 
-Create a virtual environment:
-
-```sh
-python -m venv venv
-```
-
-Activate the virtual environment:
-
-```sh
-source venv/bin/activate
-```
-
-### Step 3: Install Dependencies
-
-Install the required dependencies:
-
-```sh
-pip install -r requirements.txt
-```
-
-### Step 4: Set Up Environment Variables
-
-Rename the `.env.template` file to `.env`:
-
-```sh
-cp .env.template .env
-```
-
-Open the `.env` file in your preferred text editor and set the necessary values:
-
-```
-# .env
-# Flask secret key (Optional, Flask will generate one if not set)
-# WEB_APP_SECRET_KEY=your_generated_secret_key
-
-# Project root path (Mandatory)
-PROJECT_ROOT=/path/to/your/project/root
-```
-
-Replace `/path/to/your/project/root` with the actual path to the root directory of your project on your local machine. You can leave `WEB_APP_SECRET_KEY` commented out if you want Flask to generate it automatically.
-
-### Step 5: Configure the Database
-
-By default, the configuration will point to the empty database (`data/NBA_AI_BASE.sqlite`). If you want to use the pre-populated 2023-2024 season data:
-
-1. Download the SQLite database zip file from the GitHub release page:
-
-   - Go to the [Releases page](https://github.com/NBA-Betting/NBA_AI/releases) of the repository.
-   - Find the latest release (e.g., `v0.1`).
-   - Download the `NBA_AI_2023_2024.zip` file attached to the release.
-
-2. Extract the zip file:
-
-   ```sh
-   unzip path/to/NBA_AI_2023_2024.zip -d data
-   ```
-
-3. Update the `config.yaml` file to point to the extracted database:
-
-   ```yaml
-   database:
-     path: "data/NBA_AI_2023_2024.sqlite"  # <<< Set this to point to the database you want to use.
-   ```
-
-### Step 6: Run the Application
-
-Run the application using the `start_app.py` file in the root directory:
-
-```sh
-python start_app.py
-```
-
-### Accessing the Application
-
-Once the application is running, you can access it by opening your web browser and navigating to:
-
-```
-http://127.0.0.1:5000/
-```
-
-### Usage Notes
-
-- The Database Updater processes all games for the specified season each time it's run. On the first run for a given season, when the database is empty, the updater fetches and parses play-by-play data for each game. This initial update may take several minutes and require up to a couple of GB of memory, as it makes approximately 1,500 API calls to the NBA Stats API (one per game). Subsequent updates will be significantly faster since the data is already stored in the database.
-
-- By default, the web app is limited to the 2023-2024 and 2024-2025 seasons to prevent excessive updating of past seasons. These restrictions can be adjusted in the config.yaml file and do not apply when running the code directly. The update process supports seasons as far back as 2000-2001, if desired.
-
-    ```yaml
-    api:
-      valid_seasons:
-      - "2023-2024"
-      - "2024-2025"
-    ```
-
-- This is very much a work in progress, and there are many improvements to be made. If you have any suggestions or feedback, please feel free to open an issue or reach out to me directly. I will be focusing on creating the DL and GenAI prediction engines until the 2024-2025 season begins, but will also be working on improving the web app and other components as time allows.
+* Current focus: 2023-2024, 2024-2025, 2025-2026 seasons (configurable in config.yaml)
+* Database: SQLite with TEXT-based schema (2.1GB working DB, 24GB historical archive)
+* Data pipeline: Schedule → PBP → GameStates → PlayerBox/TeamBox → Features → Predictions
+* Initial season updates require ~1,500 NBA API calls and may use up to 2GB memory
+* Modern data quality monitoring via `data_quality.py` (30x faster than legacy audit)
+* Streamlined architecture - removed Airflow, Wandb, CM archive (Nov 2025 cleanup)
+* Project built with Python, Flask, SQLite, PyTorch, and nba_api
 
 

@@ -1,7 +1,7 @@
 """
 game_data_processor.py
 
-This module provides functionality to process and prepare NBA game data for display, including team names, logos, 
+This module provides functionality to process and prepare NBA game data for display, including team names, logos,
 game status, scores, predictions, and player statistics. Converts api data into a format suitable for rendering in a web application.
 Core Functions:
 - get_user_datetime(as_eastern_tz=False): Fetch the current date and time in the user's local timezone or in Eastern Time Zone (ET).
@@ -224,8 +224,12 @@ def _format_date_time_display(game):
         dict: A dictionary containing the formatted date and time display.
     """
 
-    if game["status"] == "In Progress" or (
-        game["game_states"] and not game["game_states"][-1].get("is_final_state", False)
+    # Only show time remaining if we have game states and the game is in progress or not finalized
+    has_game_states = game.get("game_states") and len(game["game_states"]) > 0
+
+    if has_game_states and (
+        game["status"] == "In Progress"
+        or not game["game_states"][-1].get("is_final_state", False)
     ):
         period = game["game_states"][-1]["period"]
         time_remaining = game["game_states"][-1]["clock"]
@@ -251,9 +255,13 @@ def _format_date_time_display(game):
 
     # Handle cases for not started or completed games
     game_date_time_est = game["date_time_est"]
-    game_date_time_est = datetime.strptime(game_date_time_est, "%Y-%m-%dT%H:%M:%SZ")
+    # Parse as UTC time (the 'Z' suffix means UTC)
+    game_date_time_utc = datetime.strptime(game_date_time_est, "%Y-%m-%dT%H:%M:%SZ")
+    # Add UTC timezone info
+    game_date_time_utc = pytz.utc.localize(game_date_time_utc)
+    # Convert to user's local timezone
     user_timezone = get_localzone()
-    game_date_time_local = game_date_time_est.astimezone(user_timezone)
+    game_date_time_local = game_date_time_utc.astimezone(user_timezone)
 
     game_date = game_date_time_local.date()
     current_date = datetime.now().date()

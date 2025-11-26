@@ -28,6 +28,7 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
+from tqdm import tqdm
 
 from src.config import config
 from src.logging_config import setup_logging
@@ -182,9 +183,11 @@ def get_pbp(game_ids, pbp_endpoint="both"):
                 )
                 for game_id in game_ids
             ]
-            for future in as_completed(futures):
-                game_id, actions_sorted = future.result()
-                results[game_id] = actions_sorted if actions_sorted else []
+            with tqdm(total=len(futures), desc="Fetching PBP", unit="game") as pbar:
+                for future in as_completed(futures):
+                    game_id, actions_sorted = future.result()
+                    results[game_id] = actions_sorted if actions_sorted else []
+                    pbar.update(1)
 
     logging.info(f"Fetched play-by-play data for {len(results)} games.")
     for game in results:

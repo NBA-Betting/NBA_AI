@@ -9,7 +9,6 @@ from sklearn.model_selection import RandomizedSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-import wandb
 from src.config import config
 from src.model_training.evaluation import create_evaluations
 from src.model_training.modeling_utils import load_featurized_modeling_data
@@ -19,8 +18,6 @@ DB_PATH = config["database"]["path"]
 PROJECT_ROOT = config["project"]["root"]
 
 if __name__ == "__main__":
-    log_to_wandb = True  # Set to False to disable logging to Weights & Biases
-
     model_type = "Ridge_Regression"
     run_datetime = datetime.now().isoformat()
 
@@ -287,56 +284,3 @@ if __name__ == "__main__":
     model_filename = f"{PROJECT_ROOT}/models/{model_type}_{run_datetime}.joblib"
     dump(pipeline, model_filename)
     print(f"Model saved to {model_filename}\n")
-
-    # ----------------------------------------
-    # Section 9: Logging to Weights & Biases
-    # ----------------------------------------
-
-    if not log_to_wandb:
-        print("\nLogging to Weights & Biases disabled.")
-        exit()
-
-    # Initialize wandb for experiment tracking
-    run = wandb.init(project="NBA AI", config=best_params)
-
-    # Log configuration and model details
-    wandb.config.update(
-        {
-            "model_type": model_type,
-            "train_seasons": training_seasons,
-            "train_season_count": len(training_seasons),
-            "test_seasons": testing_seasons,
-            "train_shape": X_train_scaled.shape,
-            "test_shape": X_test_scaled.shape,
-            "targets": ["home_score", "away_score"],
-            "features": feature_names,
-            "run_datetime": run_datetime,
-        }
-    )
-
-    # Log core metrics
-    wandb.summary.update(
-        {
-            "home_score_mae": home_score_mae,
-            "away_score_mae": away_score_mae,
-            "home_margin_mae": home_margin_mae,
-            "home_win_prob_log_loss": home_win_prob_log_loss,
-        }
-    )
-
-    # Log the full evaluation suite
-    train_evaluations_table = wandb.Table(dataframe=train_evaluations)
-    test_evaluations_table = wandb.Table(dataframe=test_evaluations)
-    wandb.summary.update({"Train Evals": train_evaluations_table})
-    wandb.summary.update({"Test Evals": test_evaluations_table})
-
-    # Log the model details (intercept and coefficients)
-    model_details_table = wandb.Table(dataframe=model_details)
-    wandb.summary.update({"Model Details": model_details_table})
-
-    # Save the model to wandb
-    # Make sure model_filename is a file path to your saved model
-    wandb.save(model_filename, base_path=PROJECT_ROOT)
-
-    # End the wandb run
-    run.finish()

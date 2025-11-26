@@ -11,9 +11,10 @@ api:
   valid_seasons: 
     - "2023-2024"
     - "2024-2025"
+    - "2025-2026"
 
-openai:
-  api_key: ${OPENAI_API_KEY} # Should be set in the .env file. Required for GPT4Mini Predictor. Beware usage costs.
+# OpenAI API - removed Nov 2025, rebuilding GenAI from scratch
+# Future GenAI implementation will use different architecture
 
 web_app:
   secret_key: ${WEB_APP_SECRET_KEY} # Should be set in the .env file. Will be set automatically if not set in .env
@@ -55,15 +56,10 @@ nba_api:
 default_predictor: "Baseline"
 
 # Predictors Configuration
+# Note: ML models (Linear, Tree, MLP) currently have no trained models.
+# After refactoring, use unified training script to generate new models.
 predictors:
-  Baseline: {}
-  Linear:
-    model_paths:
-      - "models/Ridge_Regression_2024-07-29T21:14:57.504620.joblib"
-  Tree:
-    model_paths:
-      - "models/XGBoost_Regression_2024-07-29T21:33:17.702300.joblib"
-  MLP:
-    model_paths:
-      - "models/MLP_Regression_2024-07-30T14:08:12.793153.pth"
-  GPT4Mini: {}  # Requires OpenAI API Key. Warning: Using the OpenAI API can be expensive. Make sure to set usage limits and monitor usage to avoid unexpected charges.
+  Baseline: {}  # Formula-based, no models required
+  Linear: {}    # Ridge Regression - requires trained .joblib model
+  Tree: {}      # XGBoost - requires trained .joblib model
+  MLP: {}       # PyTorch MLP - requires trained .pth model

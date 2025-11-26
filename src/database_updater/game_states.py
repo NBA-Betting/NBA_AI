@@ -26,6 +26,8 @@ import re
 import sqlite3
 from copy import deepcopy
 
+from tqdm import tqdm
+
 from src.config import config
 from src.database_updater.pbp import get_pbp, save_pbp
 from src.logging_config import setup_logging
@@ -71,7 +73,9 @@ def create_game_states(games_info):
     game_states = {}
 
     try:
-        for game_id, game_info in games_info.items():
+        for game_id, game_info in tqdm(
+            games_info.items(), desc="Creating game states", unit="game"
+        ):
             home = game_info["home"]
             away = game_info["away"]
             game_date = game_info["date_time_est"].split("T")[0]

@@ -154,6 +154,7 @@ def get_games(
     game_ids,
     predictor=DEFAULT_PREDICTOR,
     update_predictions=True,
+    skip_players=True,
 ):
     """
     Retrieve game data for the specified game IDs.
@@ -162,6 +163,7 @@ def get_games(
         game_ids (list): List of game IDs to fetch data for.
         predictor (str): Name of the predictor to use.
         update_predictions (bool): Whether to update the predictions.
+        skip_players (bool): If True, skip player enrichment (default is True for web app performance).
 
     Returns:
         dict: Dictionary containing game data including predictions and game states.
@@ -177,7 +179,7 @@ def get_games(
     # Update the database
     seasons = set(game_id_to_season(game_id) for game_id in game_ids)
     for season in seasons:
-        update_database(season, predictor, DB_PATH)
+        update_database(season, predictor, DB_PATH, skip_players=skip_players)
 
     # Use context manager to connect to the database
     with sqlite3.connect(DB_PATH) as conn:
@@ -198,7 +200,9 @@ def get_games(
 
 
 @log_execution_time(average_over="output")
-def get_games_for_date(date, predictor=DEFAULT_PREDICTOR, update_predictions=True):
+def get_games_for_date(
+    date, predictor=DEFAULT_PREDICTOR, update_predictions=True, skip_players=True
+):
     """
     Retrieve game data for games on a specific date.
 
@@ -206,6 +210,7 @@ def get_games_for_date(date, predictor=DEFAULT_PREDICTOR, update_predictions=Tru
         date (str): The date to fetch games for (YYYY-MM-DD).
         predictor (str): Name of the predictor to use.
         update_predictions (bool): Whether to update the predictions.
+        skip_players (bool): If True, skip player enrichment (default is True for web app performance).
 
     Returns:
         dict: Dictionary containing game data for the specified date.
@@ -238,6 +243,7 @@ def get_games_for_date(date, predictor=DEFAULT_PREDICTOR, update_predictions=Tru
         game_ids,
         predictor=predictor,
         update_predictions=update_predictions,
+        skip_players=skip_players,
     )
 
     logging.info(f"Game retrieval complete for {len(games)} games from date: {date}.")

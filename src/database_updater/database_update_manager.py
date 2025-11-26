@@ -31,7 +31,10 @@ import argparse
 import logging
 import sqlite3
 
+from tqdm import tqdm
+
 from src.config import config
+from src.database_updater.boxscores import get_boxscores, save_boxscores
 from src.database_updater.game_states import create_game_states, save_game_states
 from src.database_updater.pbp import get_pbp, save_pbp
 from src.database_updater.players import update_players
@@ -53,7 +56,9 @@ DB_PATH = config["database"]["path"]
 
 
 @log_execution_time()
-def update_database(season="Current", predictor=None, db_path=DB_PATH):
+def update_database(
+    season="Current", predictor=None, db_path=DB_PATH, skip_players=False
+):
     """
     Orchestrates the full update process for the specified season.
 
@@ -61,16 +66,22 @@ def update_database(season="Current", predictor=None, db_path=DB_PATH):
         season (str): The season to update (default is "Current").
         predictor: The prediction model to use (default is None).
         db_path (str): The path to the database (default is from config).
+        skip_players (bool): If True, skip player enrichment (default is False).
 
     Returns:
         None
     """
     # STEP 1: Update Schedule
     update_schedule(season)
-    # STEP 2: Update Players List
-    update_players(db_path)
-    # STEP 3: Update Game Data (Play-by-Play Logs, Game States)
+    # STEP 2: Update Players List (optional - can be slow on first run)
+    if not skip_players:
+        update_players(db_path)
+    else:
+        logging.info("Skipping player enrichment (--skip-players flag set)")
+    # STEP 3: Update Game Data (Play-by-Play Logs, Game States, Boxscores)
     update_game_data(season, db_path)
+    # STEP 3.5: Update Live Game Data (for In Progress games)
+    update_live_game_data(season, db_path)
     # STEP 4: Update Pre Game Data (Prior States, Feature Sets)
     update_pre_game_data(season, db_path)
     # STEP 5: Update Predictions
@@ -104,7 +115,14 @@ def update_game_data(season, db_path=DB_PATH, chunk_size=100):
         logging.info(f"Processing {total_games} games in {total_chunks} chunks.")
 
     # Process the games in chunks
-    for i in range(0, total_games, chunk_size):
+    chunk_iterator = range(0, total_games, chunk_size)
+    pbar = (
+        tqdm(total=total_chunks, desc="Game data chunks", unit="chunk")
+        if total_chunks > 1
+        else None
+    )
+
+    for i in chunk_iterator:
         chunk_game_ids = game_ids[i : i + chunk_size]
 
         try:
@@ -125,21 +143,68 @@ def update_game_data(season, db_path=DB_PATH, chunk_size=100):
             game_states = create_game_states(game_state_inputs)
             save_game_states(game_states)
 
-            # Log progress if there is more than 1 chunk
-            if total_chunks > 1:
-                logging.info(
-                    f"Processed chunk {i // chunk_size + 1} of {total_chunks}."
-                )
+            # Collect boxscore data for completed games
+            boxscore_data = get_boxscores(chunk_game_ids)
+            save_boxscores(boxscore_data, db_path)
+
+            # Update progress bar
+            if pbar:
+                pbar.update(1)
 
         except Exception as e:
             logging.error(f"Error processing chunk starting at index {i}: {str(e)}")
+            if pbar:
+                pbar.update(1)
             continue
+
+    if pbar:
+        pbar.close()
+
+    # ADDITIONAL CHECK: Collect boxscores for games that have PBP but no PlayerBox
+    # This handles cases where boxscores were added to the pipeline after initial collection
+    missing_boxscores = get_games_needing_boxscores_only(season, db_path)
+
+    if missing_boxscores:
+        total_missing = len(missing_boxscores)
+        total_chunks = (total_missing + chunk_size - 1) // chunk_size
+
+        logging.info(
+            f"Found {total_missing} games with PBP but missing PlayerBox. Collecting boxscores..."
+        )
+
+        pbar = (
+            tqdm(total=total_chunks, desc="Boxscore backfill chunks", unit="chunk")
+            if total_chunks > 1
+            else None
+        )
+
+        for i in range(0, total_missing, chunk_size):
+            chunk = missing_boxscores[i : i + chunk_size]
+
+            try:
+                boxscore_data = get_boxscores(chunk, check_game_status=False)
+                save_boxscores(boxscore_data, db_path)
+
+                if pbar:
+                    pbar.update(1)
+            except Exception as e:
+                logging.error(f"Error collecting boxscores for chunk: {e}")
+                if pbar:
+                    pbar.update(1)
+                continue
+
+        if pbar:
+            pbar.close()
 
 
 @log_execution_time()
-def update_pre_game_data(season, db_path=DB_PATH):
+def update_live_game_data(season, db_path=DB_PATH):
     """
-    Updates prior states and feature sets for games with incomplete pre-game data.
+    Collects live play-by-play and boxscore data for in-progress games.
+
+    This function specifically targets games with status='In Progress' to collect
+    real-time game data using the live NBA API endpoints. This ensures the web app
+    can display current scores and statistics for ongoing games.
 
     Parameters:
         season (str): The season to update.
@@ -148,33 +213,130 @@ def update_pre_game_data(season, db_path=DB_PATH):
     Returns:
         None
     """
+    game_ids = get_games_in_progress(season, db_path)
+
+    if not game_ids:
+        logging.debug("No in-progress games found.")
+        return
+
+    logging.info(f"Collecting live data for {len(game_ids)} in-progress games...")
+
+    try:
+        # Collect live play-by-play data
+        pbp_data = get_pbp(game_ids, pbp_endpoint="live")
+        save_pbp(pbp_data)
+
+        # Get basic game info for game states
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            basic_game_info = {}
+            for game_id in game_ids:
+                cursor.execute(
+                    "SELECT date_time_est FROM Games WHERE game_id = ?", (game_id,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    basic_game_info[game_id] = {"date_time_est": row[0]}
+
+        # Create game states from live PBP
+        game_state_inputs = {
+            game_id: {
+                "date_time_est": basic_game_info[game_id]["date_time_est"],
+                "pbp_logs": game_info,
+            }
+            for game_id, game_info in pbp_data.items()
+        }
+
+        game_states = create_game_states(game_state_inputs)
+        save_game_states(game_states)
+
+        # Collect live boxscores (with check_game_status=True to use live endpoint)
+        boxscore_data = get_boxscores(game_ids, check_game_status=True, db_path=db_path)
+        save_boxscores(boxscore_data, db_path)
+
+        logging.info(f"Live data collection complete for {len(game_ids)} games.")
+
+    except Exception as e:
+        logging.error(f"Error collecting live game data: {e}")
+
+
+@log_execution_time()
+def update_pre_game_data(season, db_path=DB_PATH, chunk_size=100):
+    """
+    Updates prior states and feature sets for games with incomplete pre-game data.
+
+    Parameters:
+        season (str): The season to update.
+        db_path (str): The path to the database (default is from config).
+        chunk_size (int): Number of games to process at a time (default is 100).
+
+    Returns:
+        None
+    """
     game_ids = get_games_with_incomplete_pre_game_data(season, db_path)
-    prior_states_needed = determine_prior_states_needed(game_ids, db_path)
-    prior_states_dict = load_prior_states(prior_states_needed, db_path)
-    feature_sets = create_feature_sets(prior_states_dict, db_path)
-    save_feature_sets(feature_sets, db_path)
 
-    # Categorize games and prepare data for database update
-    games_update_data = []
-    for game_id, states in prior_states_dict.items():
-        pre_game_data_finalized = int(
-            not states["missing_prior_states"]["home"]
-            and not states["missing_prior_states"]["away"]
-        )
-        games_update_data.append((pre_game_data_finalized, game_id))
+    total_games = len(game_ids)
+    total_chunks = (total_games + chunk_size - 1) // chunk_size
 
-    # Update database in a single transaction
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.executemany(
-            """
-            UPDATE Games
-            SET pre_game_data_finalized = ?
-            WHERE game_id = ?
-        """,
-            games_update_data,
+    # Only log chunk information if there will be more than 1 chunk
+    if total_chunks > 1:
+        logging.info(
+            f"Processing {total_games} games for pre-game data in {total_chunks} chunks."
         )
-        conn.commit()
+
+    # Process the games in chunks
+    chunk_iterator = range(0, total_games, chunk_size)
+    pbar = (
+        tqdm(total=total_chunks, desc="Pre-game data chunks", unit="chunk")
+        if total_chunks > 1
+        else None
+    )
+
+    for i in chunk_iterator:
+        chunk_game_ids = game_ids[i : i + chunk_size]
+
+        try:
+            prior_states_needed = determine_prior_states_needed(chunk_game_ids, db_path)
+            prior_states_dict = load_prior_states(prior_states_needed, db_path)
+            feature_sets = create_feature_sets(prior_states_dict, db_path)
+            save_feature_sets(feature_sets, db_path)
+
+            # Categorize games and prepare data for database update
+            games_update_data = []
+            for game_id, states in prior_states_dict.items():
+                pre_game_data_finalized = int(
+                    not states["missing_prior_states"]["home"]
+                    and not states["missing_prior_states"]["away"]
+                )
+                games_update_data.append((pre_game_data_finalized, game_id))
+
+            # Update database in a single transaction
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.executemany(
+                    """
+                    UPDATE Games
+                    SET pre_game_data_finalized = ?
+                    WHERE game_id = ?
+                """,
+                    games_update_data,
+                )
+                conn.commit()
+
+            # Update progress bar
+            if pbar:
+                pbar.update(1)
+
+        except Exception as e:
+            logging.error(
+                f"Error processing pre-game data chunk starting at index {i}: {str(e)}"
+            )
+            if pbar:
+                pbar.update(1)
+            continue
+
+    if pbar:
+        pbar.close()
 
 
 @log_execution_time()
@@ -211,14 +373,15 @@ def get_games_needing_game_state_update(season, db_path=DB_PATH):
     """
     with sqlite3.connect(db_path) as db_connection:
         cursor = db_connection.cursor()
-        # Query to identify games needing updates, including 'In Progress' games
+        # Query to identify completed games needing data collection
+        # Note: Only collect from finalized games to avoid incomplete data
         cursor.execute(
             """
             SELECT game_id 
             FROM Games 
             WHERE season = ?
               AND season_type IN ('Regular Season', 'Post Season') 
-              AND (status = 'Completed' OR status = 'In Progress')
+              AND status IN ('Completed', 'Final')
               AND game_data_finalized = False;
         """,
             (season,),
@@ -228,6 +391,71 @@ def get_games_needing_game_state_update(season, db_path=DB_PATH):
 
     # Return a list of game_ids
     return [game_id for (game_id,) in games_to_update]
+
+
+@log_execution_time()
+def get_games_in_progress(season, db_path=DB_PATH):
+    """
+    Retrieves game_ids for games currently in progress.
+
+    Parameters:
+        season (str): The season to filter games by.
+        db_path (str): The path to the database (default is from config).
+
+    Returns:
+        list: A list of game_ids for games with status='In Progress'.
+    """
+    with sqlite3.connect(db_path) as db_connection:
+        cursor = db_connection.cursor()
+        cursor.execute(
+            """
+            SELECT game_id 
+            FROM Games 
+            WHERE season = ?
+              AND season_type IN ('Regular Season', 'Post Season') 
+              AND status = 'In Progress';
+        """,
+            (season,),
+        )
+
+        games_in_progress = cursor.fetchall()
+
+    # Return a list of game_ids
+    return [game_id for (game_id,) in games_in_progress]
+
+
+@log_execution_time()
+def get_games_needing_boxscores_only(season, db_path=DB_PATH):
+    """
+    Retrieves game_ids for games that have PBP data but are missing PlayerBox records.
+
+    This handles cases where boxscores were added to the pipeline after initial collection.
+
+    Parameters:
+        season (str): The season to check.
+        db_path (str): The path to the database (default is from config).
+
+    Returns:
+        list: A list of game_ids that need boxscore collection.
+    """
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT g.game_id
+            FROM Games g
+            WHERE g.season = ?
+            AND g.season_type IN ('Regular Season', 'Post Season')
+            AND g.status IN ('Completed', 'Final')
+            AND g.game_data_finalized = 1
+            AND NOT EXISTS (
+                SELECT 1 FROM PlayerBox pb WHERE pb.game_id = g.game_id
+            )
+            ORDER BY g.date_time_est
+        """,
+            (season,),
+        )
+        return [row[0] for row in cursor.fetchall()]
 
 
 @log_execution_time()
@@ -335,12 +563,17 @@ def main():
         type=str,
         help="The predictor to use for predictions.",
     )
+    parser.add_argument(
+        "--skip-players",
+        action="store_true",
+        help="Skip player enrichment (useful for quick data collection).",
+    )
 
     args = parser.parse_args()
     log_level = args.log_level.upper()
     setup_logging(log_level=log_level)
 
-    update_database(args.season, args.predictor)
+    update_database(args.season, args.predictor, skip_players=args.skip_players)
 
 
 if __name__ == "__main__":

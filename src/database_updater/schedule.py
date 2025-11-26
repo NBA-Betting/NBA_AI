@@ -24,6 +24,7 @@ import argparse
 import logging
 import sqlite3
 
+import pandas as pd
 import requests
 
 from src.config import config
@@ -39,24 +40,128 @@ from src.utils import (
 DB_PATH = config["database"]["path"]
 NBA_API_BASE_URL = config["nba_api"]["schedule_endpoint"]
 NBA_API_HEADERS = config["nba_api"]["schedule_headers"]
+SCHEDULE_CACHE_MINUTES = 5  # Cache duration for historical seasons
+
+
+def _get_last_schedule_update(season, db_path):
+    """
+    Get the last update datetime for a season from the cache.
+
+    Parameters:
+    season (str): The season to check.
+    db_path (str): The path to the SQLite database file.
+
+    Returns:
+    datetime or None: The last update datetime, or None if not cached.
+    """
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT last_update_datetime FROM ScheduleCache WHERE season = ?",
+                (season,),
+            )
+            result = cursor.fetchone()
+            if result:
+                return pd.to_datetime(result[0])
+            return None
+    except sqlite3.OperationalError:
+        # Table doesn't exist yet - will be created by migration
+        return None
+
+
+def _should_update_schedule(season, db_path):
+    """
+    Determine if schedule should be updated based on cache and season status.
+
+    Parameters:
+    season (str): The season to check.
+    db_path (str): The path to the SQLite database file.
+
+    Returns:
+    bool: True if schedule should be updated, False otherwise.
+    """
+    current_season = determine_current_season()
+
+    # Always update current season (games change frequently)
+    if season == current_season:
+        logging.debug(f"Updating schedule for current season: {season}")
+        return True
+
+    # Check cache for historical seasons
+    last_update = _get_last_schedule_update(season, db_path)
+    if last_update is None:
+        logging.debug(f"No cache entry for season {season} - updating")
+        return True
+
+    # Check if cache expired (older than SCHEDULE_CACHE_MINUTES)
+    minutes_since_update = (pd.Timestamp.now() - last_update).total_seconds() / 60
+    if minutes_since_update > SCHEDULE_CACHE_MINUTES:
+        logging.debug(
+            f"Cache expired for season {season} ({minutes_since_update:.1f} minutes old) - updating"
+        )
+        return True
+
+    logging.info(
+        f"Using cached schedule for season {season} (updated {minutes_since_update:.1f} minutes ago)"
+    )
+    return False
+
+
+def _update_schedule_cache(season, db_path):
+    """
+    Update the schedule cache with current timestamp.
+
+    Parameters:
+    season (str): The season to update cache for.
+    db_path (str): The path to the SQLite database file.
+    """
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            update_time = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute(
+                """
+                INSERT INTO ScheduleCache (season, last_update_datetime)
+                VALUES (?, ?)
+                ON CONFLICT(season) DO UPDATE SET last_update_datetime = excluded.last_update_datetime
+                """,
+                (season, update_time),
+            )
+            conn.commit()
+            logging.debug(f"Updated schedule cache for season {season}")
+    except sqlite3.OperationalError as e:
+        # Table doesn't exist - run migration
+        logging.warning(
+            f"ScheduleCache table not found. Run: python -m src.database_migration"
+        )
 
 
 @log_execution_time()
-def update_schedule(season="Current", db_path=DB_PATH):
+def update_schedule(season="Current", db_path=DB_PATH, force=False):
     """
     Fetches and updates the NBA schedule for a given season in the database.
+    Uses caching to avoid redundant NBA API calls for historical seasons.
 
     Parameters:
     season (str): The season to fetch and update the schedule for. Defaults to "Current".
     db_path (str): The path to the SQLite database file. Defaults to the configured database path.
+    force (bool): If True, bypass cache and force update. Defaults to False.
     """
     if season == "Current":
         season = determine_current_season()
     else:
         validate_season_format(season, abbreviated=False)
 
+    # Check if update is needed (unless forced)
+    if not force and not _should_update_schedule(season, db_path):
+        logging.info(f"Skipping schedule update for {season} (using cache)")
+        return
+
     games = fetch_schedule(season)
-    save_schedule(games, season, db_path)
+    if save_schedule(games, season, db_path):
+        # Update cache on successful save
+        _update_schedule_cache(season, db_path)
 
 
 @log_execution_time()
@@ -206,9 +311,9 @@ def save_schedule(games, season, db_path=DB_PATH):
             # Insert or replace new and updated game records
             insert_sql = """
             INSERT INTO Games (game_id, date_time_est, home_team, away_team, status, season, season_type, pre_game_data_finalized, game_data_finalized)
-            VALUES (:gameId, :gameDateTimeEst, :homeTeam, :awayTeam, :gameStatus, :season, :seasonType,
-                COALESCE((SELECT pre_game_data_finalized FROM Games WHERE game_id = :gameId), 0),
-                COALESCE((SELECT game_data_finalized FROM Games WHERE game_id = :gameId), 0))
+            VALUES (:game_id, :date_time_est, :home_team, :away_team, :status, :season, :season_type,
+                COALESCE((SELECT pre_game_data_finalized FROM Games WHERE game_id = :game_id), 0),
+                COALESCE((SELECT game_data_finalized FROM Games WHERE game_id = :game_id), 0))
             ON CONFLICT(game_id) DO UPDATE SET
                 date_time_est=excluded.date_time_est,
                 home_team=excluded.home_team,
@@ -234,18 +339,22 @@ def save_schedule(games, season, db_path=DB_PATH):
                     ):
                         updated_count += 1
 
-                cursor.execute(
-                    insert_sql,
-                    {
-                        "gameId": game["gameId"],
-                        "gameDateTimeEst": game["gameDateTimeEst"],
-                        "homeTeam": game["homeTeam"],
-                        "awayTeam": game["awayTeam"],
-                        "gameStatus": game["gameStatus"],
-                        "season": game["season"],
-                        "seasonType": game["seasonType"],
-                    },
-                )
+                params = {
+                    "game_id": game["gameId"],
+                    "date_time_est": game["gameDateTimeEst"],
+                    "home_team": game["homeTeam"],
+                    "away_team": game["awayTeam"],
+                    "status": game["gameStatus"],
+                    "season": game["season"],
+                    "season_type": game["seasonType"],
+                }
+
+                # Debug: Check for None values
+                if any(v is None for v in params.values()):
+                    logging.error(f"Game {game_id} has None values: {params}")
+                    continue
+
+                cursor.execute(insert_sql, params)
 
             # Commit transaction
             conn.commit()
@@ -281,12 +390,17 @@ def main():
         default="INFO",
         help="The logging level. Default is INFO. DEBUG provides more details.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force schedule update, bypassing cache.",
+    )
 
     args = parser.parse_args()
     log_level = args.log_level.upper()
     setup_logging(log_level=log_level)
 
-    update_schedule(season=args.season)
+    update_schedule(season=args.season, force=args.force)
 
 
 if __name__ == "__main__":
