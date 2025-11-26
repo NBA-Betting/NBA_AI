@@ -1,7 +1,7 @@
 # NBA AI TODO
 
 > **Last Updated**: November 26, 2025  
-> **Current Sprint**: (None - infrastructure cleanup complete, ready for data collection)
+> **Current Sprint**: Sprint 9 - Traditional ML Model Training & Evaluation
 >
 > **Project Management Approach**: Active sprint contains expansive planning with phases and subtasks. Backlog items remain high-level (goal + why + approach). Completed sprints condensed to title, date, and key achievements only.
 >
@@ -16,7 +16,51 @@
 
 ## 🎯 Active Sprint
 
-**No active sprint** - Ready for next phase of work
+### Sprint 9: Traditional ML Model Training & Evaluation (Nov 26, 2025 - In Progress)
+
+**Goal**: Train and evaluate baseline ML models (Ridge, XGBoost, MLP) on complete dataset to establish performance benchmarks before GenAI development.
+
+**Why**: Need quantitative baseline to measure GenAI improvements against. Current models were trained on incomplete/outdated data.
+
+**Status**: Ready to start - all data collected and validated
+
+**Phases**:
+
+1. **Dataset Preparation**
+   - Extract feature sets from FeatureSets table (2023-2024, 2024-2025 complete)
+   - Define train/test splits (avoid temporal leakage)
+   - Verify feature quality and completeness
+   - Document dataset statistics
+
+2. **Model Training**
+   - Train Ridge Regression (linear baseline)
+   - Train XGBoost (tree-based ensemble)
+   - Train MLP (neural network)
+   - Save trained models to models/ directory
+   - Track training metrics and hyperparameters
+
+3. **Model Evaluation**
+   - Evaluate on held-out test set (2024-2025 season)
+   - Calculate metrics: MAE, RMSE, accuracy within spread
+   - Compare predictors against each other
+   - Document performance in evaluation report
+
+4. **Baseline Metrics Framework**
+   - Design evaluation framework for comparing against Vegas lines
+   - Research odds API for historical betting lines
+   - Calculate ROI, Brier score, calibration metrics
+   - Set performance targets for GenAI to beat
+
+**Current Status**: Phase 0 (Pre-work complete)
+- ✅ Data collection complete (2,638 games with features)
+- ✅ Database validated (excellent quality)
+- ✅ Infrastructure tested and working
+- Next: Begin dataset preparation
+
+**Key Decisions**:
+- Use 2023-2024 for training, 2024-2025 for testing (temporal split)
+- Focus on score predictions first, defer player props
+- Establish Vegas comparison framework before GenAI work
 
 ---
 
@@ -24,54 +68,35 @@
 
 ### 🔧 Infrastructure & Data Collection (Priority 1 - Complete Before GenAI)
 
-#### 1. Complete 2024-2025 Season Data Collection
-**Goal**: Collect all available data for current season (~1200 games remaining)  
-**Why**: Need complete dataset before infrastructure validation and GenAI work  
-**Approach**:
-- Run: `python -m src.database_updater.database_update_manager --season=2024-2025`
-- Monitor: Verify PBP, GameStates, PlayerBox, TeamBox all collecting
-- Validate: Check for missing games, incomplete data, API errors
-- Document: Final data coverage statistics
-
-#### 2. Data Quality & Pipeline Validation
+#### 1. Data Quality & Pipeline Validation
 **Goal**: Verify all data collection pipelines work correctly and produce quality data  
 **Why**: Can't train models on broken/incomplete data  
+**Status**: ✅ Complete - data validated, excellent quality
 **Approach**:
-- Audit: PBP coverage across all seasons (check for gaps, parsing errors)
-- Audit: PlayerBox/TeamBox completeness (verify all games have boxscores)
-- Test: Run full pipeline on new games (schedule → PBP → states → features → predictions)
-- Validate: GameStates parsing quality (~400 snapshots/game, player tracking accurate)
-- Document: Data quality report with coverage statistics
+- ✅ Ran 25 validation checks across all categories
+- ✅ Verified PBP, GameStates, PlayerBox, TeamBox completeness
+- ✅ All seasons complete (2,638 games with full data)
+- ✅ Only expected warnings (season starts, score corrections)
 
 #### 2. Code Quality & Testing Infrastructure
 **Goal**: Add basic testing and improve code quality  
 **Why**: Tests catch bugs early, improve confidence in changes  
-**Status**: ✅ Database validation complete, pytest deferred
+**Status**: ✅ Complete - database validation sufficient
 **Approach**:
 - ✅ Database validator with 25+ checks across 9 categories
-- Defer: Unit tests until clear testing strategy emerges
-- Defer: pytest configuration (validation suite sufficient for now)
+- ✅ All imports verified, dead code removed
+- Defer: Unit tests and pytest until needed
 
-#### 3. Environment & Setup Validation
-**Goal**: Ensure all systems functional after branch consolidation  
-**Why**: Need stable foundation before GenAI development  
-**Status**: ✅ Complete - all imports verified, dead code removed
+#### 3. Player Enrichment Optimization
+**Goal**: Fix player update logic to avoid updating all 5,103 players
+**Why**: Current logic takes 7+ hours, should only update changed players
 **Approach**:
-- ✅ Verified all module imports work correctly
-- ✅ Removed test files, redundant scripts, cache files
-- ✅ Web app tested end-to-end (Sprint 7)
-- ✅ Database update pipeline validated (Sprint 6)
+- Debug: Investigate why all players flagged as "changed"
+- Fix: Comparison logic (likely None vs empty string issues)
+- Test: Verify only truly changed players updated
+- Optimize: Should reduce from 7 hours to <5 minutes
 
-#### 4. Critical Bug Fixes & Refactoring
-**Goal**: Fix blocking issues and clean up technical debt  
-**Why**: Stable foundation needed before GenAI development  
-**Status**: ✅ Major cleanup complete
-**Approach**:
-- ✅ Removed dead code (test files, empty models/, cache files)
-- ✅ Fixed flag inconsistencies (180 games)
-- Continue: Monitor for issues during data collection
-
-#### 5. Logging & Monitoring Improvements
+#### 4. Logging & Monitoring Improvements
 **Goal**: Improve observability of data collection and predictions  
 **Why**: Better logging helps debug issues and monitor production system  
 **Approach**:
@@ -85,7 +110,7 @@
 
 ### 🎨 Frontend & User Experience (Priority 2 - Before GenAI)
 
-#### 6. Web App UX Improvements
+#### 5. Web App UX Improvements
 **Goal**: Enhance UI with better usability and mobile support  
 **Why**: Better UX makes predictions more useful and accessible  
 **Approach**:
@@ -109,7 +134,7 @@
 
 ### 📈 Feature Enhancements (Priority 3 - Before GenAI)
 
-#### 8. Player Prediction Model (Traditional ML)
+#### 6. Player Prediction Model (Traditional ML)
 **Goal**: Build ML model predicting player points/props using PlayerBox data  
 **Why**: Player-level predictions add value, test infrastructure before GenAI  
 **Approach**:
@@ -119,7 +144,7 @@
 - Deploy: Integrate into web app as new prediction type
 - Note: This will be replaced by GenAI eventually, but validates data collection
 
-#### 9. Injury Status Tracking
+#### 7. Injury Status Tracking
 **Goal**: Track player injuries and incorporate into predictions  
 **Why**: Important signal that impacts game outcomes  
 **Approach**:
@@ -133,7 +158,7 @@
 
 ### 🚀 GenAI Engine Development (Priority 4 - Final Phase)
 
-#### 10. PBP Data Quality Assessment for GenAI
+#### 8. PBP Data Quality Assessment for GenAI
 **Goal**: Validate PBP data completeness and quality for GenAI training  
 **Why**: GenAI engine depends on rich, sequential PBP - need to confirm readiness  
 **Approach**:
@@ -142,7 +167,7 @@
 - Test: Load sample games into prototype model input format
 - Document: Data quality report with GenAI-specific requirements
 
-#### 11. GenAI Architecture Design & Planning
+#### 9. GenAI Architecture Design & Planning
 **Goal**: Define technical architecture for DL/GenAI prediction engine  
 **Why**: Core project goal - need concrete plan before implementation  
 **Approach**:
@@ -152,7 +177,7 @@
 - Design: Define input format, training strategy, evaluation metrics
 - Document: Complete architecture spec
 
-#### 12. GenAI Prototype v1 - Baseline Model
+#### 10. GenAI Prototype v1 - Baseline Model
 **Goal**: Build minimal viable GenAI predictor proving concept works  
 **Why**: De-risk approach before full implementation  
 **Approach**:
@@ -162,7 +187,7 @@
 - Iterate: Identify improvements needed
 - Decide: Proceed or pivot based on results
 
-#### 13. GenAI Production Model
+#### 11. GenAI Production Model
 **Goal**: Build full production-quality GenAI predictor  
 **Why**: Achieve project's core vision  
 **Approach**:
@@ -172,7 +197,7 @@
 - Deploy: Replace traditional ML predictors
 - Integrate: Vector store if using RAG approach
 
-#### 14. GenAI Chat Interface
+#### 12. GenAI Chat Interface
 **Goal**: Add conversational interface for prediction exploration  
 **Why**: README mentions future goal for interactive predictions  
 **Approach**:
@@ -184,7 +209,12 @@
 
 ## ✅ Completed Sprints
 
-### Sprint 8: Database Validation & Code Cleanup (Nov 26, 2025)
+### Sprint 8: Data Collection & Validation (Nov 26, 2025)
+- Collected complete data for all 3 seasons (2,638 games with PBP, GameStates, PlayerBox, TeamBox)
+- Built database validator with 25+ checks, validated excellent data quality
+- Fixed 192 flag inconsistencies, deleted 4,256 old predictions
+- Removed dead code, verified all imports work correctly
+- Discovered player enrichment bottleneck (5,103 players × 7 hours - deferred fix)
 - Built comprehensive database validator (25+ checks across 9 categories)
 - Auto-fixed 180 flag inconsistencies, deleted 4,256 old predictions
 - Removed dead code (test files, redundant scripts, empty directories)
@@ -197,47 +227,25 @@
 - Fixed timezone conversion bugs (UTC↔local) and empty game_states IndexError
 - Added player enrichment skip option (5+ min → <2 sec improvement)
 
-### Sprint 6: Database Architecture Consolidation (Nov 25, 2025)
-- Deleted database_updater_CM/ archive - fully integrated into main system
-- PlayerBox/TeamBox in src/database_updater/boxscores.py (adapted from CM)
+### Sprint 5: Database Architecture Consolidation (Nov 25, 2025)
+- Deleted database_updater_CM/ archive - fully integrated
 - TEXT-based game_id schema unified across all tables
 - Single clear data pipeline via database_update_manager.py
 
-### Sprint 5: Data Lineage Enhancements (Nov 25, 2025)
-- Added ScheduleCache table for tracking schedule update timestamps
-- Schedule caching prevents redundant NBA API calls (5-min cache for historical seasons)
-- Prediction timestamp validation prevents post-game predictions
-- Timezone-aware datetime handling (UTC) eliminates tz-naive comparison errors
-- Force flag for manual cache override (--force)
+### Sprint 4: Data Lineage Enhancements (Nov 25, 2025)
+- Added ScheduleCache table for tracking schedule updates
+- Schedule caching prevents redundant NBA API calls
+- Timezone-aware datetime handling (UTC)
 
-### Sprint 4: Web App Testing & Live Data Collection (Nov 25, 2025)
-- Implemented live game data collection pipeline (Step 3.5 in main pipeline)
-- Integrated live/stats endpoint selection in boxscores module
-- Verified web app functionality: modals, navigation, player images, play-by-play
-- Fixed timezone bugs (UTC → local time) and empty game_states IndexError
-- Added player enrichment skip option (major performance improvement)
+### Sprint 3: Live Data Collection (Nov 25, 2025)
+- Implemented live game data collection pipeline
+- Integrated live/stats endpoint selection in boxscores
 
-### Sprint 3: Prediction Engine Refactoring (Nov 25, 2025)
+### Sprint 2: Prediction Engine Refactoring (Nov 25, 2025)
 - Created base predictor classes eliminating 95% code duplication
-- Refactored all 4 predictors to use inheritance
-- Built unified training script (train.py) consolidating 3 separate scripts
-- Verified end-to-end pipeline: 1,304/1,400 games with complete predictions
+- Built unified training script consolidating 3 separate scripts
 
-### Sprint 2: Infrastructure Cleanup & Simplification (Nov 24-25, 2025)
+### Sprint 1: Infrastructure Cleanup (Nov 24-25, 2025)
 - Removed 4 subsystems (Archive/CM, Wandb, Airflow, GPT4Mini)
-- Created modern data quality system (data_quality.py - 30x faster)
-- Implemented schedule caching (ScheduleCache table - 316x speedup)
-- Added prediction timestamp validation (prevents post-game predictions)
-- Requirements cleanup (87→46 packages), .env.template documentation
-
-### Sprint 1: Data Pipeline Validation & Infrastructure (Nov 23-24, 2025)
-- Unified database setup (NBA_AI_2023_2025.sqlite)
-- Integrated PlayerBox/TeamBox into main pipeline
-- Verified full pipeline works end-to-end
-- Created timing analysis preventing train/test contamination
-
----
-
-## 🗄️ Archive
-
-(Older completed sprints will be moved here when list grows beyond 10-15 items)
+- Requirements cleanup (87→46 packages)
+- Schedule caching (316x speedup)
