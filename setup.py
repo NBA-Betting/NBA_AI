@@ -40,7 +40,8 @@ GITHUB_REPO = "NBA-Betting/NBA_AI"
 RELEASE_TAG = "v0.2.0"  # Specific release tag for v0.2.0
 
 # Files to download from GitHub Releases
-DATABASE_FILENAME = "NBA_AI_current.sqlite"  # Current season only (~300MB)
+DATABASE_ZIP_FILENAME = "NBA_AI_current.zip"  # Zipped database (~20MB)
+DATABASE_FILENAME = "NBA_AI_current.sqlite"  # Extracted database (~300MB)
 MODELS_FILENAME = "models.zip"  # Trained ML models (~1MB)
 
 # Local fallback for testing (set via --local-source=/path/to/NBA_AI)
@@ -323,9 +324,10 @@ def download_data_files():
                 print_error(f"Local database not found: {local_db}")
                 success = False
         else:
-            # Download from GitHub Releases
-            url = get_release_url(DATABASE_FILENAME)
-            if not download_file_with_progress(url, db_dest, "database"):
+            # Download zip from GitHub Releases and extract
+            db_zip_dest = DATA_DIR / DATABASE_ZIP_FILENAME
+            url = get_release_url(DATABASE_ZIP_FILENAME)
+            if not download_file_with_progress(url, db_zip_dest, "database"):
                 print_warning("Database download failed")
                 print_info("You can download manually from GitHub Releases:")
                 print_info(
@@ -333,8 +335,17 @@ def download_data_files():
                 )
                 success = False
             else:
-                size_mb = db_dest.stat().st_size / (1024 * 1024)
-                print_success(f"Database downloaded: {db_dest.name} ({size_mb:.1f} MB)")
+                # Extract the zip
+                print_info("Extracting database...")
+                try:
+                    with zipfile.ZipFile(db_zip_dest, "r") as zip_ref:
+                        zip_ref.extractall(DATA_DIR)
+                    db_zip_dest.unlink()  # Remove zip after extraction
+                    size_mb = db_dest.stat().st_size / (1024 * 1024)
+                    print_success(f"Database extracted: {db_dest.name} ({size_mb:.1f} MB)")
+                except Exception as e:
+                    print_error(f"Failed to extract database: {e}")
+                    success = False
 
     # Download/copy models
     has_models = any(MODELS_DIR.glob("*.joblib")) or any(MODELS_DIR.glob("*.pth"))
