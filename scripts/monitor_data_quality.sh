@@ -1,9 +1,13 @@
 #!/bin/bash
 # Daily data quality monitoring script
-# Run via cron: 0 6 * * * /path/to/monitor_data_quality.sh
+# Run via cron: 0 6 * * * /path/to/NBA_AI/scripts/monitor_data_quality.sh
+
+# Get script directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Activate virtual environment
-cd /home/jeff/Documents/NBA_AI
+cd "$PROJECT_ROOT"
 source venv/bin/activate
 
 # Get current date for log filename

@@ -102,7 +102,7 @@ def process_game_data(games):
         # Extract predictions
         predictions = game.get("predictions", {})
         current_predictions = predictions.get("current", {})
-        pre_game_predictions = predictions.get("pre_game", {})
+        pre_game_predictions = predictions.get("pre_game", {}).get("prediction_set", {})
 
         pred_home_score = current_predictions.get(
             "pred_home_score", pre_game_predictions.get("pred_home_score", "")
@@ -313,7 +313,10 @@ def _get_sorted_players(game, predictions):
             predictions.get("current", {}).get("pred_players", {}).get(team, {})
         )
         pre_game_team_predictions = (
-            predictions.get("pre_game", {}).get("pred_players", {}).get(team, {})
+            predictions.get("pre_game", {})
+            .get("prediction_set", {})
+            .get("pred_players", {})
+            .get(team, {})
         )
 
         all_player_ids = set(team_players.keys()).union(

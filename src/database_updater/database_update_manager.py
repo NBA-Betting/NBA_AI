@@ -510,6 +510,10 @@ def get_games_for_prediction_update(season, predictor, db_path=DB_PATH):
     """
     Retrieves game_ids for games needing updated predictions.
 
+    Returns games that have pre_game_data_finalized = 1 but no predictions yet.
+    This allows predictions to be generated for past games on-demand when the web
+    app requests them.
+
     Parameters:
         season (str): The season to update.
         predictor (str): The predictor to check for existing predictions.

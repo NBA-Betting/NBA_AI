@@ -31,6 +31,7 @@ import pandas as pd
 from src.config import config
 from src.logging_config import setup_logging
 from src.predictions.prediction_engines.baseline_predictor import BaselinePredictor
+from src.predictions.prediction_engines.ensemble_predictor import EnsemblePredictor
 from src.predictions.prediction_engines.linear_predictor import LinearPredictor
 from src.predictions.prediction_engines.mlp_predictor import MLPPredictor
 from src.predictions.prediction_engines.tree_predictor import TreePredictor
@@ -47,6 +48,7 @@ PREDICTOR_MAP = {
     "Linear": LinearPredictor,
     "Tree": TreePredictor,
     "MLP": MLPPredictor,
+    "Ensemble": EnsemblePredictor,
 }
 
 
@@ -207,13 +209,14 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
             time_until_game = (game_time - prediction_datetime).total_seconds() / 60
 
             if time_until_game < 0:
-                raise ValueError(
-                    f"Cannot save prediction for game {game_id}: prediction time "
-                    f"({prediction_datetime_str}) is after game start time ({game_time}). "
-                    f"Predictions must be made before games start."
+                # Allow predictions for past games (for historical analysis)
+                # but log a warning
+                logging.debug(
+                    f"Saving prediction for completed game {game_id}: prediction time "
+                    f"({prediction_datetime_str}) is after game start time ({game_time})."
                 )
 
-            if time_until_game < 10:
+            elif time_until_game < 10:
                 logging.warning(
                     f"Prediction for game {game_id} made within {time_until_game:.1f} minutes "
                     f"of game start - very tight window!"

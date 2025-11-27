@@ -140,7 +140,7 @@ def get_normal_data(conn, game_ids, predictor_name):
                 result[game_id]["game_states"].append(game_state)
 
         # Adding prediction data for the specified predictor
-        if row["predictor"] == predictor_name:
+        if row["predictor"] == predictor_name and row["prediction_set"] is not None:
             result[game_id]["predictions"]["pre_game"] = {
                 "prediction_datetime": row["prediction_datetime"],
                 "prediction_set": json.loads(row["prediction_set"]),

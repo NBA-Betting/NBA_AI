@@ -349,9 +349,9 @@ def save_schedule(games, season, db_path=DB_PATH):
                     "season_type": game["seasonType"],
                 }
 
-                # Debug: Check for None values
+                # Skip games with None values (e.g., Cup/All-Star games with TBD teams)
                 if any(v is None for v in params.values()):
-                    logging.error(f"Game {game_id} has None values: {params}")
+                    logging.debug(f"Skipping game {game_id} with TBD teams: {params}")
                     continue
 
                 cursor.execute(insert_sql, params)

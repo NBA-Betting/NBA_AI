@@ -1,334 +1,162 @@
+"""
+evaluation.py
+
+Streamlined evaluation framework for NBA score prediction models.
+Focuses on core metrics for production model comparison.
+
+Core Metrics:
+- Score prediction: MAE, RMSE for home/away/total scores
+- Win probability: Accuracy, Brier score, Log loss
+- Margin prediction: MAE for home_margin (spread equivalent)
+
+Usage:
+    from src.model_training.evaluation import evaluate_predictions, compare_models
+
+    # Evaluate single model
+    metrics = evaluate_predictions(y_true, y_pred)
+
+    # Compare multiple models
+    comparison_df = compare_models(model_results)
+"""
+
 import numpy as np
+import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
     brier_score_loss,
-    f1_score,
     log_loss,
     mean_absolute_error,
     mean_squared_error,
-    median_absolute_error,
-    precision_score,
-    r2_score,
-    recall_score,
-    roc_auc_score,
 )
 
 
-def create_evaluations(correct, predicted):
+def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     """
-    This function creates evaluations for different metrics based on the correct and predicted values.
-
-    Parameters:
-    correct (dict): A dictionary of correct values.
-    predicted (dict): A dictionary of predicted values.
-
-    Returns:
-    dict: A dictionary of evaluations for different metrics.
-    """
-    # Initialize an empty dictionary to store the evaluations
-    evaluations = {}
-
-    # Evaluate the output completeness and update the evaluations dictionary
-    evaluations.update(evaluate_output_completeness(correct, predicted))
-
-    # If the correct values dictionary contains a home score, evaluate it
-    if "home_score" in correct:
-        evaluations.update(
-            evaluate_regression(correct, predicted, "home_score", (0, 200))
-        )
-
-    # If the correct values dictionary contains an away score, evaluate it
-    if "away_score" in correct:
-        evaluations.update(
-            evaluate_regression(correct, predicted, "away_score", (0, 200))
-        )
-
-    # Iterate over the suffixes for the home margin and total points metrics
-    for x in ["", "_direct", "_derived"]:
-        # If the correct values dictionary contains a home margin with the current suffix, evaluate it
-        if f"home_margin{x}" in correct:
-            evaluations.update(
-                evaluate_regression(correct, predicted, f"home_margin{x}", (-100, 100))
-            )
-
-        # If the correct values dictionary contains total points with the current suffix, evaluate it
-        if f"total_points{x}" in correct:
-            evaluations.update(
-                evaluate_regression(correct, predicted, f"total_points{x}", (0, 400))
-            )
-
-    # If the correct values dictionary contains a home win probability, evaluate it
-    if "home_win_prob" in correct:
-        evaluations.update(evaluate_home_win_probability(correct, predicted))
-
-    # If the correct values dictionary contains players, skip it for now
-    if "players" in correct:
-        pass
-
-    # Return the evaluations dictionary
-    return evaluations
-
-
-def evaluate_output_completeness(correct, predicted):
-    """
-    Evaluate the completeness of the predicted output.
-
-    Parameters:
-    correct (dict): The correct output.
-    predicted (dict): The predicted output.
-
-    Returns:
-    dict: A dictionary with the completeness percentage, unnecessary keys percentage,
-          missing key count, and unnecessary key count.
-    """
-
-    # Convert the keys of the correct and predicted outputs to sets
-    correct_keys = set(correct.keys())
-    predicted_keys = set(predicted.keys())
-
-    # Calculate the missing and unnecessary keys
-    missing_keys = correct_keys - predicted_keys
-    unnecessary_keys = predicted_keys - correct_keys
-
-    # Calculate the completeness and unnecessary keys percentages
-    output_completeness_percentage = len(predicted_keys) / len(correct_keys) * 100
-    unnecessary_keys_percentage = len(unnecessary_keys) / len(correct_keys) * 100
-
-    # Calculate the counts of missing and unnecessary keys
-    missing_key_count = len(missing_keys)
-    unnecessary_key_count = len(unnecessary_keys)
-
-    return {
-        "output_completeness_percentage": output_completeness_percentage,
-        "unnecessary_keys_percentage": unnecessary_keys_percentage,
-        "missing_key_count": missing_key_count,
-        "unnecessary_key_count": unnecessary_key_count,
-    }
-
-
-def evaluate_regression(correct, predicted, key, range):
-    """
-    Evaluate the regression model.
-
-    Parameters:
-    correct (dict): The correct output.
-    predicted (dict): The predicted output.
-    key (str): The key to evaluate.
-    range (tuple): The valid range of values.
-
-    Returns:
-    dict: A dictionary with the availability of the key, whether the format of the value was correct,
-          the percentage of logical values, and the regression metrics (MAE, R2, RMSE, MAPE, and Median AE).
-    """
-
-    # Convert the correct values to a numpy array of floats
-    correct_values = np.array(correct[key]).astype(float)
-
-    # Check if the key exists in the predicted output
-    value_available = key in predicted
-    if not value_available:
-        return {f"{key}_availability": value_available}
-
-    try:
-        # Try to convert the predicted values to a numpy array of floats
-        predicted_values = np.array(predicted[key]).astype(float)
-        valid_format = True
-    except ValueError:
-        # If the conversion fails, return a dictionary indicating that the key is available but the format is incorrect
-        return {
-            f"{key}_availability": value_available,
-            f"{key}_format": False,
-        }
-
-    # Calculate the percentage of predicted values that are within the valid range
-    range_valid_percentage = (
-        np.mean((predicted_values >= range[0]) & (predicted_values <= range[1])) * 100
-    )
-
-    # Calculate the regression metrics
-    regression_metrics = calculate_regression_metrics(correct_values, predicted_values)
-    mae = regression_metrics["mae"]
-    r2 = regression_metrics["r2"]
-    rmse = regression_metrics["rmse"]
-    mape = regression_metrics["mape"]
-    median_ae = regression_metrics["median_ae"]
-
-    return {
-        f"{key}_availability": value_available,
-        f"{key}_format": valid_format,
-        f"{key}_logical": range_valid_percentage,
-        f"{key}_mae": mae,
-        f"{key}_r2": r2,
-        f"{key}_rmse": rmse,
-        f"{key}_mape": mape,
-        f"{key}_median_ae": median_ae,
-    }
-
-
-def evaluate_home_win_probability(correct, predicted):
-    """
-    Evaluate the home win probability.
-
-    Parameters:
-    correct (dict): The correct output.
-    predicted (dict): The predicted output.
-
-    Returns:
-    dict: A dictionary with the availability of the home win probability, whether the format of the value was correct,
-          the percentage of logical values, and the classification metrics (accuracy, precision, recall, F1 score,
-          ROC AUC, log loss, Brier score, optimal threshold, and optimal threshold accuracy).
-    """
-
-    # Check if the home win probability is available in the predicted output
-    home_win_prob_available = "home_win_prob" in predicted
-    if not home_win_prob_available:
-        return {"home_win_prob_available": home_win_prob_available}
-
-    try:
-        # Try to convert the home win probability to a numpy array of floats
-        home_win_prob = np.array(predicted["home_win_prob"]).astype(float)
-        valid_format = True
-    except ValueError:
-        # If the conversion fails, return a dictionary indicating that the home win probability is available but the format is incorrect
-        return {
-            "home_win_prob_available": home_win_prob_available,
-            "home_win_prob_format": False,
-        }
-
-    # Calculate the percentage of home win probabilities that are within the valid range (0 to 1)
-    win_probability_logical_percentage = (
-        np.mean(np.logical_and(home_win_prob >= 0, home_win_prob <= 1)) * 100
-    )
-
-    # Convert the home win probabilities to binary values using the 0.5 threshold
-    binary_predictions = (home_win_prob >= 0.5).astype(int)
-    correct_home_win_prob = np.array(correct["home_win_prob"]).astype(int)
-
-    # Calculate the classification metrics
-    accuracy = np.mean(binary_predictions == correct_home_win_prob) * 100
-    precision = precision_score(correct_home_win_prob, binary_predictions) * 100
-    recall = recall_score(correct_home_win_prob, binary_predictions) * 100
-    f1 = f1_score(correct_home_win_prob, binary_predictions) * 100
-    roc_auc = roc_auc_score(correct_home_win_prob, home_win_prob)
-    log_loss_ = log_loss(correct_home_win_prob, home_win_prob)
-    brier_score = brier_score_loss(correct_home_win_prob, home_win_prob)
-
-    # Find the optimal threshold that maximizes the accuracy
-    def find_optimal_threshold(y_true, y_probs):
-        thresholds = np.linspace(0, 1, 100)
-        accuracies = [
-            accuracy_score(y_true, y_probs > threshold) for threshold in thresholds
-        ]
-        optimal_index = np.argmax(accuracies)
-        return thresholds[optimal_index], accuracies[optimal_index]
-
-    optimal_threshold, optimal_threshold_accuracy = find_optimal_threshold(
-        correct_home_win_prob, home_win_prob
-    )
-
-    return {
-        "home_win_prob_available": home_win_prob_available,
-        "home_win_prob_format": valid_format,
-        "home_win_prob_logical": win_probability_logical_percentage,
-        "home_win_prob_accuracy": accuracy,
-        "home_win_prob_precision": precision,
-        "home_win_prob_recall": recall,
-        "home_win_prob_f1_score": f1,
-        "home_win_prob_roc_auc": roc_auc,
-        "home_win_prob_log_loss": log_loss_,
-        "home_win_prob_brier_score": brier_score,
-        "home_win_prob_optimal_threshold": optimal_threshold,
-        "home_win_prob_optimal_threshold_accuracy": optimal_threshold_accuracy,
-    }
-
-
-def calculate_regression_metrics(correct, predicted):
-    """
-    This function evaluates the performance of a regression model.
+    Evaluate score predictions with core metrics.
 
     Args:
-        correct (array-like): The correct target values.
-        predicted (array-like): The predicted target values.
+        y_true: Array of shape (n_samples, 2) with [home_score, away_score]
+        y_pred: Array of shape (n_samples, 2) with [pred_home, pred_away]
 
     Returns:
-        dict: A dictionary containing the MAE, R2 score, RMSE, MAPE, and Median Absolute Error.
+        Dictionary with evaluation metrics
     """
-    # Calculate the Mean Absolute Error (MAE)
-    # This is the average of the absolute differences between the correct and predicted values
-    mae = mean_absolute_error(correct, predicted)
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
 
-    # Calculate the R2 score (coefficient of determination)
-    # This is the proportion of the variance in the dependent variable that is predictable from the independent variable(s)
-    r2 = r2_score(correct, predicted)
+    # Score predictions
+    home_mae = mean_absolute_error(y_true[:, 0], y_pred[:, 0])
+    away_mae = mean_absolute_error(y_true[:, 1], y_pred[:, 1])
+    home_rmse = np.sqrt(mean_squared_error(y_true[:, 0], y_pred[:, 0]))
+    away_rmse = np.sqrt(mean_squared_error(y_true[:, 1], y_pred[:, 1]))
 
-    # Calculate the Root Mean Squared Error (RMSE)
-    # This is the square root of the average of the squared differences between the correct and predicted values
-    rmse = np.sqrt(mean_squared_error(correct, predicted))
+    # Derived metrics
+    true_margin = y_true[:, 0] - y_true[:, 1]
+    pred_margin = y_pred[:, 0] - y_pred[:, 1]
+    margin_mae = mean_absolute_error(true_margin, pred_margin)
 
-    # Calculate the Mean Absolute Percentage Error (MAPE)
-    # This is the average of the absolute percentage differences between the correct and predicted values
-    mape = np.mean(np.abs((correct - predicted) / correct)) * 100
+    true_total = y_true[:, 0] + y_true[:, 1]
+    pred_total = y_pred[:, 0] + y_pred[:, 1]
+    total_mae = mean_absolute_error(true_total, pred_total)
 
-    # Calculate the Median Absolute Error
-    # This is the median of the absolute differences between the correct and predicted values
-    median_ae = median_absolute_error(correct, predicted)
+    # Win probability (home win = margin > 0)
+    true_home_win = (true_margin > 0).astype(int)
+    pred_home_win = (pred_margin > 0).astype(int)
+    win_accuracy = accuracy_score(true_home_win, pred_home_win)
 
-    # Return the calculated metrics in a dictionary
+    # Probability calibration (convert margin to probability)
+    # Using logistic function: P(home_win) = 1 / (1 + exp(-k * margin))
+    # k=0.15 approximates NBA historical data
+    pred_win_prob = 1 / (1 + np.exp(-0.15 * pred_margin))
+    pred_win_prob = np.clip(pred_win_prob, 0.001, 0.999)  # Avoid log(0)
+
+    brier = brier_score_loss(true_home_win, pred_win_prob)
+    logloss = log_loss(true_home_win, pred_win_prob)
+
     return {
-        "mae": mae,
-        "r2": r2,
-        "rmse": rmse,
-        "mape": mape,
-        "median_ae": median_ae,
+        "home_mae": round(home_mae, 3),
+        "away_mae": round(away_mae, 3),
+        "avg_score_mae": round((home_mae + away_mae) / 2, 3),
+        "home_rmse": round(home_rmse, 3),
+        "away_rmse": round(away_rmse, 3),
+        "margin_mae": round(margin_mae, 3),
+        "total_mae": round(total_mae, 3),
+        "win_accuracy": round(win_accuracy, 4),
+        "brier_score": round(brier, 4),
+        "log_loss": round(logloss, 4),
+        "n_samples": len(y_true),
     }
 
 
-final_state_evaluations_to_implement = {
-    "home_players_point_totals": {
-        "description": "Predicted point totals for each home player",
-        "examples": {"player_id_1": 20, "player_id_2": 18},
-        "datatype": "dict",
-        "format": "dictionary of player_id to integer points",
-        "validation_checks": {
-            "format_validation": "Ensure each point total is an integer and each player_id is an int or a string that converts to an int",
-            "points_range": "Each player's points must be no less than 0 and no more than 100",
-            "points_accuracy": "Evaluate the error, or difference, between the predicted points and the actual points for each player",
-            "id_format": "Check if the player_id is an integer or a string representing an integer",
-            "id_in_league": "Check if the player_id is part of the set of all player IDs in the league",
-            "id_in_game": "Check if the player_id is part of the set of all player IDs in the game",
-            "id_in_team": "Check if the player_id is in the set of all player IDs in the game for the home team",
-        },
-    },
-    "away_players_point_totals": {
-        "description": "Predicted point totals for each away player",
-        "examples": {"player_id_3": 22, "player_id_4": 15},
-        "datatype": "dict",
-        "format": "dictionary of player_id to integer points",
-        "validation_checks": {
-            "format_validation": "Ensure each point total is an integer and each player_id is an int or a string that converts to an int",
-            "points_range": "Each player's points must be no less than 0 and no more than 100",
-            "points_accuracy": "Evaluate the error, or difference, between the predicted points and the actual points for each player",
-            "id_format": "Check if the player_id is an integer or a string representing an integer",
-            "id_in_league": "Check if the player_id is part of the set of all player IDs in the league",
-            "id_in_game": "Check if the player_id is part of the set of all player IDs in the game",
-            "id_in_team": "Check if the player_id is in the set of all player IDs in the game for the away team",
-        },
-    },
-    "overall_player_identification": {
-        "description": "Evaluation of player identification.",
-        "evaluations": {
-            "precision_evaluation": "The proportion of predicted player IDs that were correct (actual scorers).",
-            "recall_evaluation": "The proportion of actual scoring players that were correctly identified by the model.",
-            "F1_score_evaluation": "The harmonic mean of precision and recall, providing a single metric to assess the overall identification accuracy.",
-        },
-    },
-    "overall_player_score_prediction": {
-        "description": "Evaluation of player score predictions.",
-        "evaluations": {
-            "inner_join_evaluation": "Match actual scorers with predicted scorers, and calculate the metric for the matching pairs.",
-            "left_join_evaluation": "Keep all actual scorers and match to predicted scorers where available. If a predicted scorer is missing, fill with 0 for the prediction. Calculate the metric for resulting pairs.",
-            "right_join_evaluation": "Keep all predicted scorers and match to actual scorers where available. If an actual scorer is missing, fill with 0 for the actual score. Calculate the metric for resulting pairs.",
-            "outer_join_evaluation": "Keep all actual scorers and predicted scorers and match if available. If a predicted scorer is missing, fill with 0 for the prediction. If an actual scorer is missing, fill with 0 for the actual score. Calculate the metric for resulting pairs.",
-        },
-    },
-}
+def compare_models(model_results: dict) -> pd.DataFrame:
+    """
+    Compare multiple models and rank by performance.
+
+    Args:
+        model_results: Dict of {model_name: metrics_dict}
+
+    Returns:
+        DataFrame with models ranked by avg_score_mae
+    """
+    rows = []
+    for model_name, metrics in model_results.items():
+        row = {"model": model_name, **metrics}
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values("avg_score_mae", ascending=True)
+    df["rank"] = range(1, len(df) + 1)
+
+    # Reorder columns
+    cols = [
+        "rank",
+        "model",
+        "avg_score_mae",
+        "margin_mae",
+        "win_accuracy",
+        "brier_score",
+        "home_mae",
+        "away_mae",
+        "total_mae",
+        "n_samples",
+    ]
+    cols = [c for c in cols if c in df.columns]
+
+    return df[cols].reset_index(drop=True)
+
+
+def print_evaluation_report(metrics: dict, model_name: str = "Model") -> None:
+    """Print formatted evaluation report."""
+    print(f"\n{'='*60}")
+    print(f"  {model_name} Evaluation Report")
+    print(f"{'='*60}")
+    print(f"  Samples evaluated: {metrics['n_samples']}")
+    print(f"\n  Score Prediction:")
+    print(f"    Home Score MAE:  {metrics['home_mae']:.2f} pts")
+    print(f"    Away Score MAE:  {metrics['away_mae']:.2f} pts")
+    print(f"    Avg Score MAE:   {metrics['avg_score_mae']:.2f} pts")
+    print(f"\n  Game Outcome:")
+    print(f"    Margin MAE:      {metrics['margin_mae']:.2f} pts")
+    print(f"    Total MAE:       {metrics['total_mae']:.2f} pts")
+    print(f"    Win Accuracy:    {metrics['win_accuracy']*100:.1f}%")
+    print(f"\n  Probability Calibration:")
+    print(f"    Brier Score:     {metrics['brier_score']:.4f}")
+    print(f"    Log Loss:        {metrics['log_loss']:.4f}")
+    print(f"{'='*60}\n")
+
+
+def print_model_comparison(comparison_df: pd.DataFrame) -> None:
+    """Print formatted model comparison table."""
+    print(f"\n{'='*80}")
+    print("  Model Comparison (ranked by Avg Score MAE)")
+    print(f"{'='*80}")
+    print(
+        f"  {'Rank':<6}{'Model':<12}{'Avg MAE':<10}{'Margin MAE':<12}{'Win Acc':<10}{'Brier':<10}"
+    )
+    print(f"  {'-'*60}")
+    for _, row in comparison_df.iterrows():
+        print(
+            f"  {row['rank']:<6}{row['model']:<12}{row['avg_score_mae']:<10.2f}"
+            f"{row['margin_mae']:<12.2f}{row['win_accuracy']*100:<10.1f}%{row['brier_score']:<10.4f}"
+        )
+    print(f"{'='*80}\n")
