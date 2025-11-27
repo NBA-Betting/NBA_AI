@@ -74,7 +74,11 @@ GAME_RESULTS_COLUMNS = [
 
 def win_prob(score_diff):
     """
-    Calculate win probabilities using the logistic (sigmoid) function.
+    Calculate win probabilities using a custom logistic function.
+    
+    This uses empirically derived coefficients specific to NBA game predictions:
+    - a = -0.2504: Intercept term (baseline probability adjustment)
+    - b = 0.1949: Coefficient for score difference impact
     
     Parameters:
     score_diff: The difference between home and away scores.
@@ -261,8 +265,8 @@ def train_ridge_model(X_train, y_train, X_test, y_test, feature_names, log_to_wa
     core_metrics, train_evals, test_evals = evaluate_model(y_train, y_pred_train, y_test, y_pred_test)
     
     # Retrain on all data
-    X_all = np.concatenate((X_train, X_test))
-    y_all = np.concatenate((y_train, y_test))
+    X_all = np.concatenate((X_train.values, X_test.values))
+    y_all = np.concatenate((y_train.values, y_test.values))
     
     final_scaler = StandardScaler()
     X_all_scaled = final_scaler.fit_transform(X_all)
@@ -326,8 +330,8 @@ def train_xgboost_model(X_train, y_train, X_test, y_test, feature_names, log_to_
     core_metrics, train_evals, test_evals = evaluate_model(y_train, y_pred_train, y_test, y_pred_test)
     
     # Retrain on all data
-    X_all = np.concatenate((X_train, X_test))
-    y_all = np.concatenate((y_train, y_test))
+    X_all = np.concatenate((X_train.values, X_test.values))
+    y_all = np.concatenate((y_train.values, y_test.values))
     
     final_scaler = StandardScaler()
     X_all_scaled = final_scaler.fit_transform(X_all)
@@ -468,7 +472,11 @@ def train_mlp_model(X_train, y_train, X_test, y_test, feature_names, log_to_wand
 
 def _log_to_wandb(model_type, run_datetime, params, core_metrics, 
                   train_evals, test_evals, feature_names, train_shape, test_shape, model_filename):
-    """Helper function to log training results to Weights & Biases."""
+    """Helper function to log training results to Weights & Biases.
+    
+    Note: wandb is imported inside the function because it's an optional dependency
+    that may not be configured in all environments.
+    """
     try:
         import wandb
         

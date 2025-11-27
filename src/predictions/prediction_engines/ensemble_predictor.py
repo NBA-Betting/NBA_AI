@@ -29,7 +29,6 @@ Example:
 import numpy as np
 
 from src.config import config
-from src.predictions.prediction_engines.baseline_predictor import BaselinePredictor
 from src.predictions.prediction_engines.linear_predictor import LinearPredictor
 from src.predictions.prediction_engines.mlp_predictor import MLPPredictor
 from src.predictions.prediction_engines.tree_predictor import TreePredictor
