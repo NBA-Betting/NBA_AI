@@ -342,7 +342,9 @@ def download_data_files():
                         zip_ref.extractall(DATA_DIR)
                     db_zip_dest.unlink()  # Remove zip after extraction
                     size_mb = db_dest.stat().st_size / (1024 * 1024)
-                    print_success(f"Database extracted: {db_dest.name} ({size_mb:.1f} MB)")
+                    print_success(
+                        f"Database extracted: {db_dest.name} ({size_mb:.1f} MB)"
+                    )
                 except Exception as e:
                     print_error(f"Failed to extract database: {e}")
                     success = False
