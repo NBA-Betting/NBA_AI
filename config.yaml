@@ -66,3 +66,4 @@ predictors:
   MLP:
     model_paths:
       - "models/MLP_Regression_2024-07-30T14:08:12.793153.pth"
+  Ensemble: {}  # Uses Linear, Tree, and MLP predictors internally

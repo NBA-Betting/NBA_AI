@@ -31,6 +31,7 @@ import pandas as pd
 from src.config import config
 from src.logging_config import setup_logging
 from src.predictions.prediction_engines.baseline_predictor import BaselinePredictor
+from src.predictions.prediction_engines.ensemble_predictor import EnsemblePredictor
 from src.predictions.prediction_engines.linear_predictor import LinearPredictor
 from src.predictions.prediction_engines.mlp_predictor import MLPPredictor
 from src.predictions.prediction_engines.tree_predictor import TreePredictor
@@ -47,6 +48,7 @@ PREDICTOR_MAP = {
     "Linear": LinearPredictor,
     "Tree": TreePredictor,
     "MLP": MLPPredictor,
+    "Ensemble": EnsemblePredictor,
 }
 
 
