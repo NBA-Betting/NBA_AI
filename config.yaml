@@ -66,7 +66,7 @@ predictors:
       - "models/xgboost_v1.0_mae10.2.joblib"
   MLP:
     model_paths:
-      - "models/mlp_v1.0_mae13.8.pth"
+      - "models/mlp_v1.0_mae11.8.pth"
   Ensemble:
     model_paths:
       Linear:
@@ -74,4 +74,4 @@ predictors:
       Tree:
         - "models/xgboost_v1.0_mae10.2.joblib"
       MLP:
-        - "models/mlp_v1.0_mae13.8.pth"
+        - "models/mlp_v1.0_mae11.8.pth"
