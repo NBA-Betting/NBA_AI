@@ -22,7 +22,7 @@ joblib==1.4.2
 
 # PyTorch (CPU version)
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.4.0+cpu
+torch==2.7.1+cpu
 
 # NBA API
 nba_api==1.11.3
