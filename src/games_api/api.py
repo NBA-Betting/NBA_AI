@@ -101,7 +101,8 @@ def games():
             try:
                 validate_game_ids(game_ids_list)
             except ValueError as ve:
-                return jsonify({"error": str(ve)}), 400
+                logging.warning("Invalid game_ids: %s", ve)
+                return jsonify({"error": "Invalid game IDs."}), 400
 
             # Ensure all game_ids belong to the valid seasons
             seasons = {game_id_to_season(game_id) for game_id in game_ids_list}
@@ -123,7 +124,11 @@ def games():
             try:
                 validate_date_format(date)
             except ValueError as ve:
-                return jsonify({"error": str(ve)}), 400
+                logging.warning("Invalid date format: %s", ve)
+                return (
+                    jsonify({"error": "Invalid date format. Expected YYYY-MM-DD."}),
+                    400,
+                )
 
             # Ensure the date belongs to the valid seasons
             if date_to_season(date) not in VALID_SEASONS:
