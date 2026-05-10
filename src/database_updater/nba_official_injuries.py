@@ -45,16 +45,48 @@ DB_PATH = config["database"]["path"]
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 # NBA changed URL format around Dec 22, 2025 - try new format first, fallback to old
-# Report times available: 9AM, 10AM, 11AM, 12PM, 1PM, 2PM, 3PM, 4PM, 5PM, 5:30PM, 7PM
-# We fetch latest available (7PM) for most complete data, falling back to earlier times
+# Report times available: 9AM, 10AM, 11AM, 12PM, 1PM, 2PM, 3PM, 4PM, 4:30PM, 5PM,
+# 5:30PM, 6PM, 6:30PM, 7PM ET (later reports contain more complete data).
+# We fetch latest available first, falling back through earlier times so the script
+# still finds a parseable PDF when run before 5PM ET.
 #
 # NOTE: NBA's CDN returns 403 Forbidden for non-existent files (not 404 as expected).
 # This means 403 can indicate either:
 #   1. File doesn't exist yet (e.g., today's report before 9 AM ET)
 #   2. URL format has changed
 # We distinguish these cases by checking the time of day in Eastern timezone.
-PDF_TIMES_NEW = ["07_00PM", "05_30PM", "05_00PM"]  # Post Dec 22, 2025 format
-PDF_TIMES_OLD = ["07PM", "0530PM", "05PM"]  # Pre Dec 22, 2025 format
+PDF_TIMES_NEW = [
+    "07_00PM",
+    "06_30PM",
+    "06_00PM",
+    "05_30PM",
+    "05_00PM",
+    "04_30PM",
+    "04_00PM",
+    "03_00PM",
+    "02_00PM",
+    "01_00PM",
+    "12_00PM",
+    "11_00AM",
+    "10_00AM",
+    "09_00AM",
+]  # Post Dec 22, 2025 format
+PDF_TIMES_OLD = [
+    "07PM",
+    "0630PM",
+    "06PM",
+    "0530PM",
+    "05PM",
+    "0430PM",
+    "04PM",
+    "03PM",
+    "02PM",
+    "01PM",
+    "12PM",
+    "11AM",
+    "10AM",
+    "09AM",
+]  # Pre Dec 22, 2025 format
 PDF_URL_BASE = (
     "https://ak-static.cms.nba.com/referee/injury/Injury-Report_{date}_{time}.pdf"
 )
@@ -372,27 +404,8 @@ def fetch_injury_report(date: datetime) -> tuple[pd.DataFrame, str]:
             resp = requests.get(url, headers=HEADERS, timeout=15)
             last_status_code = resp.status_code
             if resp.status_code == 200:
-                # Check for "NOTYETSUBMITTED" pattern before full parsing
-                # This indicates teams haven't submitted their injury data yet
-                try:
-                    pdf = pdfplumber.open(io.BytesIO(resp.content))
-                    sample_text = ""
-                    for page in pdf.pages[:1]:  # Check first page only
-                        text = page.extract_text()
-                        if text:
-                            sample_text += text
-                    pdf.close()
-
-                    if "NOTYETSUBMITTED" in sample_text:
-                        # This is a valid report but teams haven't submitted data
-                        # Try an earlier time - teams may have submitted by then
-                        logging.debug(
-                            f"Injury PDF for {date_str} at {time_fmt}: NOTYETSUBMITTED, trying earlier time"
-                        )
-                        continue
-                except Exception:
-                    pass  # Fall through to regular parsing
-
+                # Always parse first — a PDF can contain NOTYETSUBMITTED markers for
+                # individual teams while still carrying complete data for others.
                 df = parse_injury_pdf(resp.content)
                 if len(df) > 0:
                     df["report_date"] = date_str
@@ -401,7 +414,7 @@ def fetch_injury_report(date: datetime) -> tuple[pd.DataFrame, str]:
                     )
                     return df, "success"
                 else:
-                    # PDF downloaded but parser extracted nothing - try earlier time
+                    # 0 rows: try earlier time (teams may not have submitted yet)
                     logging.debug(
                         f"Injury PDF for {date_str} at {time_fmt}: parsed 0 records, trying earlier time"
                     )

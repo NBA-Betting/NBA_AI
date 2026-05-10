@@ -584,6 +584,28 @@ class L1IncrementalUpdater:
             return ""
         return date_time_utc[:10]
 
+    @staticmethod
+    def _default_profile_dict() -> dict:
+        """
+        League-average / sentinel profile used for in-season call-ups not yet
+        in the PlayerAttributes table.
+
+        Values mirror the field-level defaults in
+        src.phase5.cache_builder._load_player_profile so behaviour is
+        consistent with players who have a partial PlayerAttributes row.
+        """
+        return {
+            "height_inches": 78,  # ~6'6"
+            "weight": 215,
+            "draft_pick": 60,  # last-pick equivalent
+            "undrafted": 1.0,  # treat unknown call-ups as undrafted
+            "birth_year": 2000,  # roughly current rookie age
+            "wingspan_inches": 78,
+            "pos_g": 0.0,
+            "pos_f": 1.0,  # default to forward (matches cache_builder)
+            "pos_c": 0.0,
+        }
+
     def _get_profile_tensor(self, player_id: int) -> torch.Tensor | None:
         """Get profile tensor for a player from the profiles cache."""
         if player_id in self._profile_idx:
@@ -597,7 +619,15 @@ class L1IncrementalUpdater:
             profile_dict = _load_player_profile(conn, player_id)
 
         if not profile_dict:
-            return None
+            # No PlayerAttributes row (typical for late-season call-ups added to
+            # the Players table after the last collect_player_attributes run).
+            # Use a default profile so we still build L1 vectors instead of
+            # silently skipping the player.
+            logger.info(
+                f"  Player {player_id}: no PlayerAttributes row, "
+                f"using default profile (call-up fallback)"
+            )
+            profile_dict = self._default_profile_dict()
 
         from src.phase5.cache_builder import PROFILE_COLUMNS
 
@@ -610,7 +640,10 @@ class L1IncrementalUpdater:
     def _get_profile_dict(self, player_id: int) -> dict:
         """Get raw profile dict for a player."""
         with get_db(str(self.db_path)) as conn:
-            return _load_player_profile(conn, player_id)
+            profile_dict = _load_player_profile(conn, player_id)
+        if not profile_dict:
+            return self._default_profile_dict()
+        return profile_dict
 
     # ------------------------------------------------------------------
     # Discovery: which players have new games?
