@@ -57,3 +57,5 @@ src/web_app/static/img/player_images/
 
 # === Local-only files ===
 test_setup.sh
+# Private project management (see commit 17ffcbc convention)
+TODO.md
