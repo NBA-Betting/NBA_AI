@@ -1,5 +1,14 @@
 import numpy as np
 
+# Pre-game logistic constants, refit July 2026 on 10,410 predicted-margin vs
+# outcome pairs (2023-24 + 2024-25 seasons, all legacy predictors pooled).
+# The original constants (a=-0.2504, b=0.1949) had roughly twice the correct
+# slope — a predicted margin maps to a much less certain outcome than an
+# in-game score difference does — and imposed an unexplained away lean at
+# margin 0. Improved live Brier for Baseline/MLP/Tree, neutral for Linear.
+PREGAME_A = 0.0278
+PREGAME_B = 0.0984
+
 
 def calculate_home_win_prob(
     home_score, away_score, minutes_remaining=None, adjustment_type="logarithmic"
@@ -37,9 +46,11 @@ def calculate_home_win_prob(
     # Calculate the score difference, a key factor in determining win probability
     score_diff = home_score - away_score
 
-    # Pre-game scenario: use the base logistic parameters without adjustment
+    # Pre-game scenario: use the refit pre-game constants (see module header).
+    # The in-game path below keeps the original, steeper curve — an actual
+    # score lead is far more informative than a predicted margin.
     if minutes_remaining is None:
-        win_prob = float(1 / (1 + np.exp(-(base_a + base_b * score_diff))))
+        win_prob = float(1 / (1 + np.exp(-(PREGAME_A + PREGAME_B * score_diff))))
     else:
         # In-game scenario: Adjust the logistic function based on time remaining
         # Linear and logarithmic adjustments increase certainty as time decreases
