@@ -81,6 +81,11 @@ def create_game_states(games_info):
             away = game_info["away"]
             game_date = game_info["date_time_utc"].split("T")[0]
             logs = game_info["pbp_logs"]
+            # Games.status == 3 means the game is over. The stats endpoint's
+            # feed can end at a period-end action with no game-end action
+            # (observed starting May 2026), so a completed game's last play
+            # is accepted as final even without an explicit game/end marker.
+            game_is_complete = game_info.get("status") == 3
 
             validate_game_ids(game_id)
             validate_date_format(game_date)
@@ -139,12 +144,20 @@ def create_game_states(games_info):
                                 points = int(row["pointsTotal"])
                                 players[team][player_id]["points"] = points
 
-                    # Only mark as final if this is the last play AND it's a 'Game End' action
-                    # This prevents marking in-progress games as final
-                    is_final = (
-                        i == len(logs) - 1
-                        and row.get("actionType") == "game"
-                        and row.get("subType") == "end"
+                    # Only mark as final if this is the last play AND it's a 'Game End'
+                    # action, or the game is already known to be complete and the feed
+                    # ends with a Q4+ period-end action (stats endpoint omits game/end).
+                    # This prevents marking in-progress games as final.
+                    is_final = i == len(logs) - 1 and (
+                        (
+                            row.get("actionType") == "game"
+                            and row.get("subType") == "end"
+                        )
+                        or (
+                            game_is_complete
+                            and row.get("subType") == "end"
+                            and int(row.get("period", 1)) >= 4
+                        )
                     )
 
                     # Get scores with defaults to handle missing values
@@ -213,8 +226,17 @@ def create_game_states(games_info):
                         "home_margin": current_home_score - current_away_score,
                         "is_final_state": (
                             i == len(logs) - 1
-                            and row.get("actionType") == "game"
-                            and row.get("subType") == "end"
+                            and (
+                                (
+                                    row.get("actionType") == "game"
+                                    and row.get("subType") == "end"
+                                )
+                                or (
+                                    game_is_complete
+                                    and row.get("subType") == "end"
+                                    and int(row.get("period", 1)) >= 4
+                                )
+                            )
                         ),
                         "players_data": deepcopy(players),
                     }

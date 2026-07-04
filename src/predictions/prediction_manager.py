@@ -35,6 +35,40 @@ DB_PATH = config["database"]["path"]
 DEFAULT_PREDICTOR = config["default_predictor"]
 PREDICTORS_CONFIG = config["predictors"]
 
+# Plausible bounds for a pre-game NBA team score prediction. Values outside
+# this range signal degenerate inputs (e.g., empty feature rows during the
+# first games of a season) rather than a real forecast, and saving them would
+# pollute accuracy/ATS metrics downstream.
+MIN_PLAUSIBLE_SCORE = 60
+MAX_PLAUSIBLE_SCORE = 200
+
+
+def _drop_implausible_predictions(predictions, predictor_name):
+    """
+    Filter out predictions with scores outside the plausible NBA range.
+
+    Returns a dict containing only the predictions that pass the sanity check.
+    Dropped games are logged; the model effectively abstains for them.
+    """
+    valid = {}
+    for game_id, pred in predictions.items():
+        home = pred.get("pred_home_score")
+        away = pred.get("pred_away_score")
+        # None scores are allowed: spread/win-pct-only models (e.g. Phase5
+        # with w_total=0) legitimately omit team scores.
+        if any(
+            score is not None
+            and not (MIN_PLAUSIBLE_SCORE <= score <= MAX_PLAUSIBLE_SCORE)
+            for score in (home, away)
+        ):
+            logging.warning(
+                f"{predictor_name}: dropping implausible prediction for game "
+                f"{game_id} ({home}-{away}) — likely missing or degenerate features"
+            )
+            continue
+        valid[game_id] = pred
+    return valid
+
 
 def _get_predictor_map():
     """
@@ -123,6 +157,9 @@ def make_pre_game_predictions(game_ids, predictor_name=None, save=True):
 
     # Create the predictions
     pre_game_predictions = predictor_instance.make_pre_game_predictions(game_ids)
+    pre_game_predictions = _drop_implausible_predictions(
+        pre_game_predictions, predictor_name
+    )
 
     # Warn if some games didn't get predictions
     if len(pre_game_predictions) < len(game_ids):

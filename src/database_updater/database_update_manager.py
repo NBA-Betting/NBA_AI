@@ -343,6 +343,7 @@ def update_game_state_data(season, db_path=DB_PATH, chunk_size=100):
                     "home": basic_game_info[game_id]["home"],
                     "away": basic_game_info[game_id]["away"],
                     "date_time_utc": basic_game_info[game_id]["date_time_utc"],
+                    "status": basic_game_info[game_id]["status"],
                     "pbp_logs": game_info["logs"],
                 }
                 for game_id, game_info in pbp_data.items()
@@ -618,6 +619,7 @@ def update_pbp_and_gamestates(season, db_path, chunk_size):
                     "home": basic_game_info[game_id]["home"],
                     "away": basic_game_info[game_id]["away"],
                     "date_time_utc": basic_game_info[game_id]["date_time_utc"],
+                    "status": basic_game_info[game_id]["status"],
                     "pbp_logs": game_info,
                 }
                 for game_id, game_info in pbp_data.items()

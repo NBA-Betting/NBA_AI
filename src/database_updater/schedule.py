@@ -396,6 +396,7 @@ def fetch_schedule(season, stage_logger=None):
             "003": "All-Star",
             "004": "Post Season",
             "005": "Post Season",  # Play-In
+            "006": "NBA Cup Final",  # championship game; not part of regular-season stats
         }
 
         for game in all_games:
