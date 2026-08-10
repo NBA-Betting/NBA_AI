@@ -9,7 +9,10 @@ database:
 # Database Updater supports all seasons back to 2000-2001.
 api:
   max_game_ids: 20 # Only applies to game_ids input of Games API. Not the date input.
-  valid_seasons: 
+  # Older seasons to keep serving. The current season and the one before it are
+  # always accepted on top of this list, so the API survives a season rollover
+  # without an edit here. See get_valid_seasons() in src/games_api/api.py.
+  valid_seasons:
     - "2023-2024"
     - "2024-2025"
     - "2025-2026"
