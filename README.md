@@ -129,7 +129,9 @@ To keep data current, run the pipeline manually whenever you want, or optionally
 
 ```bash
 # Automated (add via 'crontab -e')
-TZ=US/Eastern
+# Note: cron schedules use your system's local timezone. Pick an hour that is
+# morning US Eastern for you (e.g. 10am ET = "0 7" on a US Pacific machine),
+# so the run lands after the previous night's games and before the day's games.
 0 10 * * * cd /path/to/NBA_AI && venv/bin/python -m src.pipeline.orchestrator --mode=full --season=Current >> logs/cron_daily.log 2>&1
 ```
 
