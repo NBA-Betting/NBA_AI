@@ -8,7 +8,7 @@ up game information, validating game IDs and dates, and converting between diffe
 Core Functions:
 - lookup_basic_game_info(game_ids, db_path=DB_PATH): Retrieves basic game information for given game IDs from the database.
 - log_execution_time(average_over=None): A decorator to log the execution time of functions.
-- requests_retry_session(retries=3, backoff_factor=0.3, status_forcelist=(500, 502, 504), session=None, timeout=10): Creates an HTTP session with retry logic for handling transient errors.
+- requests_retry_session(retries=3, backoff_factor=0.3, status_forcelist=(500, 502, 504), session=None, timeout=(10, 30)): Creates an HTTP session with retry logic and a default timeout.
 - game_id_to_season(game_id, abbreviate=False): Converts a game ID to a season string.
 - validate_game_ids(game_ids): Validates game IDs.
 - validate_date_format(date): Validates that a date string is in the format "YYYY-MM-DD".
@@ -475,25 +475,50 @@ class StageLogger:
         return False  # Don't suppress exceptions
 
 
+class TimeoutHTTPAdapter(HTTPAdapter):
+    """
+    HTTPAdapter that applies a default timeout to every request sent through it.
+
+    requests only honors a timeout passed to the individual call. Assigning
+    `session.timeout` sets an attribute that requests never reads, which leaves
+    the request with no timeout at all. Injecting it at the adapter gives every
+    request a bound, so an endpoint that accepts the connection and then stops
+    responding raises instead of blocking forever.
+    """
+
+    def __init__(self, *args, timeout=None, **kwargs):
+        self.timeout = timeout
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        """Apply the default timeout unless the caller passed one explicitly."""
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = self.timeout
+        return super().send(request, **kwargs)
+
+
 def requests_retry_session(
     retries=3,
     backoff_factor=0.3,
     status_forcelist=(500, 502, 504),
     session=None,
-    timeout=10,
+    timeout=(10, 30),
 ):
     """
-    Creates a session with retry logic for handling transient HTTP errors.
+    Creates a session with retry logic and a default timeout.
 
     Args:
         retries (int): The number of retry attempts.
         backoff_factor (float): The backoff factor for retries.
         status_forcelist (tuple): A set of HTTP status codes to trigger a retry.
         session (requests.Session): An existing session to use, or None to create a new one.
-        timeout (int): The timeout for the request.
+        timeout (float or tuple): Default timeout for every request, either a
+            number of seconds or a (connect, read) pair. Individual calls can
+            still override it. NBA endpoints regularly accept a connection and
+            then stall, so without this the caller blocks indefinitely.
 
     Returns:
-        requests.Session: A session configured with retry logic.
+        requests.Session: A session configured with retry logic and a timeout.
     """
     session = session or requests.Session()
     retry = Retry(
@@ -503,10 +528,9 @@ def requests_retry_session(
         backoff_factor=backoff_factor,
         status_forcelist=status_forcelist,
     )
-    adapter = HTTPAdapter(max_retries=retry)
+    adapter = TimeoutHTTPAdapter(max_retries=retry, timeout=timeout)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
-    session.timeout = timeout
     return session
 
 
