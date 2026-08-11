@@ -266,6 +266,67 @@ def get_games_for_date(date, predictor=DEFAULT_PREDICTOR):
     return games
 
 
+def get_game_counts_by_date(month):
+    """
+    Counts the games on each date of a month, for the calendar date picker.
+
+    Games are bucketed by their Eastern Time date, matching how
+    get_games_for_date selects games, so the calendar can never disagree with
+    the table it navigates to.
+
+    Args:
+        month (str): The month to count games for, as 'YYYY-MM'.
+
+    Returns:
+        dict: Maps 'YYYY-MM-DD' to the number of games on that date. Dates with
+              no games are omitted.
+
+    Raises:
+        ValueError: If the month is not in 'YYYY-MM' format.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    import pytz
+
+    try:
+        year_str, month_str = month.split("-")
+        year, month_number = int(year_str), int(month_str)
+        first_day = datetime(year, month_number, 1)
+    except (AttributeError, ValueError):
+        raise ValueError("Invalid month format. Please use YYYY-MM format.")
+
+    eastern = pytz.timezone("US/Eastern")
+
+    # The ET day boundaries of the month, converted to the UTC range stored in the DB.
+    start_of_month_et = eastern.localize(first_day)
+    if month_number == 12:
+        next_month = datetime(year + 1, 1, 1)
+    else:
+        next_month = datetime(year, month_number + 1, 1)
+    end_of_month_et = eastern.localize(next_month)
+
+    start_utc = start_of_month_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    end_utc = end_of_month_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT date_time_utc FROM Games WHERE date_time_utc >= ? AND date_time_utc < ?",
+            (start_utc, end_utc),
+        )
+        rows = cursor.fetchall()
+
+    counts = {}
+    for (date_time_utc,) in rows:
+        # Convert each game's UTC tip-off back to the ET date it belongs to.
+        parsed = datetime.strptime(date_time_utc[:19], "%Y-%m-%dT%H:%M:%S")
+        game_date = parsed.replace(tzinfo=timezone.utc).astimezone(eastern).date()
+        date_key = game_date.strftime("%Y-%m-%d")
+        counts[date_key] = counts.get(date_key, 0) + 1
+
+    return counts
+
+
 def main():
     """
     Main function to demonstrate the usage of the get_games and get_games_for_date functions.
