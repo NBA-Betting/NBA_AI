@@ -89,24 +89,46 @@
     </div>
     <!-- End of Main Games Table -->
 
-    <!-- Start of Pagination Controls -->
-    <nav aria-label="Page navigation" class="mt-4">
-        <ul class="pagination justify-content-center">
-            <!-- Previous Page Link -->
-            <li class="page-item">
-                <a class="page-link" href="/?date={{ prev_date }}">&lt;&lt;</a>
-            </li>
-            <!-- Current Page Indicator -->
-            <li class="page-item active">
-                <span class="page-link">{{ query_date_display_str }}</span>
-            </li>
-            <!-- Next Page Link -->
-            <li class="page-item">
-                <a class="page-link" href="/?date={{ next_date }}">&gt;&gt;</a>
-            </li>
-        </ul>
+    <!-- Start of Date Navigation -->
+    <nav aria-label="Date navigation" class="mt-4">
+        <div class="date-nav">
+            <!-- Previous Day -->
+            <a class="date-nav-arrow" href="/?date={{ prev_date }}" aria-label="Previous day">&lt;&lt;</a>
+
+            <!-- Current Date / Calendar Toggle -->
+            <div class="date-picker">
+                <button type="button" id="datePickerToggle" class="date-nav-current" aria-haspopup="dialog"
+                    aria-expanded="false">
+                    <i class="bi bi-calendar3 me-2"></i>{{ query_date_display_str }}
+                </button>
+
+                <!-- Calendar Panel -->
+                <div id="datePickerPanel" class="date-picker-panel" role="dialog" aria-label="Choose a date" hidden>
+                    <div class="date-picker-header">
+                        <button type="button" class="date-picker-nav" id="calPrevMonth" aria-label="Previous month">
+                            <i class="bi bi-chevron-left"></i>
+                        </button>
+                        <span class="date-picker-month" id="calMonthLabel" aria-live="polite"></span>
+                        <button type="button" class="date-picker-nav" id="calNextMonth" aria-label="Next month">
+                            <i class="bi bi-chevron-right"></i>
+                        </button>
+                    </div>
+                    <div class="date-picker-weekdays" aria-hidden="true">
+                        <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+                    </div>
+                    <div class="date-picker-grid" id="calGrid"></div>
+                    <div class="date-picker-footer">
+                        <span class="date-picker-legend"><span class="date-picker-dot"></span>has games</span>
+                        <button type="button" class="date-picker-today" id="calToday">Today</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Next Day -->
+            <a class="date-nav-arrow" href="/?date={{ next_date }}" aria-label="Next day">&gt;&gt;</a>
+        </div>
     </nav>
-    <!-- End of Pagination Controls -->
+    <!-- End of Date Navigation -->
 
 
     <!-- Start of Game Details Modal -->
