@@ -154,3 +154,64 @@ class TestWebAppRoutes:
         """get-game-data with empty game_id should return 400."""
         response = flask_test_client.get("/get-game-data?game_id=")
         assert response.status_code == 400
+
+
+class TestValidSeasons:
+    """Tests for season validation surviving a season rollover."""
+
+    def test_current_season_is_valid(self):
+        """The current season should be valid even if config.yaml predates it."""
+        from src.games_api.api import get_valid_seasons
+        from src.utils import determine_current_season
+
+        assert determine_current_season() in get_valid_seasons()
+
+    def test_previous_season_is_valid(self):
+        """The season before the current one should stay valid."""
+        from src.games_api.api import get_valid_seasons
+        from src.utils import determine_current_season
+
+        previous_start_year = int(determine_current_season().split("-")[0]) - 1
+        assert f"{previous_start_year}-{previous_start_year + 1}" in get_valid_seasons()
+
+    def test_configured_seasons_are_preserved(self):
+        """Seasons listed in config.yaml should remain valid."""
+        from src.config import config
+        from src.games_api.api import get_valid_seasons
+
+        valid_seasons = get_valid_seasons()
+        for season in config["api"]["valid_seasons"]:
+            assert season in valid_seasons
+
+    def test_date_in_new_season_accepted_after_rollover(
+        self, monkeypatch, flask_test_client
+    ):
+        """A date in a newly started season should not be rejected as invalid.
+
+        Regression test: valid_seasons was read from config.yaml only, so every
+        date in a new season returned 400 until the file was edited by hand.
+        """
+        import src.games_api.api as api_module
+
+        monkeypatch.setattr(api_module, "determine_current_season", lambda: "2030-2031")
+
+        response = flask_test_client.get("/api/games?date=2030-12-25")
+        assert response.status_code == 200
+
+    def test_game_id_in_new_season_accepted_after_rollover(
+        self, monkeypatch, flask_test_client
+    ):
+        """A game ID from a newly started season should not be rejected."""
+        import src.games_api.api as api_module
+
+        monkeypatch.setattr(api_module, "determine_current_season", lambda: "2030-2031")
+
+        response = flask_test_client.get("/api/games?game_ids=0023000001")
+        assert response.status_code == 200
+
+    def test_season_outside_window_still_rejected(self, flask_test_client):
+        """Seasons with no data should still return a 400 rather than empty results."""
+        response = flask_test_client.get("/api/games?date=2019-12-25")
+        assert response.status_code == 400
+        data = response.get_json()
+        assert "valid seasons" in data["error"]

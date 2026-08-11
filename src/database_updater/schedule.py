@@ -352,7 +352,7 @@ def fetch_schedule(season, stage_logger=None):
     endpoint = NBA_API_BASE_URL.format(season=api_season)
 
     try:
-        session = requests_retry_session(timeout=10)
+        session = requests_retry_session()
         response = session.get(endpoint, headers=NBA_API_HEADERS)
         response.raise_for_status()
 

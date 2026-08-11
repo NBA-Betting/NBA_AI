@@ -5,12 +5,18 @@ Tests for utility functions in src/utils.py.
 These are critical validation functions used throughout the pipeline.
 """
 
+import socket
+import threading
+import time
+
 import pytest
+import requests
 
 from src.utils import (
     date_to_season,
     determine_current_season,
     game_id_to_season,
+    requests_retry_session,
     validate_date_format,
     validate_game_ids,
     validate_season_format,
@@ -157,3 +163,83 @@ class TestDetermineCurrentSeason:
         assert season[4] == "-"
         year1, year2 = season.split("-")
         assert int(year2) == int(year1) + 1
+
+
+@pytest.fixture
+def stalling_server():
+    """A server that accepts connections and never sends a response."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen(5)
+    accepted = []
+
+    def accept_and_stall():
+        while True:
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                return
+            accepted.append(conn)  # hold the connection open, send nothing
+
+    threading.Thread(target=accept_and_stall, daemon=True).start()
+
+    yield f"http://127.0.0.1:{server.getsockname()[1]}/"
+
+    server.close()
+    for conn in accepted:
+        conn.close()
+
+
+class TestRequestsRetrySession:
+    """Tests for the timeout applied by requests_retry_session."""
+
+    def test_stalled_response_raises_instead_of_hanging(self, stalling_server):
+        """A server that never responds should raise, not block forever.
+
+        Regression test: the timeout was assigned to session.timeout, which
+        requests ignores, so the daily pipeline hung indefinitely on a stalled
+        NBA endpoint.
+        """
+        session = requests_retry_session(retries=0, timeout=(2, 2))
+
+        start = time.time()
+        with pytest.raises(requests.exceptions.RequestException):
+            session.get(stalling_server)
+        assert time.time() - start < 15
+
+    def test_default_timeout_is_applied(self, monkeypatch):
+        """The configured timeout should reach the underlying send call."""
+        from requests.adapters import HTTPAdapter
+
+        captured = {}
+
+        def fake_send(self, request, **kwargs):
+            captured.update(kwargs)
+            raise requests.exceptions.ConnectionError("stop here")
+
+        monkeypatch.setattr(HTTPAdapter, "send", fake_send)
+
+        session = requests_retry_session(timeout=(3, 7))
+        with pytest.raises(requests.exceptions.ConnectionError):
+            session.get("http://127.0.0.1:1/")
+
+        assert captured["timeout"] == (3, 7)
+
+    def test_explicit_timeout_overrides_default(self, monkeypatch):
+        """A timeout passed to the call should win over the session default."""
+        from requests.adapters import HTTPAdapter
+
+        captured = {}
+
+        def fake_send(self, request, **kwargs):
+            captured.update(kwargs)
+            raise requests.exceptions.ConnectionError("stop here")
+
+        monkeypatch.setattr(HTTPAdapter, "send", fake_send)
+
+        session = requests_retry_session(timeout=(3, 7))
+        with pytest.raises(requests.exceptions.ConnectionError):
+            session.get("http://127.0.0.1:1/", timeout=1)
+
+        assert captured["timeout"] == 1
