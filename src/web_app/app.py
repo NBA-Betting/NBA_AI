@@ -26,7 +26,11 @@ from flask import Flask, flash, jsonify, render_template, request
 
 from src.config import config
 from src.games_api.api import api as api_blueprint
-from src.games_api.games import get_games, get_games_for_date
+from src.games_api.games import (
+    get_game_counts_by_date,
+    get_games,
+    get_games_for_date,
+)
 from src.web_app.dashboard import dashboard as dashboard_blueprint
 from src.utils import validate_date_format
 from src.web_app.game_data_processor import get_user_datetime, process_game_data
@@ -94,6 +98,33 @@ def create_app(predictor):
             prev_date=prev_date_str,
             next_date=next_date_str,
         )
+
+    @app.route("/game-dates")
+    def game_dates():
+        """
+        Reports how many games fall on each date of a month.
+
+        Used by the date picker calendar to mark which days have games.
+
+        Query Parameters:
+        - month (str): The month to look up, as 'YYYY-MM'. Defaults to the
+          current month.
+
+        Returns:
+            Response: JSON object mapping 'YYYY-MM-DD' to a game count.
+        """
+        month = request.args.get("month")
+        if not month:
+            month = get_user_datetime(as_eastern_tz=False).strftime("%Y-%m")
+
+        try:
+            return jsonify(get_game_counts_by_date(month))
+        except ValueError as e:
+            logging.warning("Bad month in game_dates: %s", e)
+            return jsonify({"error": "Invalid month. Expected YYYY-MM."}), 400
+        except Exception:
+            logging.exception("Error in game_dates")
+            return jsonify({"error": "Internal server error"}), 500
 
     @app.route("/get-game-data")
     def get_game_data():

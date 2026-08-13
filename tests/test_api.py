@@ -215,3 +215,51 @@ class TestValidSeasons:
         assert response.status_code == 400
         data = response.get_json()
         assert "valid seasons" in data["error"]
+class TestGameDatesEndpoint:
+    """Tests for /game-dates, which drives the calendar date picker."""
+
+    def test_returns_counts_for_month(self, flask_test_client):
+        """Should return a mapping of dates in the month to game counts."""
+        response = flask_test_client.get("/game-dates?month=2026-01")
+        assert response.status_code == 200
+
+        data = response.get_json()
+        assert isinstance(data, dict)
+        for date_str, count in data.items():
+            assert date_str.startswith("2026-01")
+            assert len(date_str) == 10
+            assert isinstance(count, int)
+            assert count > 0
+
+    def test_defaults_to_current_month(self, flask_test_client):
+        """Omitting the month should fall back to the current month."""
+        response = flask_test_client.get("/game-dates")
+        assert response.status_code == 200
+        assert isinstance(response.get_json(), dict)
+
+    def test_month_without_games_is_empty(self, flask_test_client):
+        """A month with no games should return an empty mapping, not an error."""
+        response = flask_test_client.get("/game-dates?month=1990-01")
+        assert response.status_code == 200
+        assert response.get_json() == {}
+
+    @pytest.mark.parametrize("bad_month", ["bogus", "2026-13", "2026", "2026-01-15"])
+    def test_invalid_month_returns_error(self, flask_test_client, bad_month):
+        """A malformed month should return 400 rather than a stack trace."""
+        response = flask_test_client.get(f"/game-dates?month={bad_month}")
+        assert response.status_code == 400
+        assert "error" in response.get_json()
+
+    def test_counts_match_games_for_date(self, flask_test_client):
+        """The calendar must agree with the table it sends the user to.
+
+        Both bucket games by Eastern Time date; if they ever diverge, a day
+        would show a dot and then load an empty table.
+        """
+        from src.games_api.games import get_games_for_date
+
+        counts = flask_test_client.get("/game-dates?month=2026-01").get_json()
+
+        for date_str, count in sorted(counts.items())[:3]:
+            games = get_games_for_date(date_str, predictor="Baseline")
+            assert len(games) == count, f"mismatch on {date_str}"

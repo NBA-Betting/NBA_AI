@@ -351,9 +351,224 @@ function showGameDetails(gameId) {
     });
 }
 
+/**
+ * Sets up the calendar date picker attached to the current-date button.
+ *
+ * Days that have games are marked with a dot, days without are dimmed, so the
+ * whole month can be scanned at a glance. Counts come from /game-dates and are
+ * cached per month.
+ */
+function initDatePicker() {
+  const toggle = document.getElementById("datePickerToggle");
+  const panel = document.getElementById("datePickerPanel");
+  const grid = document.getElementById("calGrid");
+  const monthLabel = document.getElementById("calMonthLabel");
+
+  if (!toggle || !panel || !grid) {
+    return;
+  }
+
+  const MONTH_NAMES = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+
+  const monthCache = {};
+  const selectedDateStr = document.body.dataset.queryDate;
+
+  /**
+   * Splits a "YYYY-MM-DD" string into numeric parts.
+   *
+   * Done by hand because new Date("YYYY-MM-DD") is parsed as UTC, which lands
+   * on the previous day for anyone west of Greenwich.
+   */
+  function parseDateStr(str) {
+    const parts = str.split("-").map(Number);
+    return { year: parts[0], month: parts[1] - 1, day: parts[2] };
+  }
+
+  function formatDateStr(year, month, day) {
+    const paddedMonth = String(month + 1).padStart(2, "0");
+    const paddedDay = String(day).padStart(2, "0");
+    return `${year}-${paddedMonth}-${paddedDay}`;
+  }
+
+  function monthKey(year, month) {
+    return `${year}-${String(month + 1).padStart(2, "0")}`;
+  }
+
+  const selected = parseDateStr(selectedDateStr);
+  const now = new Date();
+  const todayStr = formatDateStr(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  );
+
+  let viewYear = selected.year;
+  let viewMonth = selected.month;
+
+  /**
+   * Loads game counts for a month, caching the result.
+   * A failed lookup resolves to no counts, so the calendar still opens.
+   */
+  function fetchMonthCounts(year, month) {
+    const key = monthKey(year, month);
+
+    if (monthCache[key]) {
+      return Promise.resolve(monthCache[key]);
+    }
+
+    return fetch(`/game-dates?month=${key}`)
+      .then((response) => (response.ok ? response.json() : {}))
+      .then((counts) => {
+        monthCache[key] = counts || {};
+        return monthCache[key];
+      })
+      .catch((error) => {
+        console.error("Error fetching game dates:", error);
+        return {};
+      });
+  }
+
+  function renderCalendar() {
+    monthLabel.textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
+
+    const counts = monthCache[monthKey(viewYear, viewMonth)] || {};
+    const firstWeekday = new Date(viewYear, viewMonth, 1).getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+
+    grid.innerHTML = "";
+
+    // Blank cells so the 1st lands on the right weekday
+    for (let i = 0; i < firstWeekday; i++) {
+      const filler = document.createElement("span");
+      filler.className = "date-picker-day is-empty";
+      grid.appendChild(filler);
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = formatDateStr(viewYear, viewMonth, day);
+      const gameCount = counts[dateStr] || 0;
+
+      const cell = document.createElement("a");
+      cell.className = "date-picker-day";
+      cell.href = `/?date=${dateStr}`;
+      cell.textContent = day;
+
+      if (gameCount > 0) {
+        cell.classList.add("has-games");
+        cell.title = `${gameCount} game${gameCount === 1 ? "" : "s"}`;
+        cell.setAttribute("aria-label", `${dateStr}, ${gameCount} games`);
+      } else {
+        cell.classList.add("no-games");
+        cell.setAttribute("aria-label", `${dateStr}, no games`);
+      }
+
+      if (dateStr === todayStr) {
+        cell.classList.add("is-today");
+      }
+
+      if (dateStr === selectedDateStr) {
+        cell.classList.add("is-selected");
+        cell.setAttribute("aria-current", "date");
+      }
+
+      grid.appendChild(cell);
+    }
+  }
+
+  /**
+   * Shows a month, painting immediately and repainting once counts arrive.
+   * The repaint is skipped if the user moved on, so a slow response for an
+   * old month cannot overwrite the month now on screen.
+   */
+  function showMonth(year, month) {
+    viewYear = year;
+    viewMonth = month;
+    renderCalendar();
+
+    fetchMonthCounts(year, month).then(() => {
+      if (viewYear === year && viewMonth === month) {
+        renderCalendar();
+      }
+    });
+  }
+
+  function openPanel() {
+    panel.hidden = false;
+    toggle.setAttribute("aria-expanded", "true");
+    showMonth(selected.year, selected.month);
+  }
+
+  function closePanel() {
+    panel.hidden = true;
+    toggle.setAttribute("aria-expanded", "false");
+  }
+
+  toggle.addEventListener("click", function (event) {
+    event.stopPropagation();
+    if (panel.hidden) {
+      openPanel();
+    } else {
+      closePanel();
+    }
+  });
+
+  document
+    .getElementById("calPrevMonth")
+    .addEventListener("click", function () {
+      const month = viewMonth - 1;
+      showMonth(month < 0 ? viewYear - 1 : viewYear, (month + 12) % 12);
+    });
+
+  document
+    .getElementById("calNextMonth")
+    .addEventListener("click", function () {
+      const month = viewMonth + 1;
+      showMonth(month > 11 ? viewYear + 1 : viewYear, month % 12);
+    });
+
+  document.getElementById("calToday").addEventListener("click", function () {
+    window.location.href = `/?date=${todayStr}`;
+  });
+
+  // Close when clicking away or pressing Escape
+  document.addEventListener("click", function (event) {
+    if (
+      !panel.hidden &&
+      !panel.contains(event.target) &&
+      !toggle.contains(event.target)
+    ) {
+      closePanel();
+    }
+  });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !panel.hidden) {
+      closePanel();
+      toggle.focus();
+    }
+  });
+
+  // Warm the cache so the first open already shows the dots
+  fetchMonthCounts(selected.year, selected.month);
+}
+
 // Initialize event listeners after DOM content is fully loaded
 document.addEventListener("DOMContentLoaded", function () {
   fetchAndUpdateGames();
+  initDatePicker();
 
   document
     .querySelector("#gamesTableBody")
