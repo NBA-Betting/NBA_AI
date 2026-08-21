@@ -86,13 +86,23 @@ def load_config():
         else:
             config[section] = replace_env_vars(settings)
 
-    # Compute the absolute path for DB_PATH based on PROJECT_ROOT
-    # This is useful for ensuring that file paths are correctly handled regardless of the working directory
+    # Compute and validate the database path before anything can create an
+    # empty SQLite database at the unresolved placeholder path.
     project_root = config["project"]["root"]
     if "database" in config and "path" in config["database"]:
-        config["database"]["path"] = os.path.join(
-            project_root, config["database"]["path"]
-        )
+        database_path = config["database"]["path"]
+        if database_path in ["${DATABASE_PATH}", ""]:
+            raise EnvironmentError(
+                "DATABASE_PATH is not set. Run `cp .env.example .env` and set DATABASE_PATH."
+            )
+
+        database_path = os.path.join(project_root, database_path)
+        if not os.path.isfile(database_path):
+            raise FileNotFoundError(
+                f"Database not found at {database_path}. Run `cp .env.example .env` "
+                "and download the starter database."
+            )
+        config["database"]["path"] = database_path
 
     # Ensure the secret key is set
     if config["web_app"]["secret_key"] in ["${WEB_APP_SECRET_KEY}", ""]:
