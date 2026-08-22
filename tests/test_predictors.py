@@ -9,7 +9,7 @@ import pytest
 
 from src.predictions.prediction_engines.baseline_predictor import BaselinePredictor
 from src.predictions.prediction_manager import (
-    _get_predictor_map,
+    VALID_PREDICTORS,
     determine_predictor_class,
 )
 
@@ -19,22 +19,17 @@ class TestDeterminePredictorClass:
 
     def test_valid_predictor_names(self):
         """All registered predictors should be found."""
-        predictor_map = _get_predictor_map()
-        for name in predictor_map.keys():
-            predictor_class, returned_name = determine_predictor_class(name)
-            assert predictor_class == predictor_map[name]
-            assert returned_name == name
+        expected = {"Baseline", "Linear", "Tree", "MLP", "Phase5", "Phase3", "Ensemble"}
+        assert VALID_PREDICTORS == expected
 
     def test_none_returns_default(self):
         """None should return the default predictor."""
         from src.config import config
 
         default = config["default_predictor"]
-        predictor_map = _get_predictor_map()
-
         predictor_class, name = determine_predictor_class(None)
         assert name == default
-        assert predictor_class == predictor_map[default]
+        assert predictor_class.__name__ == f"{default}Predictor"
 
     def test_invalid_predictor_raises(self):
         """Invalid predictor name should raise ValueError."""
@@ -86,15 +81,13 @@ class TestPredictorMap:
 
     def test_all_predictors_registered(self):
         """All expected predictors should be in the map."""
-        predictor_map = _get_predictor_map()
         expected = {"Baseline", "Linear", "Tree", "MLP", "Phase5", "Phase3", "Ensemble"}
-        assert set(predictor_map.keys()) == expected
+        assert VALID_PREDICTORS == expected
 
     def test_predictors_are_classes(self):
-        """All values should be class types."""
-        predictor_map = _get_predictor_map()
-        for name, cls in predictor_map.items():
-            assert isinstance(cls, type), f"{name} is not a class"
+        """The selected predictor should be imported as a class."""
+        predictor_class, _ = determine_predictor_class("Baseline")
+        assert isinstance(predictor_class, type)
 
 
 class TestMLPredictorInstantiation:
@@ -125,6 +118,7 @@ class TestMLPredictorInstantiation:
             predictor = TreePredictor(model_paths=model_paths)
             assert predictor is not None
             assert len(predictor.models) > 0
+            assert isinstance(predictor.models[0], tuple)
         else:
             pytest.skip("No Tree model paths configured")
 

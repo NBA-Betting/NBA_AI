@@ -18,7 +18,7 @@ beautifulsoup4==4.13.3
 # Machine Learning
 scikit-learn==1.7.2
 scipy==1.16.3
-xgboost==3.1.2
+xgboost==3.0.5
 joblib==1.5.2
 
 # PyTorch — NOT included here; install it separately.

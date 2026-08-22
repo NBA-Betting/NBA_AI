@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import importlib
 import json
 import logging
 
@@ -70,50 +71,6 @@ def _drop_implausible_predictions(predictions, predictor_name):
     return valid
 
 
-def _get_predictor_map():
-    """
-    Lazily build the PREDICTOR_MAP to avoid importing heavy dependencies at module load.
-
-    This defers torch/sklearn imports until a predictor is actually requested,
-    saving ~2s startup time when using Baseline predictor.
-    """
-    from src.predictions.prediction_engines.baseline_predictor import BaselinePredictor
-    from src.predictions.prediction_engines.linear_predictor import LinearPredictor
-    from src.predictions.prediction_engines.mlp_predictor import MLPPredictor
-    from src.predictions.prediction_engines.tree_predictor import TreePredictor
-
-    predictor_map = {
-        "Baseline": BaselinePredictor,
-        "Linear": LinearPredictor,
-        "Tree": TreePredictor,
-        "MLP": MLPPredictor,
-    }
-
-    # Phase 5/Phase 3 pipeline predictors (lazy import — heavy torch dependencies)
-    try:
-        from src.pipeline.phase5_predictor import Phase5Predictor
-
-        predictor_map["Phase5"] = Phase5Predictor
-    except ImportError:
-        pass
-    try:
-        from src.pipeline.phase3_predictor import Phase3Predictor
-
-        predictor_map["Phase3"] = Phase3Predictor
-    except ImportError:
-        pass
-
-    # Ensemble predictor (reads from DB, no heavy dependencies)
-    try:
-        from src.pipeline.ensemble_predictor import EnsemblePredictor
-
-        predictor_map["Ensemble"] = EnsemblePredictor
-    except ImportError:
-        pass
-
-    return predictor_map
-
-
 # Valid predictor names (for validation before lazy import)
 VALID_PREDICTORS = {
     "Baseline",
@@ -125,6 +82,23 @@ VALID_PREDICTORS = {
     "Ensemble",
 }
 
+PREDICTOR_IMPORTS = {
+    "Baseline": ("src.predictions.prediction_engines.baseline_predictor", "BaselinePredictor"),
+    "Linear": ("src.predictions.prediction_engines.linear_predictor", "LinearPredictor"),
+    "Tree": ("src.predictions.prediction_engines.tree_predictor", "TreePredictor"),
+    "MLP": ("src.predictions.prediction_engines.mlp_predictor", "MLPPredictor"),
+    "Phase5": ("src.pipeline.phase5_predictor", "Phase5Predictor"),
+    "Phase3": ("src.pipeline.phase3_predictor", "Phase3Predictor"),
+    "Ensemble": ("src.pipeline.ensemble_predictor", "EnsemblePredictor"),
+}
+
+
+def _get_predictor_class(predictor_name):
+    """Import only the selected predictor and avoid loading unrelated ML runtimes."""
+    module_name, class_name = PREDICTOR_IMPORTS[predictor_name]
+    module = importlib.import_module(module_name)
+    return getattr(module, class_name)
+
 
 def determine_predictor_class(predictor_name):
     if predictor_name is None:
@@ -135,9 +109,7 @@ def determine_predictor_class(predictor_name):
             f"Predictor '{predictor_name}' not found. Options: {VALID_PREDICTORS}"
         )
 
-    # Lazy import to avoid loading torch/sklearn at module load
-    predictor_map = _get_predictor_map()
-    return predictor_map[predictor_name], predictor_name
+    return _get_predictor_class(predictor_name), predictor_name
 
 
 @log_execution_time(average_over="game_ids")
