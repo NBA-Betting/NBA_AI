@@ -59,3 +59,11 @@ src/web_app/static/img/player_images/
 test_setup.sh
 # Private project management (see commit 17ffcbc convention)
 TODO.md
+
+# Local starter database download and files created by an unresolved local env var
+/NBA_AI_starter.sqlite.gz
+/${DATABASE_PATH}
+
+# Locally downloaded editor bundle
+/nvim-macos-arm64.tar.gz
+/nvim-macos-arm64/
