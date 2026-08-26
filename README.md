@@ -109,6 +109,8 @@ The starter database contains the current season's games, box scores, play-by-pl
 
 ```bash
 python start_app.py
+# If port 5000 is already in use (for example, by macOS AirPlay Receiver):
+python start_app.py --port 5001
 ```
 
 Visit `http://localhost:5000` to view games and predictions. The dashboard is at `/dashboard`.

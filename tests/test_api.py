@@ -134,10 +134,16 @@ class TestWebAppRoutes:
         response = flask_test_client.get("/get-game-data")
         assert response.status_code == 400
 
-    def test_get_game_data_with_valid_game_id(self, flask_test_client):
+    def test_get_game_data_with_valid_game_id(self, flask_test_client, test_db_path):
         """get-game-data with valid game_id should return 200."""
-        # Use a known game_id from 2024-2025 season
-        response = flask_test_client.get("/get-game-data?game_id=0022400415")
+        import sqlite3
+
+        with sqlite3.connect(test_db_path) as conn:
+            game_id = conn.execute(
+                "SELECT game_id FROM Games ORDER BY date_time_utc LIMIT 1"
+            ).fetchone()[0]
+
+        response = flask_test_client.get(f"/get-game-data?game_id={game_id}")
         assert response.status_code == 200
         data = response.get_json()
         assert isinstance(data, list)

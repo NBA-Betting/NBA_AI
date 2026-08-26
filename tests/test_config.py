@@ -76,6 +76,15 @@ class TestConfigLoading:
         assert "secret_key" in web_app
         assert len(web_app["secret_key"]) > 0
 
+    def test_missing_database_path_fails_fast(self, monkeypatch):
+        """An unset DATABASE_PATH should not create a database named after a placeholder."""
+        from src.config import load_config
+
+        monkeypatch.delenv("DATABASE_PATH", raising=False)
+
+        with pytest.raises(EnvironmentError, match="DATABASE_PATH is not set"):
+            load_config()
+
 
 class TestConfigPaths:
     """Tests for path resolution in config."""

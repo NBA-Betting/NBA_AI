@@ -23,6 +23,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from xgboost import XGBRegressor
 
 from src.predictions.prediction_engines.base_predictor import BaseMLPredictor
 from src.predictions.prediction_utils import calculate_home_win_prob
@@ -53,22 +54,34 @@ class TreePredictor(BaseMLPredictor):
         Raises:
             ValueError: If model files cannot be loaded.
         """
-        for model_path in self.model_paths:
-            self.models.append(joblib.load(model_path))
-
-            # Load scaler from same directory as model file
-            scaler_path = Path(model_path).parent / "scaler.json"
-            if scaler_path.exists():
-                with open(scaler_path) as f:
-                    scaler = json.load(f)
-                self.scaler_mean = np.array(scaler["mean"])
-                self.scaler_std = np.array(scaler["std"])
-                logging.debug(f"TreePredictor: loaded scaler from {scaler_path}")
-            else:
-                logging.warning(
-                    f"TreePredictor: scaler.json not found at {scaler_path}. "
-                    f"Predictions will use unscaled features and may be inaccurate."
+        model_paths = [Path(model_path) for model_path in self.model_paths]
+        if model_paths and all(path.suffix == ".json" for path in model_paths):
+            if len(model_paths) != 2:
+                raise ValueError(
+                    "TreePredictor requires exactly two JSON models: home and away."
                 )
+
+            home_model, away_model = XGBRegressor(), XGBRegressor()
+            home_model.load_model(model_paths[0])
+            away_model.load_model(model_paths[1])
+            self.models.append((home_model, away_model))
+        else:
+            for model_path in model_paths:
+                self.models.append(joblib.load(model_path))
+
+        # All model files share a scaler in their directory.
+        scaler_path = model_paths[0].parent / "scaler.json" if model_paths else None
+        if scaler_path and scaler_path.exists():
+            with open(scaler_path) as f:
+                scaler = json.load(f)
+            self.scaler_mean = np.array(scaler["mean"])
+            self.scaler_std = np.array(scaler["std"])
+            logging.debug(f"TreePredictor: loaded scaler from {scaler_path}")
+        else:
+            logging.warning(
+                "TreePredictor: scaler.json not found. Predictions will use "
+                "unscaled features and may be inaccurate."
+            )
 
     def make_pre_game_predictions(self, game_ids):
         """

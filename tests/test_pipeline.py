@@ -6,23 +6,34 @@ Verifies that all pipeline modules can be imported and that
 key integration points (predictor registry, web app) work.
 """
 
-import pytest
+import subprocess
+import sys
+
+
+def _assert_imports(module, name):
+    """Import a native ML module in a child process to avoid runtime conflicts."""
+    result = subprocess.run(
+        [sys.executable, "-c", f"from {module} import {name}"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 class TestPipelineImports:
     """Verify that all pipeline modules can be imported."""
 
     def test_phase5_predictor_imports(self):
-        from src.pipeline.phase5_predictor import Phase5Predictor
+        _assert_imports("src.pipeline.phase5_predictor", "Phase5Predictor")
 
     def test_phase3_predictor_imports(self):
-        from src.pipeline.phase3_predictor import Phase3Predictor
+        _assert_imports("src.pipeline.phase3_predictor", "Phase3Predictor")
 
     def test_ensemble_predictor_imports(self):
-        from src.pipeline.ensemble_predictor import EnsemblePredictor
+        _assert_imports("src.pipeline.ensemble_predictor", "EnsemblePredictor")
 
     def test_orchestrator_imports(self):
-        from src.pipeline.orchestrator import PipelineOrchestrator
+        _assert_imports("src.pipeline.orchestrator", "PipelineOrchestrator")
 
 
 class TestPredictorRegistry:

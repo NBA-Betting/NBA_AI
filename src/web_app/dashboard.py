@@ -16,6 +16,7 @@ import logging
 from flask import Blueprint, jsonify, render_template, request
 
 from src.database import get_db
+from src.utils import get_eastern_tz, parse_utc_datetime
 
 dashboard = Blueprint("dashboard", __name__)
 
@@ -134,8 +135,16 @@ def _fetch_dashboard_data(predictor="Phase5", live_only=False):
         # Prediction error (our predicted margin vs actual margin)
         prediction_error = pred_spread - actual_margin
 
-        # Extract date for display
-        game_date = date_time_utc[:10] if date_time_utc else ""
+        # Extract date for display. NBA schedule dates are Eastern, and an
+        # evening tip-off has already rolled into the next day in UTC, so the
+        # raw timestamp would date most games a day late.
+        game_date = (
+            parse_utc_datetime(date_time_utc)
+            .astimezone(get_eastern_tz())
+            .strftime("%Y-%m-%d")
+            if date_time_utc
+            else ""
+        )
 
         games.append(
             {

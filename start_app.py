@@ -7,7 +7,7 @@ This script sets up and launches the Flask web application with configurable
 options for the prediction engine, logging level, and Flask debug mode.
 
 Usage:
-    python start_app.py --predictor=PredictorName --log_level=INFO --debug
+    python start_app.py --predictor=PredictorName --log_level=INFO --port=5000 --debug
 
 Options:
     --predictor : str, optional
@@ -17,6 +17,8 @@ Options:
         The log level to use for logging. Options are DEBUG, INFO, WARNING, ERROR, CRITICAL. Default is 'INFO'.
     --debug : bool, optional
         If set, run the application in Flask debug mode. Default is False.
+    --port : int, optional
+        The port to run the web app on. Default is 5000.
 """
 
 import argparse
@@ -58,6 +60,12 @@ def main():
         default=False,
         help="Run the application in Flask debug mode.",
     )
+    parser.add_argument(
+        "--port",
+        default=5000,
+        type=int,
+        help="Port to run the web app on. Default is 5000.",
+    )
     args = parser.parse_args()
 
     predictor = (
@@ -86,7 +94,7 @@ def main():
     app = create_app(predictor=predictor)
 
     # Run the app
-    app.run(debug=debug_mode)
+    app.run(debug=debug_mode, port=args.port)
 
 
 if __name__ == "__main__":

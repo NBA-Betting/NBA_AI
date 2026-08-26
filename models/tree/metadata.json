@@ -1,7 +1,10 @@
 {
   "model_type": "Tree",
   "version": "0.5",
-  "model_file": "models/tree/model.joblib",
+  "model_files": [
+    "models/tree/home_model.json",
+    "models/tree/away_model.json"
+  ],
   "train_seasons": [
     "2000-2001",
     "2001-2002",
