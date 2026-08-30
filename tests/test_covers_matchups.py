@@ -47,7 +47,12 @@ def test_summary_spread_is_stored_from_home_perspective(
 
 @pytest.mark.parametrize(
     ("fallback", "expected_spread"),
-    [("MIA -3.5", -3.5), ("BOS -3.5", 3.5), ("BOS PK", 0.0)],
+    [
+        ("MIA -3.5", -3.5),
+        ("BOS -3.5", 3.5),
+        ("BOS-3.5", 3.5),
+        ("BOS PK", 0.0),
+    ],
 )
 def test_fallback_spread_retains_team_subject(fallback, expected_spread):
     games = _parse_matchups_page(_matchup_html(fallback=fallback), date(2026, 1, 1))

@@ -308,7 +308,7 @@ def _parse_fallback_spread(
 ) -> Optional[float]:
     """Parse an abbreviated team line and return its home-perspective spread."""
     match = re.search(
-        r"\b([A-Z]{2,4})\s+(PK|[-+]?\d+(?:\.\d+)?)\b", text, re.I
+        r"\b([A-Z]{2,4})\s*(PK|[-+]?\d+(?:\.\d+)?)\b", text, re.I
     )
     if not match:
         return None
@@ -429,7 +429,7 @@ def _parse_matchups_page(html: str, game_date: date) -> list[CoversGameData]:
                     # Look for pattern like "MIA -3.5" in span elements
                     span = spread_container.find(
                         string=re.compile(
-                            r"\b[A-Z]{2,4}\s+(?:PK|[-+]?\d+(?:\.\d+)?)\b", re.I
+                            r"\b[A-Z]{2,4}\s*(?:PK|[-+]?\d+(?:\.\d+)?)\b", re.I
                         )
                     )
                     if span:
