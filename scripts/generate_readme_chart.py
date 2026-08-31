@@ -68,14 +68,14 @@ def compute_predictor_metrics(predictor: str, conn: sqlite3.Connection) -> dict 
             gs.home_score,
             gs.away_score,
             p.prediction_set,
-            COALESCE(b.espn_closing_spread, b.covers_closing_spread) AS closing_spread
+            b.espn_closing_spread AS closing_spread
         FROM Games g
         JOIN Predictions p ON g.game_id = p.game_id
         JOIN Betting b ON g.game_id = b.game_id
         JOIN GameStates gs ON g.game_id = gs.game_id AND gs.is_final_state = 1
         WHERE g.status = 3
           AND p.predictor = ?
-          AND COALESCE(b.espn_closing_spread, b.covers_closing_spread) IS NOT NULL
+          AND b.espn_closing_spread IS NOT NULL
           AND g.date_time_utc >= ?
         ORDER BY g.date_time_utc ASC
     """

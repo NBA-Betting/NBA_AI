@@ -232,6 +232,95 @@ def _parse_score(score_text: str) -> tuple[Optional[int], Optional[int]]:
     return None, None
 
 
+def _invert_spread_result(result: Optional[str]) -> Optional[str]:
+    """Convert an ATS result from one team's perspective to the other team's."""
+    return {"W": "L", "L": "W", "P": "P"}.get(result)
+
+
+def _to_home_spread_perspective(
+    subject_team: Optional[str],
+    home_team: str,
+    away_team: str,
+    spread: Optional[float],
+    spread_result: Optional[str],
+) -> tuple[Optional[float], Optional[str]]:
+    """Normalize a team-specific spread and result to the home team's perspective."""
+    if subject_team == home_team:
+        return spread, spread_result
+    if subject_team == away_team:
+        home_spread = -spread if spread is not None else None
+        if home_spread == 0:
+            home_spread = 0.0
+        return home_spread, _invert_spread_result(spread_result)
+
+    logger.debug(
+        "Ignoring spread with unknown subject team %s for %s at %s",
+        subject_team,
+        away_team,
+        home_team,
+    )
+    return None, None
+
+
+def _team_text_aliases(team: str) -> list[str]:
+    """Return Covers names and abbreviations that can identify an NBA team."""
+    aliases = {team}
+    slug = NBA_TO_COVERS_SLUG.get(team)
+    if slug:
+        full_name = slug.replace("-", " ")
+        aliases.add(full_name)
+        aliases.add("trail blazers" if team == "POR" else full_name.split()[-1])
+    aliases.update(
+        covers_code
+        for covers_code, nba_code in COVERS_ABBREV_TO_NBA.items()
+        if nba_code == team
+    )
+    return sorted(aliases, key=len, reverse=True)
+
+
+def _parse_summary_spread(
+    text: str, home_team: str, away_team: str
+) -> tuple[Optional[float], Optional[str]]:
+    """Parse a Covers summary sentence and return home-perspective ATS data."""
+    for subject_team in (home_team, away_team):
+        for alias in _team_text_aliases(subject_team):
+            match = re.search(
+                rf"\b{re.escape(alias)}\b\s+"
+                r"(covered|did not cover)\s+the spread of\s+"
+                r"(PK|[-+]?\d+(?:\.\d+)?)\b",
+                text,
+                re.I,
+            )
+            if not match:
+                continue
+
+            spread = _parse_spread(match.group(2))
+            result = "W" if match.group(1).lower() == "covered" else "L"
+            return _to_home_spread_perspective(
+                subject_team, home_team, away_team, spread, result
+            )
+
+    return None, None
+
+
+def _parse_fallback_spread(
+    text: str, home_team: str, away_team: str
+) -> Optional[float]:
+    """Parse an abbreviated team line and return its home-perspective spread."""
+    match = re.search(
+        r"\b([A-Z]{2,4})\s*(PK|[-+]?\d+(?:\.\d+)?)\b", text, re.I
+    )
+    if not match:
+        return None
+
+    subject_team = normalize_team_abbrev(match.group(1))
+    spread = _parse_spread(match.group(2))
+    home_spread, _ = _to_home_spread_perspective(
+        subject_team, home_team, away_team, spread, None
+    )
+    return home_spread
+
+
 # =============================================================================
 # Matchups Page Scraping (Tier 2)
 # =============================================================================
@@ -319,7 +408,7 @@ def _parse_matchups_page(html: str, game_date: date) -> list[CoversGameData]:
 
             summary = box.find(class_="summary-box")
             if summary:
-                text = summary.get_text()
+                text = summary.get_text(" ", strip=True)
 
                 # Extract total: "was over 217" or "was under 217"
                 total_match = re.search(r"was\s+(over|under)\s+(\d+\.?\d*)", text, re.I)
@@ -327,16 +416,11 @@ def _parse_matchups_page(html: str, game_date: date) -> list[CoversGameData]:
                     ou_result = "O" if total_match.group(1).lower() == "over" else "U"
                     total = float(total_match.group(2))
 
-                # Extract spread: "covered the spread of -3.5" or "did not cover"
-                spread_match = re.search(
-                    r"(covered|did not cover) the spread of ([-+]?\d+\.?\d*)",
-                    text,
-                    re.I,
+                # Covers describes the line from the named team's perspective.
+                # Preserve that subject so away-team lines can be inverted.
+                spread, spread_result = _parse_summary_spread(
+                    text, home_team, away_team
                 )
-                if spread_match:
-                    cover_text = spread_match.group(1)
-                    spread = float(spread_match.group(2))
-                    spread_result = "W" if cover_text.lower() == "covered" else "L"
 
             # Fallback: get spread from spread container if not in summary
             if spread is None:
@@ -344,12 +428,14 @@ def _parse_matchups_page(html: str, game_date: date) -> list[CoversGameData]:
                 if spread_container:
                     # Look for pattern like "MIA -3.5" in span elements
                     span = spread_container.find(
-                        string=re.compile(r"[A-Z]{2,3}\s*[-+]?\d+\.?\d*")
+                        string=re.compile(
+                            r"\b[A-Z]{2,4}\s*(?:PK|[-+]?\d+(?:\.\d+)?)\b", re.I
+                        )
                     )
                     if span:
-                        spread_match = re.search(r"([-+]?\d+\.?\d*)$", span.strip())
-                        if spread_match:
-                            spread = float(spread_match.group(1))
+                        spread = _parse_fallback_spread(
+                            span.strip(), home_team, away_team
+                        )
 
             game_data = CoversGameData(
                 game_date=game_date,

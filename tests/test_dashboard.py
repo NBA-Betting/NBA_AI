@@ -4,6 +4,8 @@ from src.web_app import dashboard as dashboard_module
 
 
 class _DashboardConnection:
+    queries = []
+
     def __init__(self):
         self.rows = []
 
@@ -17,6 +19,7 @@ class _DashboardConnection:
         return self
 
     def execute(self, query, params=None):
+        self.queries.append(query)
         if "SELECT DISTINCT predictor" in query:
             self.rows = [("Phase5",)]
         else:
@@ -46,3 +49,17 @@ def test_dashboard_dates_are_displayed_in_eastern_time(monkeypatch):
     data = dashboard_module._fetch_dashboard_data("Phase5")
 
     assert data["games"][0]["date"] == "2026-01-15"
+
+
+def test_dashboard_uses_only_verified_espn_closing_spreads(monkeypatch):
+    """Legacy Covers rows must not affect headline metrics before normalization."""
+    _DashboardConnection.queries.clear()
+    monkeypatch.setattr(dashboard_module, "get_db", _DashboardConnection)
+
+    dashboard_module._fetch_dashboard_data("Phase5")
+
+    data_query = next(
+        query for query in _DashboardConnection.queries if "FROM Games g" in query
+    )
+    assert "b.espn_closing_spread AS closing_spread" in data_query
+    assert "covers_closing_spread" not in data_query
