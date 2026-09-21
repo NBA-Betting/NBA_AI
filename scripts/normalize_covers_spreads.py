@@ -6,6 +6,11 @@ completed game, the stored ATS result lets us determine whether a row is
 already home-oriented or needs to be flipped. Rows that cannot be determined
 unambiguously are invalidated instead of guessed.
 
+This is a one-time migration for rows scraped by the old parser. Do not use
+``--apply`` on rows that are already home-oriented (scraped by the fixed parser
+or repaired from source): a correct row whose final margin falls inside the
+spread looks the same as an inverted one and would be invalidated.
+
 The command is read-only by default. Pass ``--apply`` to commit changes:
 
     python scripts/normalize_covers_spreads.py --database /path/to/nba.sqlite

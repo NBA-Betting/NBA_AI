@@ -269,7 +269,14 @@ def _team_text_aliases(team: str) -> list[str]:
     if slug:
         full_name = slug.replace("-", " ")
         aliases.add(full_name)
-        aliases.add("trail blazers" if team == "POR" else full_name.split()[-1])
+        nickname = "trail blazers" if team == "POR" else full_name.split()[-1]
+        aliases.add(nickname)
+        # Covers summaries name teams by city ("Detroit covered the spread...").
+        # The L.A. teams share a city and appear as "L.A. Lakers"/"L.A. Clippers",
+        # which the nickname alias already matches.
+        city = full_name.removesuffix(nickname).strip()
+        if city != "los angeles":
+            aliases.add(city)
     aliases.update(
         covers_code
         for covers_code, nba_code in COVERS_ABBREV_TO_NBA.items()
@@ -307,9 +314,7 @@ def _parse_fallback_spread(
     text: str, home_team: str, away_team: str
 ) -> Optional[float]:
     """Parse an abbreviated team line and return its home-perspective spread."""
-    match = re.search(
-        r"\b([A-Z]{2,4})\s*(PK|[-+]?\d+(?:\.\d+)?)\b", text, re.I
-    )
+    match = re.search(r"\b([A-Z]{2,4})\s*(PK|[-+]?\d+(?:\.\d+)?)\b", text)
     if not match:
         return None
 
@@ -426,16 +431,16 @@ def _parse_matchups_page(html: str, game_date: date) -> list[CoversGameData]:
             if spread is None:
                 spread_container = box.find(class_="trending-and-cover-by-container")
                 if spread_container:
-                    # Look for pattern like "MIA -3.5" in span elements
-                    span = spread_container.find(
-                        string=re.compile(
-                            r"\b[A-Z]{2,4}\s*(?:PK|[-+]?\d+(?:\.\d+)?)\b", re.I
-                        )
-                    )
-                    if span:
+                    # Look for pattern like "MIA -3.5" in span elements.
+                    # Case-sensitive so "Cover By +23.5" is not read as a team line.
+                    for span in spread_container.find_all(
+                        string=re.compile(r"\b[A-Z]{2,4}\s*(?:PK|[-+]?\d+(?:\.\d+)?)\b")
+                    ):
                         spread = _parse_fallback_spread(
                             span.strip(), home_team, away_team
                         )
+                        if spread is not None:
+                            break
 
             game_data = CoversGameData(
                 game_date=game_date,
