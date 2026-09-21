@@ -67,7 +67,12 @@ from tqdm import tqdm
 
 from src.config import config
 from src.database import create_connection, get_db
-from src.utils import NBATeamConverter, StageLogger, log_execution_time
+from src.utils import (
+    NBATeamConverter,
+    StageLogger,
+    get_eastern_tz,
+    log_execution_time,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +181,18 @@ def _record_covers_attempt(date_str: str, match_count: int, conn: sqlite3.Connec
         (date_str, match_count),
     )
     conn.commit()
+
+
+def _eastern_date(date_time_utc: str) -> str:
+    """Return the US/Eastern calendar date (YYYY-MM-DD) of a Games.date_time_utc value.
+
+    Covers matchups pages are keyed by Eastern date; most games tip off on the
+    following day in UTC.
+    """
+    utc_dt = datetime.strptime(date_time_utc, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
+    return utc_dt.astimezone(get_eastern_tz()).date().isoformat()
 
 
 def _get_current_season(now: datetime) -> str:
@@ -1093,9 +1110,8 @@ def update_betting_data(
                 and game["status"] == 3  # Final
                 and days_ago > ESPN_LOOKBACK_DAYS
             ):
-                # Game is outside ESPN window, use Covers
-                game_date = game["date_time_utc"].split("T")[0]
-                covers_dates_needed.add(game_date)
+                # Game is outside ESPN window, use Covers (pages are per Eastern date)
+                covers_dates_needed.add(_eastern_date(game["date_time_utc"]))
 
         # TIER 1: Fetch from ESPN
         if espn_games:
@@ -1408,17 +1424,18 @@ def _fetch_covers_batch(
 
     stats = {"fetched": 0, "saved": 0, "errors": 0}
 
-    # Get mapping with fuzzy date matching (±1 day) to handle timezone differences
+    # `dates` are Eastern dates (Covers pages are per Eastern date). Key each game
+    # by its own Eastern date so same-venue games a day or two apart stay distinct.
     game_lookup = {}
-    games_by_teams = {}  # For team-based fuzzy matching
+    games_by_teams = {}  # (home, away) -> {game_id: eastern_date}, for the fallback
 
     for date_str in dates:
-        # Query games within ±1 day window to handle timezone differences
+        # Eastern date D spans UTC dates D..D+1; widen by a day for the fallback
         cursor = conn.execute(
             """
-            SELECT game_id, home_team, away_team, date(date_time_utc) as game_date
+            SELECT game_id, home_team, away_team, date_time_utc
             FROM Games
-            WHERE date(date_time_utc) BETWEEN date(?, '-1 day') AND date(?, '+1 day')
+            WHERE date(date_time_utc) BETWEEN date(?, '-1 day') AND date(?, '+2 day')
               AND season_type IN ('Regular Season', 'Post Season')
         """,
             (date_str, date_str),
@@ -1433,21 +1450,15 @@ def _fetch_covers_batch(
                 home_team = row["home_team"]
                 away_team = row["away_team"]
 
-            # Primary lookup: exact date match
-            key = (date_str, home_team, away_team)
-            game_lookup[key] = row["game_id"]
+            eastern_date = _eastern_date(row["date_time_utc"])
 
-            # Secondary lookup: team-based for fuzzy matching
-            team_key = (home_team, away_team)
-            if team_key not in games_by_teams:
-                games_by_teams[team_key] = []
-            games_by_teams[team_key].append(
-                {
-                    "game_id": row["game_id"],
-                    "date": row["game_date"],
-                    "target_date": date_str,
-                }
-            )
+            # Primary lookup: exact Eastern date match
+            game_lookup[(eastern_date, home_team, away_team)] = row["game_id"]
+
+            # Secondary lookup: team-based for the ±1 day fallback
+            games_by_teams.setdefault((home_team, away_team), {})[
+                row["game_id"]
+            ] = eastern_date
 
     pbar = tqdm(dates, desc="Tier 2: Covers matchups", unit="date", leave=False)
     for date_str in pbar:
@@ -1476,35 +1487,23 @@ def _fetch_covers_batch(
                 key = (date_str, home_team, away_team)
                 game_id = game_lookup.get(key)
 
-                # If no exact match, try fuzzy matching by teams within date window
+                # If no exact match, accept a game within ±1 day only when it is the
+                # sole candidate; never choose between two games of the same matchup
                 if not game_id:
-                    team_key = (home_team, away_team)
-                    candidates = games_by_teams.get(team_key, [])
-
-                    if candidates:
-                        # Find closest date match within ±1 day
-                        from datetime import datetime, timedelta
-
-                        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                        best_candidate = None
-                        min_date_diff = float("inf")
-
-                        for candidate in candidates:
-                            candidate_date = datetime.strptime(
-                                candidate["date"], "%Y-%m-%d"
-                            ).date()
-                            date_diff = abs((candidate_date - target_date).days)
-                            if date_diff <= 1 and date_diff < min_date_diff:
-                                min_date_diff = date_diff
-                                best_candidate = candidate
-
-                        if best_candidate:
-                            game_id = best_candidate["game_id"]
-                            if min_date_diff > 0:
-                                logger.debug(
-                                    f"Fuzzy match for Covers game: {cg.away_team}@{cg.home_team} "
-                                    f"on {date_str} -> DB date {best_candidate['date']} (±{min_date_diff} days)"
-                                )
+                    candidates = [
+                        (candidate_id, candidate_date)
+                        for candidate_id, candidate_date in games_by_teams.get(
+                            (home_team, away_team), {}
+                        ).items()
+                        if abs((date.fromisoformat(candidate_date) - game_date).days)
+                        <= 1
+                    ]
+                    if len(candidates) == 1:
+                        game_id, candidate_date = candidates[0]
+                        logger.debug(
+                            f"Fuzzy match for Covers game: {cg.away_team}@{cg.home_team} "
+                            f"on {date_str} -> DB date {candidate_date}"
+                        )
 
                 if not game_id:
                     logger.debug(
