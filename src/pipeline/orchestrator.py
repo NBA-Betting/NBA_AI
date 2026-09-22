@@ -407,7 +407,7 @@ class PipelineOrchestrator:
         # Legacy ML models (need .joblib/.pth files)
         if (PROJECT_ROOT / "models" / "linear" / "model.joblib").exists():
             predictors_to_run.append("Linear")
-        if (PROJECT_ROOT / "models" / "tree" / "model.joblib").exists():
+        if (PROJECT_ROOT / "models" / "tree" / "home_model.json").exists():
             predictors_to_run.append("Tree")
         if (PROJECT_ROOT / "models" / "mlp" / "model.pth").exists():
             predictors_to_run.append("MLP")
