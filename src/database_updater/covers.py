@@ -498,7 +498,10 @@ def fetch_team_schedule(
                 home_team_tricode = tricode
                 break
 
-    url = f"https://www.covers.com/sport/basketball/nba/teams/main/{slug}/{season}"
+    # The team page only embeds the current season's results; other seasons are
+    # loaded by the page's JS from a getschedule endpoint keyed by Covers' own
+    # team id and season id, both of which appear in the team page.
+    url = f"https://www.covers.com/sport/basketball/nba/teams/main/{slug}"
 
     logger.debug(f"Fetching Covers team schedule: {url}")
 
@@ -508,6 +511,23 @@ def fetch_team_schedule(
 
     try:
         response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        season_id = re.search(
+            rf'data-id="(\d+)" data-season-name="{season}"', response.text
+        )
+        team_id = re.search(
+            r'sharedSwitchSeasonNew\([^;]*?"\d+", "(\d+)", ""\)', response.text
+        )
+        if not season_id or not team_id:
+            logger.error(f"Could not find Covers season/team ids for {team} {season}")
+            return []
+        schedule_url = (
+            "https://www.covers.com/sport/basketball/nba/teams/main/getschedule/"
+            f"schedule/{team_id.group(1)}/{season_id.group(1)}"
+        )
+        if delay > 0:
+            time.sleep(delay)
+        response = requests.get(schedule_url, headers=HEADERS, timeout=30)
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error(f"Failed to fetch Covers schedule for {team}: {e}")
@@ -552,19 +572,16 @@ def _parse_team_schedule_page(html: str, season: str) -> list[CoversGameData]:
     # Tables have class 'covers-CoversResults-Table'
     results_tables = soup.find_all("table", class_="covers-CoversResults-Table")
 
-    target_table = None
+    rows = []
     for table in results_tables:
         first_th = table.find("th")
-        if first_th and "Regular Season" in first_th.get_text():
-            target_table = table
-            break
+        if first_th and first_th.get_text(strip=True) in ("Regular Season", "Playoffs"):
+            # Skip header row
+            rows.extend(table.find_all("tr")[1:])
 
-    if not target_table:
-        logger.warning("Could not find Regular Season results table")
+    if not rows:
+        logger.warning("Could not find Regular Season or Playoffs results table")
         return games
-
-    # Find all data rows (skip header row)
-    rows = target_table.find_all("tr")[1:]
 
     for row in rows:
         try:
@@ -575,7 +592,8 @@ def _parse_team_schedule_page(html: str, season: str) -> list[CoversGameData]:
             # Cell 1: Opponent (e.g., "HOU" for home, "@ POR" for away)
             opponent_cell = cells[1].get_text(strip=True)
             is_away = opponent_cell.startswith("@")
-            opponent_abbrev = opponent_cell.replace("@", "").strip()
+            # "(N)" marks a neutral-site game (e.g. Mexico City)
+            opponent_abbrev = opponent_cell.replace("@", "").replace("(N)", "").strip()
 
             # Skip away games - only store home games to avoid duplicates
             if is_away:

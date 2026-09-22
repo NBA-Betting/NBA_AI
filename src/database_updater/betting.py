@@ -1580,11 +1580,11 @@ def update_betting_backfill(season: str) -> dict:
         # Ensure table exists
         create_betting_tables(conn)
 
-        # Build lookup: (date, home_team, away_team) -> game_id
+        # Build lookup: (Eastern date, home_team, away_team) -> game_id
+        # (Covers schedule dates are Eastern; most games are the next day in UTC)
         cursor = conn.execute(
             """
-            SELECT game_id, date(date_time_utc) as game_date, 
-                   home_team, away_team
+            SELECT game_id, date_time_utc, home_team, away_team
             FROM Games
             WHERE season = ?
               AND season_type IN ('Regular Season', 'Post Season')
@@ -1594,7 +1594,7 @@ def update_betting_backfill(season: str) -> dict:
 
         game_lookup = {}
         for row in cursor.fetchall():
-            key = (row["game_date"], row["home_team"], row["away_team"])
+            key = (_eastern_date(row["date_time_utc"]), row["home_team"], row["away_team"])
             game_lookup[key] = row["game_id"]
 
         logger.info(f"Found {len(game_lookup)} games in DB for {season}")
