@@ -202,8 +202,37 @@ class RosterAssembler:
             (*game_ids, team_id),
         ).fetchall()
 
+        roster = {int(row[0]): float(row[1]) for row in rows}
+
+        # Reconcile with the NBA's current player list (Players.team, refreshed
+        # daily): drop players who have since left the team, and add players who
+        # have joined but have not yet played for it (offseason moves, trades).
+        current = {
+            int(row[0])
+            for row in conn.execute(
+                "SELECT person_id FROM Players WHERE team = ? AND roster_status = 1",
+                (team_abbr,),
+            )
+        }
+        if current:
+            roster = {pid: m for pid, m in roster.items() if pid in current}
+            for pid in current - roster.keys():
+                # Order new arrivals by their own recent minutes, wherever played
+                row = conn.execute(
+                    """
+                    SELECT AVG(pb.min) FROM PlayerBox pb
+                    JOIN Games g ON g.game_id = pb.game_id
+                    WHERE pb.player_id = ? AND pb.min > 0 AND g.date_time_utc < ?
+                    ORDER BY g.date_time_utc DESC LIMIT 3
+                    """,
+                    (pid, before_date),
+                ).fetchone()
+                if row and row[0] is not None:
+                    roster[pid] = float(row[0])
+
         return [
-            {"player_id": int(row[0]), "avg_minutes": float(row[1])} for row in rows
+            {"player_id": pid, "avg_minutes": m}
+            for pid, m in sorted(roster.items(), key=lambda x: -x[1])
         ]
 
     def _load_current_injuries(self, conn) -> dict[str, dict[str, set[int]]]:
