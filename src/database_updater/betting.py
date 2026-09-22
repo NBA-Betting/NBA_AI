@@ -1424,6 +1424,16 @@ def _fetch_covers_batch(
 
     stats = {"fetched": 0, "saved": 0, "errors": 0}
 
+    # Games that already have a Covers line are left alone: Covers revises old
+    # pages after the fact, and a re-fetch for one date would rewrite every game
+    # on that page.
+    already_have = {
+        row[0]
+        for row in conn.execute(
+            "SELECT game_id FROM Betting WHERE covers_closing_spread IS NOT NULL"
+        )
+    }
+
     # `dates` are Eastern dates (Covers pages are per Eastern date). Key each game
     # by its own Eastern date so same-venue games a day or two apart stay distinct.
     game_lookup = {}
@@ -1510,6 +1520,8 @@ def _fetch_covers_batch(
                         f"No DB match for Covers game: {cg.away_team}@{cg.home_team} on {date_str} "
                         f"(normalized: {away_team}@{home_team})"
                     )
+                    continue
+                if game_id in already_have:
                     continue
 
                 # Use results from Covers directly (already parsed from page)
