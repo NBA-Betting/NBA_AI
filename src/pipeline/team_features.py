@@ -27,6 +27,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from src.database import DB_PATH, get_db
+from src.phase5.travel import compute_travel_features
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,24 @@ class TeamFeatureComputer:
         if compute_ids:
             computed = self._compute_live(compute_ids)
             results.update(computed)
+
+        # Travel dims [8-11] are filled by the Phase B builder at training time,
+        # not by the L3/L4 cache; fill them the same way here.
+        with get_db(self.db_path) as conn:
+            for gid, feats in results.items():
+                row = conn.execute(
+                    "SELECT home_team, away_team, date_time_utc FROM Games WHERE game_id = ?",
+                    (gid,),
+                ).fetchone()
+                if row is None:
+                    continue
+                travel = compute_travel_features(conn, gid, row[0], row[1], row[2])
+                ctx = np.array(feats["game_context"], dtype=np.float32, copy=True)
+                ctx[8] = travel["travel_dist_home"]
+                ctx[9] = travel["travel_dist_away"]
+                ctx[10] = travel["tz_crossings_home"]
+                ctx[11] = travel["tz_crossings_away"]
+                feats["game_context"] = ctx
 
         return results
 

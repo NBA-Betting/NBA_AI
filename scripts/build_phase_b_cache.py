@@ -33,8 +33,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.phase5.l2_config import L2Config
+from src.phase5.roster_summary import compute_roster_summary
 from src.phase5.l2_model import PlayerSynergyNetwork
-from src.phase5.arena_data import resolve_arena, haversine_miles, HISTORICAL_TO_MODERN
+from src.phase5.travel import compute_travel_features
 
 DB_PATH = PROJECT_ROOT / "data" / "NBA_AI_full.sqlite"
 L1_VECTORS_DIR = PROJECT_ROOT / "data" / "l2_cache" / "l1_vectors"
@@ -131,172 +132,9 @@ def get_l1_at_game(
 # ---------------------------------------------------------------------------
 
 
-def compute_roster_summary(
-    abilities: np.ndarray, uncertainties: np.ndarray, mask: np.ndarray
-) -> np.ndarray:
-    """Compute 12-d roster summary from L1 vectors.
-
-    Features:
-      0: mean ability norm
-      1: max ability norm (star power)
-      2: std of ability norms (talent spread)
-      3: mean uncertainty
-      4: min uncertainty (most certain player)
-      5: max uncertainty (least certain player)
-      6: n_players / 15 (roster fullness)
-      7: top3 ability fraction (star concentration)
-      8-11: ability quartile norms (Q25, Q50, Q75, Q100 of ability norms)
-    """
-    n_valid = mask.sum()
-    if n_valid == 0:
-        return np.zeros(12, dtype=np.float32)
-
-    valid_abilities = abilities[mask.astype(bool)]
-    valid_uncertainties = uncertainties[mask.astype(bool)]
-
-    ability_norms = np.linalg.norm(valid_abilities, axis=1)
-    unc_means = valid_uncertainties.mean(axis=1)
-
-    sorted_norms = np.sort(ability_norms)[::-1]  # descending
-
-    # Top-3 fraction
-    top3_sum = sorted_norms[:3].sum()
-    total_sum = sorted_norms.sum()
-    top3_frac = top3_sum / max(total_sum, 1e-8)
-
-    # Quartiles of ability norms
-    quartiles = np.percentile(ability_norms, [25, 50, 75, 100])
-
-    summary = np.array(
-        [
-            ability_norms.mean(),  # 0: mean ability norm
-            ability_norms.max(),  # 1: max ability norm
-            ability_norms.std(),  # 2: std ability norm
-            unc_means.mean(),  # 3: mean uncertainty
-            unc_means.min(),  # 4: min uncertainty
-            unc_means.max(),  # 5: max uncertainty
-            n_valid / 15.0,  # 6: roster fullness
-            top3_frac,  # 7: star concentration
-            quartiles[0],  # 8: Q25 ability norm
-            quartiles[1],  # 9: Q50 ability norm
-            quartiles[2],  # 10: Q75 ability norm
-            quartiles[3],  # 11: Q100 ability norm
-        ],
-        dtype=np.float32,
-    )
-    return summary
-
-
 # ---------------------------------------------------------------------------
 # Travel features
 # ---------------------------------------------------------------------------
-
-# Team abbreviation fallback for historical + special games
-KNOWN_TEAM_ABBREVS = set(
-    [
-        "ATL",
-        "BOS",
-        "BKN",
-        "CHA",
-        "CHI",
-        "CLE",
-        "DAL",
-        "DEN",
-        "DET",
-        "GSW",
-        "HOU",
-        "IND",
-        "LAC",
-        "LAL",
-        "MEM",
-        "MIA",
-        "MIL",
-        "MIN",
-        "NOP",
-        "NYK",
-        "OKC",
-        "ORL",
-        "PHI",
-        "PHX",
-        "POR",
-        "SAC",
-        "SAS",
-        "TOR",
-        "UTA",
-        "WAS",
-        "NJN",
-        "SEA",
-        "NOH",
-        "NOK",
-        "CHH",
-        "VAN",
-    ]
-)
-
-
-def compute_travel_features(
-    conn: sqlite3.Connection,
-    game_id: str,
-    home_team: str,
-    away_team: str,
-    date_time_utc: str,
-) -> dict[str, float]:
-    """Compute travel distance and timezone crossing for home and away teams.
-
-    Looks up each team's previous game location to compute travel.
-    """
-    result = {
-        "travel_dist_home": 0.0,
-        "travel_dist_away": 0.0,
-        "tz_crossings_home": 0.0,
-        "tz_crossings_away": 0.0,
-    }
-
-    for team_abbr, prefix in [(home_team, "home"), (away_team, "away")]:
-        # Resolve historical abbreviation
-        modern = HISTORICAL_TO_MODERN.get(team_abbr, team_abbr)
-        if modern not in KNOWN_TEAM_ABBREVS:
-            continue
-
-        # Find this team's previous game (home or away)
-        prev = conn.execute(
-            """
-            SELECT game_id, home_team, date_time_utc
-            FROM Games
-            WHERE status = 3
-              AND (home_team = ? OR away_team = ?)
-              AND date_time_utc < ?
-            ORDER BY date_time_utc DESC
-            LIMIT 1
-            """,
-            (team_abbr, team_abbr, date_time_utc),
-        ).fetchone()
-
-        if prev is None:
-            continue
-
-        prev_game_id, prev_home, _ = prev
-        # The venue is the home team's arena
-        prev_venue = prev_home
-        current_venue = home_team  # current game's venue = home team arena
-
-        try:
-            prev_arena = resolve_arena(prev_venue)
-            curr_arena = resolve_arena(current_venue)
-            dist = haversine_miles(
-                prev_arena.latitude,
-                prev_arena.longitude,
-                curr_arena.latitude,
-                curr_arena.longitude,
-            )
-            tz_diff = abs(prev_arena.utc_offset - curr_arena.utc_offset)
-            result[f"travel_dist_{prefix}"] = dist
-            result[f"tz_crossings_{prefix}"] = tz_diff
-        except KeyError:
-            pass  # Unknown arena, leave as 0
-
-    return result
-
 
 # ---------------------------------------------------------------------------
 # Main cache building
@@ -715,6 +553,9 @@ def build_cache(args: argparse.Namespace) -> None:
     }
     with open(str(OUTPUT_DIR / "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=2)
+    # The predictor needs the same player -> embedding index mapping as training
+    with open(str(OUTPUT_DIR / "player_to_idx.json"), "w") as f:
+        json.dump({str(pid): idx for pid, idx in player_to_idx.items()}, f)
 
     logger.info(f"Cache saved to {OUTPUT_DIR}")
     logger.info(f"  L2 vectors: {l2_vectors.shape}")

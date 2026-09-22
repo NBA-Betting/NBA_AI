@@ -25,6 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from src.database import DB_PATH
 from src.phase5.l2_config import L2Config
+from src.phase5.roster_summary import compute_roster_summary
 from src.phase5.l2_model import PlayerSynergyNetwork
 from src.phase5.l3_config import L3Config
 from src.phase5.l3_model import TeamModel
@@ -99,7 +100,11 @@ class Phase5Predictor(BasePredictor):
                 int(k): v for k, v in json.loads(idx_path.read_text()).items()
             }
         else:
-            self._player_to_idx = {}
+            raise FileNotFoundError(
+                f"{idx_path} missing: without the training-time player index every "
+                "player would map to the padding embedding. Re-run "
+                "scripts/build_phase_b_cache.py or restore the file."
+            )
 
         # Ensure L2 has enough embedding slots
         if self._player_to_idx:
@@ -134,6 +139,10 @@ class Phase5Predictor(BasePredictor):
         )
         self._l3_model.load_state_dict(c_ckpt["l3_state_dict"], strict=False)
         self._l4_model.load_state_dict(c_ckpt["l4_state_dict"], strict=False)
+        # L2 is fine-tuned jointly with L3/L4; use the weights L3/L4 were trained
+        # against rather than the standalone l2.pt.
+        if "l2_state_dict" in c_ckpt:
+            self._l2_model.load_state_dict(c_ckpt["l2_state_dict"], strict=False)
 
         self._l2_model.eval()
         self._l3_model.eval()
@@ -391,35 +400,12 @@ class Phase5Predictor(BasePredictor):
         return weights.astype(np.float32)
 
     def _compute_roster_summary(self, player_data: dict) -> np.ndarray:
-        """Compute 12-d roster summary from player abilities."""
-        abilities = player_data["abilities"].numpy()  # (A, 32)
-        mask = player_data["mask"].numpy()  # (A,)
-        uncertainties = player_data["uncertainties"].numpy()  # (A, 32)
-
-        n_valid = mask.sum()
-        if n_valid == 0:
-            return np.zeros(12, dtype=np.float32)
-
-        valid_ab = abilities[mask]  # (N, 32)
-        valid_unc = uncertainties[mask]
-
-        summary = np.zeros(12, dtype=np.float32)
-        # Mean ability across dims (take first 6 principal dims as summary)
-        summary[0:6] = valid_ab.mean(axis=0)[:6]
-        # Std of ability norms (spread of talent)
-        norms = np.linalg.norm(valid_ab, axis=1)
-        summary[6] = norms.mean()
-        summary[7] = norms.std() if len(norms) > 1 else 0.0
-        # Mean uncertainty
-        summary[8] = valid_unc.mean()
-        # Number of valid players (normalized)
-        summary[9] = n_valid / 13.0
-        # Max ability norm (star power)
-        summary[10] = norms.max() if len(norms) > 0 else 0.0
-        # Min ability norm (depth)
-        summary[11] = norms.min() if len(norms) > 0 else 0.0
-
-        return summary
+        """Compute the 12-d roster summary exactly as the training cache does."""
+        return compute_roster_summary(
+            player_data["abilities"].numpy(),
+            player_data["uncertainties"].numpy(),
+            player_data["mask"].numpy(),
+        )
 
     @staticmethod
     def _normalize(x: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
