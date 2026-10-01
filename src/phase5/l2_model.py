@@ -341,7 +341,8 @@ class SynergyAggregation(nn.Module):
                 total_mean,
                 total_max,
                 total_sum,
-                total_var.sqrt(),
+                # clamp: sqrt'(0) = inf -> NaN grads when var is 0 (<= 2 players)
+                total_var.clamp(min=1e-8).sqrt(),
                 n_pairs / 100.0,  # normalized pair count
                 fm_sum,
                 arch_sum,
