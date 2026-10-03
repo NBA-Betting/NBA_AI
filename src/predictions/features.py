@@ -46,6 +46,22 @@ from src.utils import log_execution_time, lookup_basic_game_info
 # Configuration
 DB_PATH = config["database"]["path"]
 
+# Canonical order used by scripts/train_legacy_models.py and the shipped scalers.
+FEATURE_NAMES = [
+    "Home_Win_Pct", "Home_PPG", "Home_OPP_PPG", "Home_Net_PPG",
+    "Away_Win_Pct", "Away_PPG", "Away_OPP_PPG", "Away_Net_PPG",
+    "Win_Pct_Diff", "PPG_Diff", "OPP_PPG_Diff", "Net_PPG_Diff",
+    "Home_Win_Pct_Home", "Home_PPG_Home", "Home_OPP_PPG_Home", "Home_Net_PPG_Home",
+    "Away_Win_Pct_Away", "Away_PPG_Away", "Away_OPP_PPG_Away", "Away_Net_PPG_Away",
+    "Win_Pct_Home_Away_Diff", "PPG_Home_Away_Diff", "OPP_PPG_Home_Away_Diff",
+    "Net_PPG_Home_Away_Diff", "Time_Decay_Home_Win_Pct", "Time_Decay_Home_PPG",
+    "Time_Decay_Home_OPP_PPG", "Time_Decay_Home_Net_PPG", "Time_Decay_Away_Win_Pct",
+    "Time_Decay_Away_PPG", "Time_Decay_Away_OPP_PPG", "Time_Decay_Away_Net_PPG",
+    "Time_Decay_Win_Pct_Diff", "Time_Decay_PPG_Diff", "Time_Decay_OPP_PPG_Diff",
+    "Time_Decay_Net_PPG_Diff", "Day_of_Season", "Home_Rest_Days", "Home_Game_Freq",
+    "Away_Rest_Days", "Away_Game_Freq", "Rest_Days_Diff", "Game_Freq_Diff",
+]
+
 
 @log_execution_time(average_over="prior_states_dict")
 def create_feature_sets(prior_states_dict, db_path=DB_PATH):
@@ -64,6 +80,17 @@ def create_feature_sets(prior_states_dict, db_path=DB_PATH):
     logging.debug(f"Creating feature sets for {len(prior_states_dict)} games...")
     game_ids = list(prior_states_dict.keys())
     game_info = lookup_basic_game_info(game_ids, db_path)
+    seasons = list({info["season"] for info in game_info.values()})
+    season_starts = {}
+    if seasons:
+        with get_db(db_path) as conn:
+            season_starts = dict(conn.execute(
+                f"""SELECT season, MIN(date_time_utc) FROM Games
+                WHERE season IN ({','.join('?' for _ in seasons)})
+                AND season_type IN ('Regular Season', 'Post Season')
+                GROUP BY season""",
+                seasons,
+            ))
 
     # Initialize an empty dictionary to store the features for each game
     features_dict = {}
@@ -107,9 +134,20 @@ def create_feature_sets(prior_states_dict, db_path=DB_PATH):
             half_life=10,
         )
 
-        # Create rest days and day of season features using the home and away teams' prior states
+        # Previous-season scoring priors must not make opening-night rest or
+        # season progress span the offseason. Use only current-season dates.
+        states = prior_states_dict[game_id]
+        home_schedule_df = (
+            pd.DataFrame() if states.get("home_prior_season") else home_prior_states_df
+        )
+        away_schedule_df = (
+            pd.DataFrame() if states.get("away_prior_season") else away_prior_states_df
+        )
+        has_fallback = states.get("home_prior_season") or states.get("away_prior_season")
+        season_start = season_starts.get(game_info["season"]) if has_fallback else None
         rest_and_day_of_season_features_df = _create_rest_and_season_features(
-            home_prior_states_df, away_prior_states_df, game_date
+            home_schedule_df, away_schedule_df, game_date,
+            season_start=season_start[:10] if season_start else None,
         )
 
         # Concatenate all the features into a single DataFrame
@@ -244,9 +282,12 @@ def load_feature_sets(game_ids, db_path=DB_PATH):
         )
 
         # Fetch the results and construct the dictionary of feature sets
-        feature_sets = {
-            game_id: json.loads(feature_set) for game_id, feature_set in cursor
-        }
+        feature_sets = {}
+        for game_id, feature_set in cursor:
+            try:
+                feature_sets[game_id] = json.loads(feature_set)
+            except (TypeError, json.JSONDecodeError):
+                logging.warning(f"Skipping malformed feature JSON for game {game_id}")
 
     non_empty_feature_sets_count = len([fs for fs in feature_sets.values() if fs])
     empty_feature_sets_count = len(feature_sets) - non_empty_feature_sets_count
@@ -547,7 +588,7 @@ def _create_time_decay_features(
     return pd.DataFrame([time_decay_features])
 
 
-def _create_rest_and_season_features(home_df, away_df, game_date):
+def _create_rest_and_season_features(home_df, away_df, game_date, season_start=None):
     """
     Creates features related to rest days and days into season for both home and away teams.
 
@@ -577,9 +618,17 @@ def _create_rest_and_season_features(home_df, away_df, game_date):
         # Convert target_date to datetime
         target_date = pd.to_datetime(target_date)
 
+        if df.empty:
+            # Opening game: no recent workload, and a rested team. Seven days
+            # expresses full rest without feeding months into an in-season model.
+            day_of_season = (target_date - pd.to_datetime(season_start or game_date)).days
+            return 7, day_of_season, 0.0
+
         # Parse all game dates once (vectorized)
         game_dates = pd.to_datetime(df["game_date"])
-        team_season_start = game_dates.min()
+        team_season_start = (
+            pd.to_datetime(season_start) if season_start else game_dates.min()
+        )
 
         # Filter previous games (vectorized comparison)
         previous_mask = game_dates < target_date

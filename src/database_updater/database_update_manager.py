@@ -1251,7 +1251,10 @@ def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
     FROM Games g1
     WHERE g1.season = ?
       AND g1.season_type IN ("Regular Season", "Post Season")
-      AND g1.pre_game_data_finalized = 0
+      AND (g1.pre_game_data_finalized = 0 OR NOT EXISTS (
+          SELECT 1 FROM Features f
+          WHERE f.game_id = g1.game_id AND LENGTH(f.feature_set) > 10
+      ))  -- Retry opening games finalized with empty features by older code
       AND g1.status = 1  -- Not Started
       AND g1.status_text != 'PPD'  -- Exclude postponed games
       AND NOT EXISTS (

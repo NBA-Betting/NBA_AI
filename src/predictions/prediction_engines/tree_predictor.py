@@ -105,6 +105,9 @@ class TreePredictor(BaseMLPredictor):
 
         predictions = {}
         games = self.load_pre_game_data(game_ids)
+        game_ids = list(games)
+        if not game_ids:
+            return {}
 
         features = [games[game_id] for game_id in game_ids]
         features_df = pd.DataFrame(features).fillna(0)

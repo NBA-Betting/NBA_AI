@@ -8,6 +8,7 @@ import pytest
 
 from src.pipeline import orchestrator
 from src.predictions import prediction_manager
+from src.database_updater import database_update_manager
 
 
 @pytest.fixture
@@ -27,6 +28,7 @@ def pipeline(tmp_path, monkeypatch):
         )
     # Baseline needs no files, so exercise failures without loading ML runtimes.
     monkeypatch.setattr(orchestrator, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(database_update_manager, "update_pre_game_data", lambda *args: None)
     return orchestrator.PipelineOrchestrator("2026-2027", str(db_path))
 
 

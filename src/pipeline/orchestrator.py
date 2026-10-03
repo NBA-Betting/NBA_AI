@@ -429,6 +429,10 @@ class PipelineOrchestrator:
         if not game_ids:
             return {"status": "skipped", "predictions_generated": 0, "game_ids": []}
 
+        from src.database_updater.database_update_manager import update_pre_game_data
+
+        update_pre_game_data(self.resolved_season, self.db_path)
+
         # Determine which predictors are available based on model files
         predictors_to_run = ["Baseline"]  # Always available (formula-based)
 
