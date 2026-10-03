@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -116,6 +117,7 @@ class PipelineOrchestrator:
 
         # Determine overall status
         status = self._determine_status(summary["errors"], summary["stages"])
+        summary["status"] = status
         games_processed = sum(
             s.get("games_processed", 0) for s in summary["stages"].values()
         )
@@ -222,6 +224,7 @@ class PipelineOrchestrator:
 
         # Determine overall status
         status = self._determine_status(summary["errors"], summary["stages"])
+        summary["status"] = status
 
         monitor.complete_run(
             run_id,
@@ -425,6 +428,7 @@ class PipelineOrchestrator:
         logger.info(f"Available predictors: {predictors_to_run}")
         total_preds = 0
         results_by_predictor = {}
+        errors = []
 
         for predictor_name in predictors_to_run:
             try:
@@ -459,13 +463,20 @@ class PipelineOrchestrator:
                 total_preds += n
                 results_by_predictor[predictor_name] = n
                 logger.info(f"  {predictor_name}: {n} predictions generated")
+                missing = set(needs_prediction) - set(predictions or {})
+                if missing:
+                    errors.append(
+                        f"{predictor_name}: missing predictions for {', '.join(sorted(missing))}"
+                    )
 
             except Exception as e:
                 logger.warning(f"  {predictor_name} failed: {e}")
                 results_by_predictor[predictor_name] = 0
+                errors.append(f"{predictor_name}: {e}")
 
         return {
-            "status": "ok",
+            "status": ("partial" if total_preds else "error") if errors else "ok",
+            "error": "; ".join(errors) if errors else None,
             "predictions_generated": total_preds,
             "game_ids": game_ids,
             "by_predictor": results_by_predictor,
@@ -567,14 +578,16 @@ def main():
             f"\n{args.mode} pipeline complete in {total}s — {errors} errors, {preds} predictions"
         )
 
+    runs = [result["post_game"], result["pre_game"]] if args.mode == "full" else [result]
     # Print any errors
-    for err in result.get("errors", []):
+    for err in (err for run in runs for err in run.get("errors", [])):
         print(f"  ERROR: {err}")
 
     # Print any warnings
-    for warn in result.get("warnings", []):
+    for warn in (warn for run in runs for warn in run.get("warnings", [])):
         print(f"  WARNING: {warn}")
+    return int(any(run.get("errors") for run in runs))
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
