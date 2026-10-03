@@ -23,6 +23,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 from src.database import DB_PATH, get_db
 
 logger = logging.getLogger(__name__)
+# Keep players without NBA history in the roster, below established rotation players.
+NEW_PLAYER_MINUTES = 5.0
 
 
 class RosterAssembler:
@@ -159,26 +161,6 @@ class RosterAssembler:
 
         Returns list of {player_id, avg_minutes} dicts.
         """
-        # Step 1: Find the team's last 3 game IDs
-        game_rows = conn.execute(
-            """
-            SELECT game_id
-            FROM Games
-            WHERE (home_team = ? OR away_team = ?)
-            AND status = 3
-            AND date_time_utc < ?
-            ORDER BY date_time_utc DESC
-            LIMIT 3
-            """,
-            (team_abbr, team_abbr, before_date),
-        ).fetchall()
-
-        if not game_rows:
-            return []
-
-        game_ids = [row[0] for row in game_rows]
-
-        # Step 2: Get team_id for this abbreviation
         team_row = conn.execute(
             "SELECT team_id FROM Teams WHERE abbreviation = ?",
             (team_abbr,),
@@ -187,7 +169,28 @@ class RosterAssembler:
             return []
         team_id = team_row[0]
 
-        # Step 3: Get players from those games for this team
+        # Step 1: Find the team's last 3 games with usable player boxes
+        game_rows = conn.execute(
+            """
+            SELECT g.game_id
+            FROM Games g
+            WHERE (home_team = ? OR away_team = ?)
+            AND status = 3
+            AND date_time_utc < ?
+            AND season_type IN ('Regular Season', 'Post Season')
+            AND EXISTS (
+                SELECT 1 FROM PlayerBox pb
+                WHERE pb.game_id = g.game_id AND pb.team_id = ? AND pb.min > 0
+            )
+            ORDER BY date_time_utc DESC
+            LIMIT 3
+            """,
+            (team_abbr, team_abbr, before_date, team_id),
+        ).fetchall()
+
+        game_ids = [row[0] for row in game_rows]
+
+        # Step 2: Get players from those games for this team
         placeholders = ",".join("?" * len(game_ids))
         rows = conn.execute(
             f"""
@@ -220,19 +223,24 @@ class RosterAssembler:
                 # Order new arrivals by their own recent minutes, wherever played
                 row = conn.execute(
                     """
-                    SELECT AVG(pb.min) FROM PlayerBox pb
-                    JOIN Games g ON g.game_id = pb.game_id
-                    WHERE pb.player_id = ? AND pb.min > 0 AND g.date_time_utc < ?
-                    ORDER BY g.date_time_utc DESC LIMIT 3
+                    SELECT AVG(min) FROM (
+                        SELECT pb.min FROM PlayerBox pb
+                        JOIN Games g ON g.game_id = pb.game_id
+                        WHERE pb.player_id = ? AND pb.min > 0
+                        AND g.date_time_utc < ? AND g.status = 3
+                        AND g.season_type IN ('Regular Season', 'Post Season')
+                        ORDER BY g.date_time_utc DESC LIMIT 3
+                    )
                     """,
                     (pid, before_date),
                 ).fetchone()
-                if row and row[0] is not None:
-                    roster[pid] = float(row[0])
+                roster[pid] = (
+                    float(row[0]) if row and row[0] is not None else NEW_PLAYER_MINUTES
+                )
 
         return [
             {"player_id": pid, "avg_minutes": m}
-            for pid, m in sorted(roster.items(), key=lambda x: -x[1])
+            for pid, m in sorted(roster.items(), key=lambda x: (-x[1], x[0]))
         ]
 
     def _load_current_injuries(self, conn) -> dict[str, dict[str, set[int]]]:
