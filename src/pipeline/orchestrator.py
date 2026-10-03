@@ -25,7 +25,7 @@ from src.database import DB_PATH, get_db
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 from src.logging_config import setup_logging
-from src.utils import determine_current_season, get_current_eastern_datetime
+from src.utils import determine_current_season, get_current_eastern_datetime, get_utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +404,22 @@ class PipelineOrchestrator:
             save_predictions,
         )
 
+        # Refresh only forecasts for games that have not started. Schedule
+        # status can lag tipoff, so check the start time as well as status.
+        if game_ids:
+            with get_db(self.db_path) as conn:
+                placeholders = ",".join("?" * len(game_ids))
+                game_ids = [row[0] for row in conn.execute(
+                    f"""
+                    SELECT game_id FROM Games
+                    WHERE game_id IN ({placeholders}) AND status = 1
+                    AND date_time_utc > ?
+                    """,
+                    [*game_ids, get_utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")],
+                )]
+        if not game_ids:
+            return {"status": "skipped", "predictions_generated": 0, "game_ids": []}
+
         # Determine which predictors are available based on model files
         predictors_to_run = ["Baseline"]  # Always available (formula-based)
 
@@ -432,38 +448,17 @@ class PipelineOrchestrator:
 
         for predictor_name in predictors_to_run:
             try:
-                # Check which games still need predictions for this predictor
-                from src.database import get_db
-
-                with get_db(self.db_path) as conn:
-                    placeholders = ",".join("?" * len(game_ids))
-                    existing = conn.execute(
-                        f"""
-                        SELECT game_id FROM Predictions
-                        WHERE predictor = ? AND game_id IN ({placeholders})
-                        """,
-                        [predictor_name] + game_ids,
-                    ).fetchall()
-                already_predicted = {row[0] for row in existing}
-                needs_prediction = [
-                    gid for gid in game_ids if gid not in already_predicted
-                ]
-
-                if not needs_prediction:
-                    logger.info(
-                        f"  {predictor_name}: all {len(game_ids)} games already predicted"
-                    )
-                    results_by_predictor[predictor_name] = 0
-                    continue
-
+                # Each pre-game run follows fresh injuries/betting; replace
+                # earlier forecasts, with Ensemble recomputed last.
                 predictions = make_pre_game_predictions(
-                    needs_prediction, predictor_name, save=True
+                    game_ids, predictor_name, save=False
                 )
+                save_predictions(predictions or {}, predictor_name, db_path=self.db_path)
                 n = len(predictions) if predictions else 0
                 total_preds += n
                 results_by_predictor[predictor_name] = n
                 logger.info(f"  {predictor_name}: {n} predictions generated")
-                missing = set(needs_prediction) - set(predictions or {})
+                missing = set(game_ids) - set(predictions or {})
                 if missing:
                     errors.append(
                         f"{predictor_name}: missing predictions for {', '.join(sorted(missing))}"

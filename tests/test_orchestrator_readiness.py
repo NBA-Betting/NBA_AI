@@ -13,7 +13,15 @@ from src.predictions import prediction_manager
 def pipeline(tmp_path, monkeypatch):
     db_path = tmp_path / "pipeline.sqlite"
     with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE Predictions (game_id TEXT, predictor TEXT)")
+        conn.execute("""CREATE TABLE Predictions (
+            game_id TEXT, predictor TEXT, prediction_datetime TEXT,
+            prediction_set TEXT, PRIMARY KEY (game_id, predictor))""")
+        conn.execute("""CREATE TABLE Games (
+            game_id TEXT, status INTEGER, date_time_utc TEXT)""")
+        conn.executemany(
+            "INSERT INTO Games VALUES (?, 1, '2099-10-20T23:00:00Z')",
+            [("0022600001",), ("0022600002",)],
+        )
     # Baseline needs no files, so exercise failures without loading ML runtimes.
     monkeypatch.setattr(orchestrator, "PROJECT_ROOT", tmp_path)
     return orchestrator.PipelineOrchestrator("2026-2027", str(db_path))
@@ -67,3 +75,33 @@ def test_cli_returns_failure_for_pipeline_errors(pipeline, monkeypatch, mode, ca
     monkeypatch.setattr(orchestrator.sys, "argv", ["orchestrator", "--mode", mode])
     assert orchestrator.main() == 1
     assert "ERROR: Tree: missing features" in capsys.readouterr().out
+
+
+def test_existing_forecasts_refresh_and_started_games_are_preserved(pipeline, monkeypatch):
+    old = {"pred_home_score": 100, "pred_away_score": 90}
+    new = {"pred_home_score": 110, "pred_away_score": 105}
+    with sqlite3.connect(pipeline.db_path) as conn:
+        conn.execute("UPDATE Games SET status = 2 WHERE game_id = '0022600002'")
+        conn.execute("INSERT INTO Games VALUES ('0022600003', 1, '2020-10-20T23:00:00Z')")
+        conn.executemany(
+            "INSERT INTO Predictions VALUES (?, 'Baseline', '2020-01-01', ?)",
+            [(gid, json.dumps(old)) for gid in ["0022600001", "0022600002", "0022600003"]],
+        )
+    calls = []
+
+    def predict(ids, name, save):
+        calls.append((ids, name))
+        return {gid: new for gid in ids}
+
+    monkeypatch.setattr(prediction_manager, "make_pre_game_predictions", predict)
+    result = pipeline._stage_generate_predictions(
+        ["0022600001", "0022600002", "0022600003"], False,
+    )
+
+    assert result["status"] == "ok"
+    assert calls == [(["0022600001"], "Baseline")]
+    with sqlite3.connect(pipeline.db_path) as conn:
+        rows = conn.execute("SELECT game_id, prediction_set FROM Predictions").fetchall()
+    assert dict((gid, json.loads(pred)) for gid, pred in rows) == {
+        "0022600001": new, "0022600002": old, "0022600003": old,
+    }
