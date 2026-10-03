@@ -83,6 +83,12 @@ def process_game_data(games, user_tz=None):
             "away": game["away_team"],
             "game_status": game.get("status_text", ""),  # Human-readable status
             "game_status_code": game["status"],  # Numeric code (1, 2, 3)
+            "season_type": game.get("season_type", ""),
+            "prediction_unavailable_reason": (
+                "Preseason predictions unavailable"
+                if game.get("season_type") == "Pre Season"
+                else ""
+            ),
         }
 
         # Current scores if available
@@ -110,7 +116,11 @@ def process_game_data(games, user_tz=None):
         outbound_game_data.update(_format_date_time_display(game, user_tz))
 
         # Extract predictions (pre-game only — no in-game blending)
-        predictions = game.get("predictions", {})
+        # Preseason games are listed, but the prediction pipeline covers only
+        # regular-season and postseason games. Hide any older preseason forecasts.
+        predictions = (
+            {} if game.get("season_type") == "Pre Season" else game.get("predictions", {})
+        )
         pre_game_predictions = predictions.get("pre_game", {}).get("prediction_set", {})
 
         pred_home_win_pct = pre_game_predictions.get("pred_home_win_pct", "")

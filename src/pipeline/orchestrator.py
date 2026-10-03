@@ -17,7 +17,7 @@ import argparse
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.config import config
@@ -25,7 +25,12 @@ from src.database import DB_PATH, get_db
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 from src.logging_config import setup_logging
-from src.utils import determine_current_season, get_current_eastern_datetime, get_utc_now
+from src.utils import (
+    determine_current_season,
+    get_current_eastern_datetime,
+    get_eastern_tz,
+    get_utc_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -354,32 +359,34 @@ class PipelineOrchestrator:
     def _stage_find_todays_games(self) -> dict:
         """Stage: query the Games table for today's upcoming games (status=1).
 
-        Uses an ET-aware UTC window (5am-5am UTC) to correctly handle
-        late-night ET games that cross the UTC date boundary.
+        Uses Eastern midnight boundaries, including daylight saving changes.
+        Preseason games remain visible in the app but are not predicted.
         """
         now_et = get_current_eastern_datetime()
         today_str = now_et.strftime("%Y-%m-%d")
 
-        # ET date → UTC window: games on an ET date span from ~5am UTC to ~5am UTC next day
-        # (EST=UTC-5, EDT=UTC-4). Using 5am covers both DST cases.
-        utc_start = f"{today_str}T05:00:00Z"
-        # Next day
-        from datetime import timedelta
-
-        tomorrow = now_et + timedelta(days=1)
-        tomorrow_str = tomorrow.strftime("%Y-%m-%d")
-        utc_end = f"{tomorrow_str}T05:00:00Z"
+        midnight = datetime.strptime(today_str, "%Y-%m-%d")
+        eastern = get_eastern_tz()
+        utc_start = eastern.localize(midnight).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        utc_end = eastern.localize(midnight + timedelta(days=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         with get_db(self.db_path) as conn:
             cursor = conn.cursor()
+            if not cursor.execute(
+                "SELECT 1 FROM Games WHERE season = ? LIMIT 1", (self.resolved_season,)
+            ).fetchone():
+                raise RuntimeError(f"No schedule loaded for {self.resolved_season}")
             cursor.execute(
                 """
                 SELECT game_id FROM Games
                 WHERE date_time_utc >= ? AND date_time_utc < ?
                 AND status = 1
+                AND season = ? AND season_type IN ('Regular Season', 'Post Season')
+                AND status_text != 'PPD' AND date_time_utc > ?
                 ORDER BY date_time_utc
                 """,
-                (utc_start, utc_end),
+                (utc_start, utc_end, self.resolved_season,
+                 get_utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")),
             )
             game_ids = [row[0] for row in cursor.fetchall()]
 
@@ -414,8 +421,10 @@ class PipelineOrchestrator:
                     SELECT game_id FROM Games
                     WHERE game_id IN ({placeholders}) AND status = 1
                     AND date_time_utc > ?
+                    AND season = ? AND season_type IN ('Regular Season', 'Post Season')
+                    AND status_text != 'PPD'
                     """,
-                    [*game_ids, get_utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")],
+                    [*game_ids, get_utc_now().strftime("%Y-%m-%dT%H:%M:%SZ"), self.resolved_season],
                 )]
         if not game_ids:
             return {"status": "skipped", "predictions_generated": 0, "game_ids": []}

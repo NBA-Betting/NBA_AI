@@ -63,7 +63,8 @@ function fetchAndUpdateGames() {
           const predSpreadDisplay = isPostponed ? "-" : game.pred_spread || "-";
           const predWinnerDisplay = isPostponed
             ? "-"
-            : `${game.pred_winner} ${game.pred_win_pct}`;
+            : game.prediction_unavailable_reason ||
+              `${game.pred_winner} ${game.pred_win_pct}`;
 
           // Color-coding classes for completed games
           const winnerClass =
@@ -281,7 +282,7 @@ function showGameDetails(gameId) {
       template.querySelector("#templateOpenSpread").textContent =
         game.opening_spread || "-";
       template.querySelector("#templatePredictedSpread").textContent =
-        game.pred_spread || "-";
+        game.prediction_unavailable_reason || game.pred_spread || "-";
 
       // Show actual margin for completed games as "TEAM by X"
       if (gameStatusCode === 3 && homeScore !== "" && awayScore !== "") {
