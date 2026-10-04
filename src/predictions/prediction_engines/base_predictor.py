@@ -20,8 +20,13 @@ Usage:
 """
 
 from abc import ABC, abstractmethod
+import logging
+import math
+from numbers import Real
 
-from src.predictions.features import load_feature_sets
+from src.predictions.features import FEATURE_NAMES, load_feature_sets
+
+SCORE_FEATURES = ("Home_PPG", "Home_OPP_PPG", "Away_PPG", "Away_OPP_PPG")
 
 
 class BasePredictor(ABC):
@@ -31,6 +36,8 @@ class BasePredictor(ABC):
     Provides common functionality for loading pre-game data (feature sets).
     Subclasses must implement make_pre_game_predictions().
     """
+
+    required_features = SCORE_FEATURES
 
     def __init__(self, model_paths=None):
         """
@@ -70,7 +77,38 @@ class BasePredictor(ABC):
             dict: Dictionary mapping game_id to feature dictionary.
         """
         feature_sets = load_feature_sets(game_ids)
-        return feature_sets
+        valid = {}
+        for game_id in game_ids:
+            row = feature_sets.get(game_id)
+            if not isinstance(row, dict) or not all(
+                name in row for name in self.required_features
+            ):
+                logging.warning(f"Skipping game {game_id}: missing prediction features")
+                continue
+            cleaned = {}
+            for name in self.required_features:
+                value = row[name]
+                # Existing models impute unavailable contextual stats as zero,
+                # but scores must have actual data and infinities are invalid.
+                if value is None or (isinstance(value, Real) and math.isnan(value)):
+                    if name in SCORE_FEATURES:
+                        break
+                    cleaned[name] = None
+                elif (
+                    isinstance(value, Real)
+                    and not isinstance(value, bool)
+                    and math.isfinite(value)
+                ):
+                    cleaned[name] = value
+                else:
+                    break
+            else:
+                if self.required_features is SCORE_FEATURES and "pred_players" in row:
+                    cleaned["pred_players"] = row["pred_players"]
+                valid[game_id] = cleaned
+                continue
+            logging.warning(f"Skipping game {game_id}: invalid prediction features")
+        return valid
 
 
 class BaseMLPredictor(BasePredictor):
@@ -82,6 +120,8 @@ class BaseMLPredictor(BasePredictor):
     - load_models(): Load ML model(s) from self.model_paths
     - make_pre_game_predictions(game_ids): Generate predictions using loaded models
     """
+
+    required_features = FEATURE_NAMES
 
     def __init__(self, model_paths=None):
         """

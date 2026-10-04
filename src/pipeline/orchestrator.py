@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.config import config
@@ -24,7 +25,12 @@ from src.database import DB_PATH, get_db
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 from src.logging_config import setup_logging
-from src.utils import determine_current_season, get_current_eastern_datetime
+from src.utils import (
+    determine_current_season,
+    get_current_eastern_datetime,
+    get_eastern_tz,
+    get_utc_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +122,7 @@ class PipelineOrchestrator:
 
         # Determine overall status
         status = self._determine_status(summary["errors"], summary["stages"])
+        summary["status"] = status
         games_processed = sum(
             s.get("games_processed", 0) for s in summary["stages"].values()
         )
@@ -222,6 +229,7 @@ class PipelineOrchestrator:
 
         # Determine overall status
         status = self._determine_status(summary["errors"], summary["stages"])
+        summary["status"] = status
 
         monitor.complete_run(
             run_id,
@@ -351,32 +359,34 @@ class PipelineOrchestrator:
     def _stage_find_todays_games(self) -> dict:
         """Stage: query the Games table for today's upcoming games (status=1).
 
-        Uses an ET-aware UTC window (5am-5am UTC) to correctly handle
-        late-night ET games that cross the UTC date boundary.
+        Uses Eastern midnight boundaries, including daylight saving changes.
+        Preseason games remain visible in the app but are not predicted.
         """
         now_et = get_current_eastern_datetime()
         today_str = now_et.strftime("%Y-%m-%d")
 
-        # ET date → UTC window: games on an ET date span from ~5am UTC to ~5am UTC next day
-        # (EST=UTC-5, EDT=UTC-4). Using 5am covers both DST cases.
-        utc_start = f"{today_str}T05:00:00Z"
-        # Next day
-        from datetime import timedelta
-
-        tomorrow = now_et + timedelta(days=1)
-        tomorrow_str = tomorrow.strftime("%Y-%m-%d")
-        utc_end = f"{tomorrow_str}T05:00:00Z"
+        midnight = datetime.strptime(today_str, "%Y-%m-%d")
+        eastern = get_eastern_tz()
+        utc_start = eastern.localize(midnight).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        utc_end = eastern.localize(midnight + timedelta(days=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         with get_db(self.db_path) as conn:
             cursor = conn.cursor()
+            if not cursor.execute(
+                "SELECT 1 FROM Games WHERE season = ? LIMIT 1", (self.resolved_season,)
+            ).fetchone():
+                raise RuntimeError(f"No schedule loaded for {self.resolved_season}")
             cursor.execute(
                 """
                 SELECT game_id FROM Games
                 WHERE date_time_utc >= ? AND date_time_utc < ?
                 AND status = 1
+                AND season = ? AND season_type IN ('Regular Season', 'Post Season')
+                AND status_text != 'PPD' AND date_time_utc > ?
                 ORDER BY date_time_utc
                 """,
-                (utc_start, utc_end),
+                (utc_start, utc_end, self.resolved_season,
+                 get_utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")),
             )
             game_ids = [row[0] for row in cursor.fetchall()]
 
@@ -400,6 +410,28 @@ class PipelineOrchestrator:
             make_pre_game_predictions,
             save_predictions,
         )
+
+        # Refresh only forecasts for games that have not started. Schedule
+        # status can lag tipoff, so check the start time as well as status.
+        if game_ids:
+            with get_db(self.db_path) as conn:
+                placeholders = ",".join("?" * len(game_ids))
+                game_ids = [row[0] for row in conn.execute(
+                    f"""
+                    SELECT game_id FROM Games
+                    WHERE game_id IN ({placeholders}) AND status = 1
+                    AND date_time_utc > ?
+                    AND season = ? AND season_type IN ('Regular Season', 'Post Season')
+                    AND status_text != 'PPD'
+                    """,
+                    [*game_ids, get_utc_now().strftime("%Y-%m-%dT%H:%M:%SZ"), self.resolved_season],
+                )]
+        if not game_ids:
+            return {"status": "skipped", "predictions_generated": 0, "game_ids": []}
+
+        from src.database_updater.database_update_manager import update_pre_game_data
+
+        update_pre_game_data(self.resolved_season, self.db_path)
 
         # Determine which predictors are available based on model files
         predictors_to_run = ["Baseline"]  # Always available (formula-based)
@@ -425,47 +457,34 @@ class PipelineOrchestrator:
         logger.info(f"Available predictors: {predictors_to_run}")
         total_preds = 0
         results_by_predictor = {}
+        errors = []
 
         for predictor_name in predictors_to_run:
             try:
-                # Check which games still need predictions for this predictor
-                from src.database import get_db
-
-                with get_db(self.db_path) as conn:
-                    placeholders = ",".join("?" * len(game_ids))
-                    existing = conn.execute(
-                        f"""
-                        SELECT game_id FROM Predictions
-                        WHERE predictor = ? AND game_id IN ({placeholders})
-                        """,
-                        [predictor_name] + game_ids,
-                    ).fetchall()
-                already_predicted = {row[0] for row in existing}
-                needs_prediction = [
-                    gid for gid in game_ids if gid not in already_predicted
-                ]
-
-                if not needs_prediction:
-                    logger.info(
-                        f"  {predictor_name}: all {len(game_ids)} games already predicted"
-                    )
-                    results_by_predictor[predictor_name] = 0
-                    continue
-
+                # Each pre-game run follows fresh injuries/betting; replace
+                # earlier forecasts, with Ensemble recomputed last.
                 predictions = make_pre_game_predictions(
-                    needs_prediction, predictor_name, save=True
+                    game_ids, predictor_name, save=False
                 )
+                save_predictions(predictions or {}, predictor_name, db_path=self.db_path)
                 n = len(predictions) if predictions else 0
                 total_preds += n
                 results_by_predictor[predictor_name] = n
                 logger.info(f"  {predictor_name}: {n} predictions generated")
+                missing = set(game_ids) - set(predictions or {})
+                if missing:
+                    errors.append(
+                        f"{predictor_name}: missing predictions for {', '.join(sorted(missing))}"
+                    )
 
             except Exception as e:
                 logger.warning(f"  {predictor_name} failed: {e}")
                 results_by_predictor[predictor_name] = 0
+                errors.append(f"{predictor_name}: {e}")
 
         return {
-            "status": "ok",
+            "status": ("partial" if total_preds else "error") if errors else "ok",
+            "error": "; ".join(errors) if errors else None,
             "predictions_generated": total_preds,
             "game_ids": game_ids,
             "by_predictor": results_by_predictor,
@@ -567,14 +586,16 @@ def main():
             f"\n{args.mode} pipeline complete in {total}s — {errors} errors, {preds} predictions"
         )
 
+    runs = [result["post_game"], result["pre_game"]] if args.mode == "full" else [result]
     # Print any errors
-    for err in result.get("errors", []):
+    for err in (err for run in runs for err in run.get("errors", [])):
         print(f"  ERROR: {err}")
 
     # Print any warnings
-    for warn in result.get("warnings", []):
+    for warn in (warn for run in runs for warn in run.get("warnings", [])):
         print(f"  WARNING: {warn}")
+    return int(any(run.get("errors") for run in runs))
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
