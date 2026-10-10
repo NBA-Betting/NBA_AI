@@ -1176,14 +1176,21 @@ def _get_games_needing_betting_data(
         return conn.execute(query, game_ids).fetchall()
 
     if date_range:
+        # Eastern dates: evening games fall on the next UTC day, so widen the
+        # UTC bounds and filter on the Eastern date
+        start, end = date_range
         query = """
             SELECT g.game_id, g.date_time_utc, g.home_team, g.away_team, g.status
             FROM Games g
-            WHERE date(g.date_time_utc) BETWEEN ? AND ?
+            WHERE g.date_time_utc >= ? AND g.date_time_utc < date(?, '+2 days')
               AND g.season_type IN ('Regular Season', 'Post Season')
             ORDER BY g.date_time_utc
         """
-        return conn.execute(query, date_range).fetchall()
+        return [
+            row
+            for row in conn.execute(query, (start, end)).fetchall()
+            if start <= _eastern_date(row["date_time_utc"]) <= end
+        ]
 
     # Season mode - get games needing betting data
     future_cutoff = (now + timedelta(days=FUTURE_CUTOFF_DAYS)).strftime(

@@ -27,6 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import get_db
+from src.utils import to_eastern_date
 
 logger = logging.getLogger(__name__)
 
@@ -438,10 +439,11 @@ def _load_team_rolling_stats(conn) -> dict[tuple[str, str], dict]:
 
 
 def _extract_game_date(date_time_utc: str) -> str:
-    """Extract YYYY-MM-DD from datetime string."""
+    """Eastern date (YYYY-MM-DD) of a tip-off: DarkoDPM.game_date and rest days
+    are Eastern, and evening games fall on the next UTC day."""
     if not date_time_utc:
         return ""
-    return date_time_utc[:10]
+    return to_eastern_date(date_time_utc)
 
 
 def build_player_cache(

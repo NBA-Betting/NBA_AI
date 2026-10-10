@@ -309,10 +309,9 @@ def get_season_start_date(season: str, db_path: str = DB_PATH) -> datetime:
         result = cursor.fetchone()[0]
 
         if result:
-            # Parse ISO format datetime and return just the date part
-            return datetime.fromisoformat(result.replace("Z", "+00:00")).replace(
-                hour=0, minute=0, second=0, microsecond=0, tzinfo=None
-            )
+            # Eastern date of the first tip-off (evening games are the next
+            # UTC day)
+            return datetime.fromisoformat(to_eastern_date(result))
         else:
             # Fallback to Oct 22 if no games found (typical season start)
             season_start_year = int(season.split("-")[0])

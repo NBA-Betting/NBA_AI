@@ -19,6 +19,7 @@ import numpy as np
 import torch
 
 from src.database import get_db
+from src.utils import to_eastern_date
 from src.transformer.gamestates.tokenizer import GameStateTokenizer
 
 logger = logging.getLogger(__name__)
@@ -479,7 +480,7 @@ def build_cache(
 
         home_players, away_players = _parse_players_data(players_data)
 
-        game_date = str(date_utc)[:10] if date_utc else ""
+        game_date = to_eastern_date(date_utc) if date_utc else ""
 
         margin = home_score - away_score
         total = home_score + away_score
@@ -747,7 +748,7 @@ def update_cache(
         away_team = HISTORICAL_TO_CURRENT.get(away_team, away_team)
 
         home_players, away_players = _parse_players_data(players_data)
-        game_date = str(date_utc)[:10] if date_utc else ""
+        game_date = to_eastern_date(date_utc) if date_utc else ""
         margin = home_score - away_score
         total = home_score + away_score
 

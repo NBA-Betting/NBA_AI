@@ -428,12 +428,12 @@ class SeasonHealthChecker:
             result2, _ = self._timed_query(
                 cursor,
                 """
-                SELECT MIN(date(date_time_utc)) FROM Games
+                SELECT MIN(date_time_utc) FROM Games
                 WHERE season = ? AND season_type IN ('Regular Season', 'Post Season')
                 """,
                 (self.season,),
             )
-            first_game_date = result2[0][0]
+            first_game_date = result2[0][0] and to_eastern_date(result2[0][0])
 
             if first_game_date and today.isoformat() > first_game_date:
                 # Season has started, expect some final games

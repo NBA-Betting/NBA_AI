@@ -28,6 +28,7 @@ import numpy as np
 import torch
 
 from src.predictions.prediction_engines.base_predictor import BasePredictor
+from src.utils import to_eastern_date
 
 logger = logging.getLogger(__name__)
 
@@ -385,8 +386,8 @@ class Phase3Predictor(BasePredictor):
         home_team = HISTORICAL_TO_CURRENT.get(home_team, home_team)
         away_team = HISTORICAL_TO_CURRENT.get(away_team, away_team)
 
-        # Extract date string (YYYY-MM-DD) for comparison with cache dates
-        target_date = date_time_utc[:10] if date_time_utc else None
+        # Eastern date (YYYY-MM-DD), as the cache stores game dates
+        target_date = to_eastern_date(date_time_utc) if date_time_utc else None
         if not target_date:
             logger.warning("Game %s has no date_time_utc", game_id)
             return None, 0.0
