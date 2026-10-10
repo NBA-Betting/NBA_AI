@@ -24,6 +24,8 @@ import logging
 import math
 from numbers import Real
 
+import numpy as np
+
 from src.predictions.features import FEATURE_NAMES, load_feature_sets
 
 SCORE_FEATURES = ("Home_PPG", "Home_OPP_PPG", "Away_PPG", "Away_OPP_PPG")
@@ -133,6 +135,19 @@ class BaseMLPredictor(BasePredictor):
         super().__init__(model_paths)
         self.models = []
         self.load_models()
+
+    @staticmethod
+    def _standardize(features: list[dict], mean, std) -> np.ndarray:
+        """Feature matrix with missing values set to the training mean (as in
+        training), then standardized. Without a scaler, missing values are 0."""
+        values = np.array(
+            [[np.nan if v is None else v for v in row.values()] for row in features],
+            dtype=np.float64,
+        )
+        if mean is None:
+            return np.nan_to_num(values)
+        mean, std = np.asarray(mean, dtype=np.float64), np.asarray(std, dtype=np.float64)
+        return (np.where(np.isnan(values), mean, values) - mean) / std
 
     @abstractmethod
     def load_models(self):

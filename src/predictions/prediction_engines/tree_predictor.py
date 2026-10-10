@@ -22,7 +22,6 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-import pandas as pd
 from xgboost import XGBRegressor
 
 from src.predictions.prediction_engines.base_predictor import BaseMLPredictor
@@ -110,12 +109,9 @@ class TreePredictor(BaseMLPredictor):
             return {}
 
         features = [games[game_id] for game_id in game_ids]
-        features_df = pd.DataFrame(features).fillna(0)
-
-        # Standardize features using training-set mean/std
-        features_values = features_df.values
-        if self.scaler_mean is not None:
-            features_values = (features_values - self.scaler_mean) / self.scaler_std
+        features_values = self._standardize(
+            features, self.scaler_mean, self.scaler_std
+        )
 
         # Use the first model for predictions
         # v0.5 saves a tuple of (home_model, away_model); v0.4 saves a single multi-output model
