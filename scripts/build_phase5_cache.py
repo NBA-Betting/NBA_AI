@@ -44,6 +44,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import DB_PATH, get_db  # noqa: E402
+from src.phase5.arena_data import HISTORICAL_TO_MODERN  # noqa: E402
 from src.phase5.l1_store import L1Store, load_game_dates  # noqa: E402
 from src.phase5.l2_config import L2Config  # noqa: E402
 from src.phase5.l2_model import PlayerSynergyNetwork  # noqa: E402
@@ -64,20 +65,28 @@ logger = logging.getLogger(__name__)
 
 def load_games(conn, limit: int | None) -> list[tuple]:
     """(game_id, date_time_utc, season, home_pts, away_pts) for finished games."""
-    rows = conn.execute(
+    # Games keeps the abbreviation of the day (SEA, NJN), Teams today's
+    team_ids = dict(conn.execute("SELECT abbreviation, team_id FROM Teams"))
+    pts = dict(
+        ((gid, tid), p)
+        for gid, tid, p in conn.execute("SELECT game_id, team_id, pts FROM TeamBox")
+    )
+    rows = []
+    for game_id, date_utc, season, home, away in conn.execute(
         """
-        SELECT g.game_id, g.date_time_utc, g.season, th.pts, ta.pts
-        FROM Games g
-        JOIN Teams ht ON ht.abbreviation = g.home_team
-        JOIN Teams at ON at.abbreviation = g.away_team
-        JOIN TeamBox th ON th.game_id = g.game_id AND th.team_id = ht.team_id
-        JOIN TeamBox ta ON ta.game_id = g.game_id AND ta.team_id = at.team_id
-        WHERE g.status = 3 AND g.season >= ?
-        AND g.season_type IN ('Regular Season', 'Post Season')
-        ORDER BY g.date_time_utc
+        SELECT game_id, date_time_utc, season, home_team, away_team FROM Games
+        WHERE status = 3 AND season >= ?
+        AND season_type IN ('Regular Season', 'Post Season')
+        ORDER BY date_time_utc
         """,
         (FIRST_SEASON,),
-    ).fetchall()
+    ):
+        home_pts, away_pts = (
+            pts.get((game_id, team_ids.get(HISTORICAL_TO_MODERN.get(t, t))))
+            for t in (home, away)
+        )
+        if home_pts is not None and away_pts is not None:
+            rows.append((game_id, date_utc, season, home_pts, away_pts))
     return rows[-limit:] if limit else rows
 
 

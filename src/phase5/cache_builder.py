@@ -405,32 +405,17 @@ def _load_team_rolling_stats(conn) -> dict[tuple[str, str], dict]:
     Covers both home and away games. Uses points as proxy for ORTG/DRTG.
     Returns {(team_abbr, season): {ortg, drtg, pace}}.
     """
-    # Get team points and opponent points per game, both home and away
+    # Points for and against per game, keyed by the franchise's current
+    # abbreviation (Teams), so relocated teams (SEA, NJN) are included
     cursor = conn.execute(
         """
-        SELECT team_abbr, season, AVG(team_pts) as avg_pts, AVG(opp_pts) as avg_opp_pts
-        FROM (
-            -- Home games
-            SELECT g.home_team as team_abbr, g.season,
-                   tb.pts as team_pts, tb_opp.pts as opp_pts
-            FROM Games g
-            JOIN TeamBox tb ON g.game_id = tb.game_id
-            JOIN TeamBox tb_opp ON g.game_id = tb_opp.game_id AND tb_opp.team_id != tb.team_id
-            JOIN Teams t ON tb.team_id = t.team_id AND t.abbreviation = g.home_team
-            WHERE g.status = 3
-
-            UNION ALL
-
-            -- Away games
-            SELECT g.away_team as team_abbr, g.season,
-                   tb.pts as team_pts, tb_opp.pts as opp_pts
-            FROM Games g
-            JOIN TeamBox tb ON g.game_id = tb.game_id
-            JOIN TeamBox tb_opp ON g.game_id = tb_opp.game_id AND tb_opp.team_id != tb.team_id
-            JOIN Teams t ON tb.team_id = t.team_id AND t.abbreviation = g.away_team
-            WHERE g.status = 3
-        )
-        GROUP BY team_abbr, season
+        SELECT t.abbreviation, g.season, AVG(tb.pts), AVG(tb_opp.pts)
+        FROM TeamBox tb
+        JOIN Games g ON g.game_id = tb.game_id
+        JOIN TeamBox tb_opp ON tb_opp.game_id = tb.game_id AND tb_opp.team_id != tb.team_id
+        JOIN Teams t ON t.team_id = tb.team_id
+        WHERE g.status = 3
+        GROUP BY t.abbreviation, g.season
         """,
     )
     result = {}

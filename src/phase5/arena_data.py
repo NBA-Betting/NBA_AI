@@ -31,6 +31,14 @@ HISTORICAL_TO_MODERN: Dict[str, str] = {
 }
 
 
+def franchise_abbrs(team_abbr: str) -> list[str]:
+    """Every abbreviation a franchise has had, modern first. Games keeps the
+    abbreviation of the day (SEA, NJN), so a team's games across a relocation
+    need all of them."""
+    modern = HISTORICAL_TO_MODERN.get(team_abbr, team_abbr)
+    return [modern, *(h for h, m in HISTORICAL_TO_MODERN.items() if m == modern)]
+
+
 # ── Arena dataclass ──────────────────────────────────────────────────────────
 
 

@@ -24,46 +24,11 @@ import numpy as np
 import pandas as pd
 
 from src.database import DB_PATH, get_db
-from src.phase5.arena_data import HISTORICAL_TO_MODERN
+from src.phase5.arena_data import ALTITUDE_MAP, HISTORICAL_TO_MODERN, franchise_abbrs
 from src.phase5.travel import compute_travel_features
 
 logger = logging.getLogger(__name__)
 
-
-# Arena altitude (feet) by home team
-ALTITUDE_MAP = {
-    "DEN": 5280,
-    "UTA": 4226,
-    "SLC": 4226,
-    "PHX": 1086,
-    "OKC": 1201,
-    "ATL": 1050,
-    "SAS": 650,
-    "MEM": 337,
-    "DAL": 430,
-    "HOU": 80,
-    "MIN": 830,
-    "MIL": 617,
-    "IND": 715,
-    "CLE": 653,
-    "DET": 600,
-    "CHI": 594,
-    "CHA": 751,
-    "NOP": 7,
-    "POR": 50,
-    "SAC": 30,
-    "LAL": 233,
-    "LAC": 233,
-    "GSW": 0,
-    "BOS": 141,
-    "NYK": 33,
-    "BKN": 33,
-    "PHI": 39,
-    "TOR": 249,
-    "WAS": 0,
-    "ORL": 82,
-    "MIA": 6,
-}
 
 # Rolling feature defaults (league average) when a team has no games yet
 ROLLING_DEFAULTS = {
@@ -185,9 +150,10 @@ class TeamFeatureComputer:
         features = np.zeros(34, dtype=np.float32)
 
         # Get team_id
+        modern = HISTORICAL_TO_MODERN.get(team_abbr, team_abbr)
         team_id = None
         for tid, abbr in team_id_map.items():
-            if abbr == team_abbr:
+            if abbr == modern:
                 team_id = tid
                 break
 
@@ -197,25 +163,27 @@ class TeamFeatureComputer:
 
         # Step 1: Find the team's recent game_ids (extra rows in case some lack
         # box scores; the builder only rolls over games with both TeamBox rows)
+        abbrs = franchise_abbrs(team_abbr)
+        q = ",".join("?" * len(abbrs))
         game_rows = conn.execute(
-            """
+            f"""
             SELECT game_id, home_team, away_team FROM Games
-            WHERE (home_team = ? OR away_team = ?)
+            WHERE (home_team IN ({q}) OR away_team IN ({q}))
             AND status = 3
             AND date_time_utc < ?
             AND season_type IN ('Regular Season', 'Post Season')
             ORDER BY date_time_utc DESC
             LIMIT 20
             """,
-            (team_abbr, team_abbr, before_date),
+            (*abbrs, *abbrs, before_date),
         ).fetchall()
         game_ids = [r[0] for r in game_rows]
         abbr_to_tid = {abbr: tid for tid, abbr in team_id_map.items()}
         team_ids = {team_id} | {
-            abbr_to_tid[a]
+            abbr_to_tid[HISTORICAL_TO_MODERN.get(a, a)]
             for r in game_rows
             for a in r[1:]
-            if a in abbr_to_tid
+            if HISTORICAL_TO_MODERN.get(a, a) in abbr_to_tid
         }
 
         metrics = []
@@ -335,17 +303,19 @@ class TeamFeatureComputer:
         # [2-7] Rest, B2B, games-in-7d for home and away
         for i, team in enumerate([home, away]):
             offset = 2 + i  # rest: 2,3; b2b: 4,5; g7d: 6,7
+            abbrs = franchise_abbrs(team)
+            q = ",".join("?" * len(abbrs))
 
             # Find last game date for this team
             row = conn.execute(
-                """
+                f"""
                 SELECT date_time_utc FROM Games
-                WHERE (home_team = ? OR away_team = ?) AND status = 3
+                WHERE (home_team IN ({q}) OR away_team IN ({q})) AND status = 3
                 AND date_time_utc < ?
                 AND season_type IN ('Regular Season', 'Post Season')
                 ORDER BY date_time_utc DESC LIMIT 1
                 """,
-                (team, team, game_date),
+                (*abbrs, *abbrs, game_date),
             ).fetchone()
 
             if row:
@@ -368,13 +338,13 @@ class TeamFeatureComputer:
                 curr_date = datetime.strptime(game_date[:10], "%Y-%m-%d")
                 week_ago = (curr_date - timedelta(days=7)).strftime("%Y-%m-%d")
                 row7 = conn.execute(
-                    """
+                    f"""
                     SELECT COUNT(*) FROM Games
-                    WHERE (home_team = ? OR away_team = ?) AND status = 3
+                    WHERE (home_team IN ({q}) OR away_team IN ({q})) AND status = 3
                     AND date_time_utc >= ? AND date_time_utc < ?
                     AND season_type IN ('Regular Season', 'Post Season')
                     """,
-                    (team, team, week_ago, game_date),
+                    (*abbrs, *abbrs, week_ago, game_date),
                 ).fetchone()
                 ctx[offset + 4] = float(row7[0]) if row7 else 1.0
             except (ValueError, TypeError):
@@ -384,14 +354,16 @@ class TeamFeatureComputer:
 
         # [12] season_progress: the home team's Nth game of the season,
         # counting this one
+        abbrs = franchise_abbrs(home)
+        q = ",".join("?" * len(abbrs))
         row = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) FROM Games
-            WHERE (home_team = ? OR away_team = ?) AND status = 3
+            WHERE (home_team IN ({q}) OR away_team IN ({q})) AND status = 3
             AND season = ? AND date_time_utc < ?
             AND season_type IN ('Regular Season', 'Post Season')
             """,
-            (home, home, season, game_date),
+            (*abbrs, *abbrs, season, game_date),
         ).fetchone()
         n_games = row[0] + 1 if row else 41
         ctx[12] = min(n_games / 82.0, 1.0)
@@ -415,29 +387,31 @@ def _roster_continuity(
     projected roster (0.5 without one)."""
     start = int(season[:4])
     prev_season = f"{start - 1}-{start}"
+    abbrs = franchise_abbrs(team_abbr)
+    q = ",".join("?" * len(abbrs))
     rows = conn.execute(
-        """
+        f"""
         SELECT pb.player_id, SUM(pb.min) FROM Games g
         JOIN PlayerBox pb ON pb.game_id = g.game_id
-        WHERE (g.home_team = ? OR g.away_team = ?) AND g.status = 3
+        WHERE (g.home_team IN ({q}) OR g.away_team IN ({q})) AND g.status = 3
         AND g.season_type = 'Regular Season' AND g.season = ?
         AND g.date_time_utc < ? AND pb.team_id = ? AND pb.min > 0
         GROUP BY pb.player_id
         """,
-        (team_abbr, team_abbr, season, before_date, team_id),
+        (*abbrs, *abbrs, season, before_date, team_id),
     ).fetchall()
     total_min = sum(m for _, m in rows)
     prev_players = {
         r[0]
         for r in conn.execute(
-            """
+            f"""
             SELECT DISTINCT pb.player_id FROM Games g
             JOIN PlayerBox pb ON pb.game_id = g.game_id
-            WHERE (g.home_team = ? OR g.away_team = ?) AND g.status = 3
+            WHERE (g.home_team IN ({q}) OR g.away_team IN ({q})) AND g.status = 3
             AND g.season_type = 'Regular Season'
             AND g.season = ? AND pb.team_id = ? AND pb.min > 0
             """,
-            (team_abbr, team_abbr, prev_season, team_id),
+            (*abbrs, *abbrs, prev_season, team_id),
         )
     }
     if total_min == 0:
@@ -569,8 +543,9 @@ def _compute_coaching_features(
     was_new: dict[str, bool] = {}
     games_since = defaultdict(int)
 
-    def features_for(team: str, season: str):
-        coach = coach_for(team, team, season)
+    def features_for(abbr: str, season: str):
+        team = HISTORICAL_TO_MODERN.get(abbr, abbr)
+        coach = coach_for(abbr, team, season)
         if coach is None:
             return np.zeros(4, dtype=np.float32), None, 0
         if last_season.get(team) != season:
