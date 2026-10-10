@@ -114,12 +114,19 @@ function fetchAndUpdateGames() {
 
           const spreadCell = textCell(
             isPostponed ? "-" : unavailable || game.pred_spread || "-",
-            "text-center" + grade(game.spread_closer_than_vegas),
+            "text-center" + grade(game.pred_ats_win),
           );
           const winnerCell = textCell(
             isPostponed ? "-" : unavailable ? "" : predWinner,
             "text-center" + grade(game.pred_winner_correct),
           );
+          const lineCell = textCell(
+            isPostponed ? "-" : game.vegas_line || "-",
+            "text-center d-none d-sm-table-cell",
+          );
+          if (game.vegas_line_kind) {
+            lineCell.title = `${game.vegas_line_kind} line`;
+          }
           if (unavailable) {
             spreadCell.colSpan = 2;
           }
@@ -143,10 +150,7 @@ function fetchAndUpdateGames() {
               game.away_full_name,
               game.away_team_display,
             ),
-            textCell(
-              isPostponed ? "-" : game.opening_spread || "-",
-              "text-center d-none d-sm-table-cell",
-            ),
+            lineCell,
             textCell(isPostponed ? "-" : game.home_score, "text-center"),
             textCell(isPostponed ? "-" : game.away_score, "text-center"),
             spreadCell,
@@ -306,8 +310,10 @@ function showGameDetails(gameId) {
         game.away_full_name;
       details.querySelector("#templateHomeLogo").src = game.home_logo_url;
       details.querySelector("#templateAwayLogo").src = game.away_logo_url;
-      details.querySelector("#templateOpenSpread").textContent =
-        game.opening_spread || "-";
+      details.querySelector("#templateLineLabel").textContent =
+        `${game.vegas_line_kind || "Vegas"} line`.toUpperCase();
+      details.querySelector("#templateLine").textContent =
+        game.vegas_line || "-";
       details.querySelector("#templatePredictedSpread").textContent =
         game.prediction_unavailable_reason || game.pred_spread || "-";
 

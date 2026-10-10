@@ -25,6 +25,7 @@ import pytz
 from tzlocal import get_localzone
 
 from src.utils import NBATeamConverter, get_player_image, log_execution_time
+from src.web_app.dashboard import ats_result
 
 TEAM_LOGOS_DIR = Path(__file__).parent / "static" / "img" / "team_logos"
 
@@ -208,12 +209,15 @@ def process_game_data(games, user_tz=None):
             else ""
         )
 
-        # Vegas opening spread: negative = home favored → negate for our convention
-        opening_spread = game.get("opening_spread")
-        outbound_game_data["opening_spread"] = (
-            _spread_display(-opening_spread, home_abbr, away_abbr)
-            if opening_spread is not None
-            else ""
+        # Vegas line: the closing line once there is one, else the opening
+        # line. Vegas convention (negative = home favored), so negate.
+        closing_spread = game.get("closing_spread")
+        line = closing_spread if closing_spread is not None else game.get("opening_spread")
+        outbound_game_data["vegas_line"] = (
+            _spread_display(-line, home_abbr, away_abbr) if line is not None else ""
+        )
+        outbound_game_data["vegas_line_kind"] = (
+            "Closing" if closing_spread is not None else "Opening" if line is not None else ""
         )
 
         # Determine if predicted winner was correct (for completed games)
@@ -235,27 +239,24 @@ def process_game_data(games, user_tz=None):
         else:
             outbound_game_data["pred_winner_correct"] = None
 
-        # Determine if our predicted spread was closer to actual margin than Vegas
+        # Against the spread: graded like the results dashboard, against the
+        # closing line (a push is left ungraded)
         if (
             game["status"] == 3
             and not is_backtest
             and pred_spread != ""
-            and opening_spread is not None
+            and closing_spread is not None
             and outbound_game_data["home_score"] != ""
             and outbound_game_data["away_score"] != ""
         ):
-            home_score = outbound_game_data["home_score"]
-            away_score = outbound_game_data["away_score"]
-            # Actual margin in Vegas convention: negative = home won by that amount
-            actual_margin = -(home_score - away_score)
-            our_spread_val = (
-                -pred_spread
-            )  # pred_spread is model's home advantage; negate for Vegas convention
-            our_error = abs(our_spread_val - actual_margin)
-            vegas_error = abs(opening_spread - actual_margin)
-            outbound_game_data["spread_closer_than_vegas"] = our_error < vegas_error
+            result = ats_result(
+                pred_spread,
+                closing_spread,
+                outbound_game_data["home_score"] - outbound_game_data["away_score"],
+            )
+            outbound_game_data["pred_ats_win"] = None if result == "P" else result == "W"
         else:
-            outbound_game_data["spread_closer_than_vegas"] = None
+            outbound_game_data["pred_ats_win"] = None
 
         # Add sorted players and condensed play-by-play logs if available
         outbound_game_data.update(_get_sorted_players(game, predictions))

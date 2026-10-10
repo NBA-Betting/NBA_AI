@@ -145,26 +145,31 @@ def load_backtest_record(name):
     return games, predictions
 
 
+def ats_result(pred_spread, closing_spread, margin):
+    """
+    "W", "L" or "P" for a predicted home margin against the closing line
+    (Vegas convention, negative = home favored) given the final home margin.
+    The pick is home when the prediction beats the line; a final margin
+    within 0.25 of the line is a push.
+    """
+    margin_vs_line = margin + closing_spread  # > 0 means home covered
+    if abs(margin_vs_line) < 0.25:
+        return "P"
+    return "W" if (pred_spread > -closing_spread) == (margin_vs_line > 0) else "L"
+
+
 def grade_games(games, spreads):
     """
-    Grade a predictor's spreads against the closing line and final margin,
-    in date order.
-
-    ATS: the pick is home when the predicted margin beats the Vegas line
-    (closing_spread is Vegas convention, negative = home favored); a final
-    margin within 0.25 of the line is a push.
+    Grade a predictor's spreads against the closing line (ats_result) and
+    the final margin, in date order.
     """
     graded = []
     for gid in sorted(spreads, key=lambda g: (games[g]["date"], g)):
         g = games[gid]
         spread = spreads[gid]
         margin = g["home_score"] - g["away_score"]
-        vegas_line = -g["closing_spread"]  # home-favored-positive
-        margin_vs_line = margin - vegas_line  # > 0 means home covered
-        if abs(margin_vs_line) < 0.25:
-            result = "P"
-        else:
-            result = "W" if (spread > vegas_line) == (margin_vs_line > 0) else "L"
+        result = ats_result(spread, g["closing_spread"], margin)
+        margin_vs_line = margin + g["closing_spread"]
         graded.append(
             {
                 "game_id": gid,
@@ -177,7 +182,7 @@ def grade_games(games, spreads):
                 "ats_result": result,
                 "home_covered": None if result == "P" else margin_vs_line > 0,
                 "abs_error": round(abs(spread - margin), 1),
-                "vegas_abs_error": abs(vegas_line - margin),
+                "vegas_abs_error": abs(g["closing_spread"] + margin),
             }
         )
     return graded
