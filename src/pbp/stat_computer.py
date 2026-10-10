@@ -5,6 +5,7 @@ Main game processing: iterate events, track lineup/possessions, accumulate stats
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 
 from .constants import (
@@ -502,8 +503,12 @@ def _is_possession_ending_event(
         return False
 
     # Older format: infer from event type
-    # Defensive rebound ends possession
-    if evt.is_rebound and not evt.reb_is_offensive and evt.player_id != 0:
+    # Defensive rebound (player or team) ends possession
+    if evt.is_rebound and not evt.reb_is_offensive:
+        return True
+
+    # Made final free throw ends possession
+    if evt.is_free_throw and evt.is_ft_made and _is_last_free_throw(evt):
         return True
 
     # Turnover ends possession
@@ -528,13 +533,24 @@ def _is_possession_ending_event(
     return False
 
 
+_FT_NUMBER_RE = re.compile(r"(\d) of (\d)")
+
+
+def _is_last_free_throw(evt: Event) -> bool:
+    """True for the last of a free-throw set ("2 of 2"); technicals have no count."""
+    m = _FT_NUMBER_RE.search(evt.description)
+    return bool(m) and m.group(1) == m.group(2)
+
+
 def _is_possession_changing_event(
     evt: Event,
     tracker: LineupTracker,
     current_offense: int,
 ) -> bool:
     """For older format: does this event indicate the offense team changed?"""
-    if evt.is_rebound and not evt.reb_is_offensive and evt.player_id != 0:
+    if evt.is_rebound and not evt.reb_is_offensive:
+        return True
+    if evt.is_free_throw and evt.is_ft_made and _is_last_free_throw(evt):
         return True
     if evt.is_turnover:
         return True

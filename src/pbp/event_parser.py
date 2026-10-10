@@ -13,6 +13,9 @@ from typing import Optional
 from .constants import (
     AT_RIM_CUTOFF,
     CORNER_3_Y_CUTOFF,
+    PAINT_DEPTH,
+    PAINT_HALF_WIDTH,
+    RESTRICTED_AREA_RADIUS,
     SHORT_MID_CUTOFF,
     V3_AREA_TO_ZONE,
 )
@@ -143,14 +146,24 @@ def _compute_distance(loc_x: Optional[int], loc_y: Optional[int]) -> Optional[fl
 
 def _classify_zone_by_coords(
     distance: Optional[float],
+    loc_x: Optional[int],
     loc_y: Optional[int],
     is_3pt: bool,
 ) -> str:
-    """Classify shot zone from distance and coordinates (older format)."""
+    """Classify shot zone from coordinates (older format), matching the live
+    feed's area labels; falls back to distance when coordinates are missing."""
     if is_3pt:
         if loc_y is not None and abs(loc_y) <= CORNER_3_Y_CUTOFF:
             return "corner3"
         return "arc3"
+    if loc_x is not None and loc_y is not None and (loc_x, loc_y) != (0, 0):
+        if math.hypot(loc_x, loc_y) <= RESTRICTED_AREA_RADIUS:
+            return "at_rim"
+        if abs(loc_x) <= PAINT_HALF_WIDTH and loc_y <= PAINT_DEPTH:
+            return "short_mid"
+        return "long_mid"
+    if (loc_x, loc_y) == (0, 0) and not distance:
+        return "at_rim"  # tips and dunks are logged at the hoop with no distance
     if distance is None:
         return ""
     if distance < AT_RIM_CUTOFF:
@@ -235,7 +248,9 @@ def from_older(raw: dict, idx: int) -> Event:
                 evt.shot_distance = float(m.group(1))
 
         # Zone
-        evt.shot_zone = _classify_zone_by_coords(evt.shot_distance, loc_y, evt.is_3pt)
+        evt.shot_zone = _classify_zone_by_coords(
+            evt.shot_distance, loc_x, loc_y, evt.is_3pt
+        )
 
         # Assist — check for assistPersonId field first, then parse description
         assist_pid = _safe_int(raw.get("assistPersonId"))
@@ -256,13 +271,10 @@ def from_older(raw: dict, idx: int) -> Event:
     elif action_type_raw == "Rebound":
         evt.action_type = "rebound"
         evt.is_rebound = True
-        # Offensive vs defensive: parse from description
-        if "Off:" in desc:
-            # e.g., "Favors REBOUND (Off:1 Def:0)"
-            evt.reb_is_offensive = True
-        elif "Def:" in desc and "Off:" not in desc:
-            evt.reb_is_offensive = False
-        # If personId == 0, it's a team rebound (placeholder)
+        # Offensive vs defensive is resolved in _link_older_events
+        if 1610612737 <= person_id <= 1610612766:
+            # Team rebound: personId holds the team id
+            evt.team_id, evt.player_id = person_id, 0
 
     # --- Turnover ---
     elif action_type_raw == "Turnover":
@@ -332,6 +344,9 @@ def from_older(raw: dict, idx: int) -> Event:
         # Older format: standalone block events have empty actionType
         evt.action_type = "block_event"
         evt.block_player_id = person_id
+    elif action_type_raw == "" and "STEAL" in desc.upper():
+        evt.action_type = "steal_event"
+        evt.steal_player_id = person_id
 
     return evt
 
@@ -410,7 +425,7 @@ def from_v3(raw: dict, idx: int) -> Event:
             evt.shot_zone = _classify_zone_v3(area, evt.is_3pt)
         if not evt.shot_zone:
             evt.shot_zone = _classify_zone_by_coords(
-                evt.shot_distance, loc_y, evt.is_3pt
+                evt.shot_distance, loc_x, loc_y, evt.is_3pt
             )
 
         # Assist
@@ -551,8 +566,51 @@ def detect_format(events_raw: list[dict]) -> str:
     return "older"
 
 
+_REB_COUNTS_RE = re.compile(r"\(Off:(\d+) Def:(\d+)\)")
+
+
+def _link_older_events(events: list[Event]) -> None:
+    """Recover from the stats-format feed what the live feed states directly:
+    block/steal rows share the shot's/turnover's actionNumber, rebound type is
+    only given as running per-player counts "(Off:N Def:M)", and there is no
+    fouled-player field (taken from the free throws that follow the foul)."""
+    by_number = {e.action_number: e for e in events if e.is_field_goal or e.is_turnover}
+    for evt in events:
+        target = by_number.get(evt.action_number)
+        if evt.action_type == "block_event" and target and target.is_field_goal:
+            target.block_player_id = evt.block_player_id
+        elif evt.action_type == "steal_event" and target and target.is_turnover:
+            target.steal_player_id = evt.steal_player_id
+
+    reb_counts: dict[int, tuple[int, int]] = {}
+    last_miss_team = 0
+    for i, evt in enumerate(events):
+        if (evt.is_field_goal and not evt.is_made) or (
+            evt.is_free_throw and not evt.is_ft_made
+        ):
+            last_miss_team = evt.team_id
+        elif evt.is_rebound:
+            m = _REB_COUNTS_RE.search(evt.description)
+            if m and evt.player_id:
+                counts = (int(m.group(1)), int(m.group(2)))
+                evt.reb_is_offensive = counts[0] > reb_counts.get(evt.player_id, (0, 0))[0]
+                reb_counts[evt.player_id] = counts
+            else:
+                evt.reb_is_offensive = evt.team_id == last_miss_team
+        elif evt.is_foul and not evt.is_technical and not evt.foul_drawn_player_id:
+            for nxt in events[i + 1 : i + 8]:
+                if (nxt.period, nxt.clock_seconds) != (evt.period, evt.clock_seconds):
+                    break
+                if nxt.is_free_throw and not nxt.is_technical_ft and nxt.team_id != evt.team_id:
+                    evt.foul_drawn_player_id = nxt.player_id
+                    break
+
+
 def parse_events(events_raw: list[dict]) -> list[Event]:
     """Parse a list of raw PBP JSON dicts into normalized Event objects."""
     fmt = detect_format(events_raw)
-    factory = from_v3 if fmt == "v3" else from_older
-    return [factory(raw, idx) for idx, raw in enumerate(events_raw)]
+    if fmt == "v3":
+        return [from_v3(raw, idx) for idx, raw in enumerate(events_raw)]
+    events = [from_older(raw, idx) for idx, raw in enumerate(events_raw)]
+    _link_older_events(events)
+    return events

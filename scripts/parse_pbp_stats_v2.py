@@ -176,11 +176,14 @@ def process_games(
     conn,
     batch_size: int = 100,
 ):
-    """Process a list of games and insert results into the DB."""
+    """Process a list of games and insert results into the DB.
+
+    Returns the number of games processed (failures are logged and skipped).
+    """
     total = len(game_ids)
     if total == 0:
         print("No games to process.")
-        return
+        return 0
 
     print(f"Processing {total} games...")
     start_time = time.time()
@@ -253,6 +256,7 @@ def process_games(
     )
     if starters_failures:
         print(f"  Starter detection failures: {starters_failures} games")
+    return games_processed
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +295,7 @@ def main():
 
     setup_logging(log_level=args.log_level.upper())
 
-    with get_db() as conn:
+    with get_db(args.db_path) as conn:
         # Create table
         conn.execute(CREATE_TABLE_SQL)
         conn.commit()
