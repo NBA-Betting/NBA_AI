@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run the health check and alert only on NEW or WORSENING issues.
+Run the health check and alert only on NEW or CHANGED issues.
 
 The May 2026 finalization bug went unnoticed for a month because the pipeline
 logged the same warning every day into a log nobody reads, while reporting
@@ -13,7 +13,7 @@ overall success. This wrapper makes regressions loud without daily noise:
 - Alerts append to logs/ALERTS.log AND print to stdout (so they land in the
   cron log too). A desktop notification is attempted best-effort.
 
-Exit codes: 0 = no new issues, 1 = new/worsening issues, 2 = health check
+Exit codes: 0 = no new issues, 1 = new/changed issues, 2 = health check
 itself failed to run (also alerts — silence must never look like success).
 
 Usage:
@@ -85,7 +85,7 @@ def find_new_issues(report: dict, prev_state: dict) -> tuple[list[str], dict]:
             continue
         key = issue_key(r)
         prev = prev_issues.get(key)
-        changed = prev is not None and _worsened(prev.get("actual"), r.get("actual"))
+        changed = prev is not None and _changed(prev.get("actual"), r.get("actual"))
         prev_alert = _parse_dt(prev.get("alerted_at")) if prev else None
         stale = prev_alert is None or (now - prev_alert).days >= CRITICAL_REMINDER_DAYS
         if status == "critical":
@@ -99,7 +99,7 @@ def find_new_issues(report: dict, prev_state: dict) -> tuple[list[str], dict]:
         elif prev is None:
             tag = "NEW WARNING"
         elif changed:
-            tag = "WORSENING"
+            tag = "CHANGED"
         else:
             continue  # known, stable warning — stay quiet
         alerts.append(f"[{tag}] {key}: {r.get('message')}")
@@ -114,7 +114,7 @@ def _parse_dt(value):
         return None
 
 
-def _worsened(prev_actual, curr_actual) -> bool:
+def _changed(prev_actual, curr_actual) -> bool:
     try:
         return float(curr_actual) != float(prev_actual)
     except (TypeError, ValueError):
@@ -181,7 +181,7 @@ def main():
         f"Health check: {summary.get('passed', '?')} passed, "
         f"{summary.get('warnings', '?')} warnings, "
         f"{summary.get('critical', '?')} critical — "
-        f"{len(alerts)} new/worsening"
+        f"{len(alerts)} new/changed"
     )
     if alerts:
         emit_alerts(alerts)
