@@ -159,6 +159,8 @@ def create_game_states(games_info):
                             game_is_complete
                             and row.get("subType") == "end"
                             and int(row.get("period", 1)) >= 4
+                            # tied: overtime rows not in the feed yet
+                            and row.get("scoreHome") != row.get("scoreAway")
                         )
                     )
 
@@ -237,6 +239,8 @@ def create_game_states(games_info):
                                     game_is_complete
                                     and row.get("subType") == "end"
                                     and int(row.get("period", 1)) >= 4
+                                    # tied: overtime rows not in the feed yet
+                                    and current_home_score != current_away_score
                                 )
                             )
                         ),
