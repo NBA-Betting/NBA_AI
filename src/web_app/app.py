@@ -97,6 +97,7 @@ def create_app(predictor):
             query_date_display_str=query_date_display_str,
             prev_date=prev_date_str,
             next_date=next_date_str,
+            predictor=app.config["PREDICTOR"],
         )
 
     @app.route("/game-dates")
