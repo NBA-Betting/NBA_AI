@@ -51,20 +51,28 @@ def main():
     backup = (
         dst / "data" / "backups" / f"phase5_promote_{time.strftime('%Y%m%d_%H%M%S')}"
     )
-    for s, t in [*FILES.items(), (VECTORS, VECTORS)]:
+    # Within one checkout the caches are already in place (source is target)
+    copies = [
+        (s, t)
+        for s, t in [*FILES.items(), (VECTORS, VECTORS)]
+        if (src / s).resolve() != (dst / t).resolve()
+    ]
+    for s, t in copies:
         print(f"{src / s} -> {dst / t}")
     print(f"Backup of replaced files: {backup}")
     if args.dry_run:
         return
 
-    for t in [*FILES.values(), VECTORS]:
+    for _, t in copies:
         if (dst / t).exists():
             (backup / t).parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(dst / t), str(backup / t))
-    for s, t in FILES.items():
+    for s, t in copies:
         (dst / t).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src / s, dst / t)
-    shutil.copytree(src / VECTORS, dst / VECTORS)
+        if t == VECTORS:
+            shutil.copytree(src / s, dst / t)
+        else:
+            shutil.copy2(src / s, dst / t)
     print("Promoted. Restore by moving the backup files back.")
 
 
