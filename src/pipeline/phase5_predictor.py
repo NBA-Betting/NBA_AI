@@ -51,6 +51,9 @@ MAX_PLAYERS = 13
 # was 11.90 / 11.92 / 12.57 / 13.03 at caps 10 / 11 / 12 / 15 (Vegas 10.91).
 # Retraining on pre-game rosters is the real fix.
 ROSTER_CAP = 11
+# A team with fewer players that have L1 vectors looks weaker to the model
+# (roster-size signal), so its prediction would be misleading: skip the game
+MIN_L1_PLAYERS = 8
 # Spread uncertainty for win probability: residual RMSE of the 2025-26 backtest
 SPREAD_SIGMA = 15.0
 
@@ -246,6 +249,11 @@ class Phase5Predictor(BasePredictor):
         # Load L1 vectors for all players
         home_data = self._load_player_data(roster["home_players"])
         away_data = self._load_player_data(roster["away_players"])
+        n_home, n_away = int(home_data["mask"].sum()), int(away_data["mask"].sum())
+        if min(n_home, n_away) < MIN_L1_PLAYERS:
+            raise ValueError(
+                f"too few players with L1 vectors (home {n_home}, away {n_away})"
+            )
 
         # Normalize team features and game context
         home_tf = self._normalize(
