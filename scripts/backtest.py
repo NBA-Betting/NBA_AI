@@ -8,16 +8,24 @@ their stored pre-game features. Each model is compared on the same games with
 the Vegas closing line and a naive baseline (the previous season's mean home
 margin).
 
+With --output, each predictor's per-game predictions are saved as JSON; the
+results dashboard shows such a file (kept in models/backtests/) as a backtest
+record next to the live ones.
+
 Usage:
     python scripts/backtest.py --predictors Phase5 Tree --season 2025-2026
     python scripts/backtest.py --predictors Phase5 --start 2026-01-01 --end 2026-02-28
+    python scripts/backtest.py --predictors Baseline Linear Tree MLP Ensemble Phase3 Phase5 \
+        --season 2025-2026 --output models/backtests/2025-2026.json
 """
 
 import argparse
 import inspect
+import json
 import logging
 import math
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +34,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import DB_PATH, get_db  # noqa: E402
+from src.database_updater.betting import CLOSING_SPREAD_SQL  # noqa: E402
 from src.predictions.prediction_manager import (  # noqa: E402
     PREDICTORS_CONFIG,
     determine_predictor_class,
@@ -34,10 +43,9 @@ from src.utils import to_eastern_date  # noqa: E402
 
 
 def load_games(args) -> list[dict]:
-    query = """
-        SELECT g.game_id, g.date_time_utc, g.season,
-               gs.home_score - gs.away_score,
-               COALESCE(b.covers_closing_spread, b.espn_closing_spread)
+    query = f"""
+        SELECT g.game_id, g.date_time_utc, g.season, g.home_team, g.away_team,
+               gs.home_score, gs.away_score, {CLOSING_SPREAD_SQL}
         FROM Games g
         JOIN GameStates gs ON gs.game_id = g.game_id AND gs.is_final_state = 1
         LEFT JOIN Betting b ON b.game_id = g.game_id
@@ -68,13 +76,19 @@ def load_games(args) -> list[dict]:
     return [
         {
             "game_id": gid,
+            "date": to_eastern_date(dt),
             "month": to_eastern_date(dt)[:7],
-            "margin": float(margin),
+            "home": home,
+            "away": away,
+            "home_score": home_score,
+            "away_score": away_score,
+            "closing_spread": line,
+            "margin": float(home_score - away_score),
             # Closing spreads are home lines (negative = home favored)
             "vegas": -float(line) if line is not None else math.nan,
             "naive": float(naive or 0.0),
         }
-        for gid, dt, _, margin, line in rows
+        for gid, dt, _, home, away, home_score, away_score, line in rows
     ]
 
 
@@ -155,6 +169,8 @@ def main():
     parser.add_argument("--start", help="YYYY-MM-DD")
     parser.add_argument("--end", help="YYYY-MM-DD (inclusive)")
     parser.add_argument("--season-type", default="Regular Season")
+    parser.add_argument("--output", type=Path, help="Save predictions as JSON")
+    parser.add_argument("--note", default="", help="Caveat shown with the saved record")
     args = parser.parse_args()
     if not (args.season or args.start):
         parser.error("give --season or --start/--end")
@@ -164,13 +180,43 @@ def main():
     print(f"{len(games)} games")
     rng = np.random.default_rng(0)
     ref_errors = None
+    saved = {}
     for i, name in enumerate(args.predictors):
-        errors = summarize(
-            name, games, predict(name, [g["game_id"] for g in games]), ref_errors, rng
-        )
+        preds = predict(name, [g["game_id"] for g in games])
+        errors = summarize(name, games, preds, ref_errors, rng)
         if i == 0:
             ref_errors = errors
             print("  (reference for the comparisons below)")
+        if args.output:
+            saved[name] = preds
+            save(args, games, saved)
+
+
+def save(args, games, preds):
+    """Write the games and each predictor's {game_id: [spread, win prob]}."""
+    keys = ("date", "home", "away", "home_score", "away_score", "closing_spread")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        json.dumps(
+            {
+                "label": (
+                    f"{args.season[:4]}-{args.season[7:]}" if args.season else args.start
+                )
+                + " Backtest",
+                "note": args.note,
+                "season_type": args.season_type,
+                "generated_at": time.strftime("%Y-%m-%d"),
+                "games": {g["game_id"]: {k: g[k] for k in keys} for g in games},
+                "predictions": {
+                    name: {
+                        gid: [round(spread, 2), None if p is None else round(p, 4)]
+                        for gid, (spread, p) in p_by_game.items()
+                    }
+                    for name, p_by_game in preds.items()
+                },
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

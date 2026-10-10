@@ -89,6 +89,10 @@ FUTURE_CUTOFF_DAYS = 2  # Don't fetch for games more than 2 days out
 ESPN_LOOKBACK_DAYS = 7  # ESPN API has data for ~7 days back
 COVERS_FINALIZATION_DELAY_DAYS = 1  # Wait 1 day after ESPN window before using Covers
 
+# The closing line used to grade predictions (Vegas convention, negative =
+# home favored): ESPN's when present, else Covers'. SQL on Betting aliased "b".
+CLOSING_SPREAD_SQL = "COALESCE(b.espn_closing_spread, b.covers_closing_spread)"
+
 # Caching thresholds
 CACHE_HOURS = 1  # Cache all non-finalized games for 1 hour, then re-check for new lines
 

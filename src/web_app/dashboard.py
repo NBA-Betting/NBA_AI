@@ -2,300 +2,292 @@
 dashboard.py
 
 Flask blueprint for the prediction results dashboard.
-Provides routes to display ATS performance, P&L, rolling metrics,
-and per-game results for any predictor with stored predictions.
+
+Results are shown per record, each an honest set of past predictions:
+- Live: predictions stored before tip-off, one record per season since live
+  tracking began (LIVE_PREDICTIONS_START).
+- Backtest: a season replayed through each predictor's real code with
+  pre-game inputs only (scripts/backtest.py --output), saved under
+  models/backtests/. Older stored predictions were made by models trained on
+  those games, so they aren't shown.
+
+Every prediction is graded against the closing line (ATS at -110) and the
+actual margin. The model comparison scores all predictors on the games they
+all predicted.
 
 Routes:
-- /dashboard: Renders the dashboard HTML page
-- /dashboard/data: Returns JSON with summary, per-game results, and rolling metrics
+- /dashboard: Renders the dashboard page (filled in by static/js/dashboard.js)
+- /dashboard/data: JSON for one record and predictor
 """
 
 import json
 import logging
+from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 
 from src.database import get_db
-from src.utils import get_eastern_tz, parse_utc_datetime
+from src.database_updater.betting import CLOSING_SPREAD_SQL
+from src.utils import to_eastern_date
 
 dashboard = Blueprint("dashboard", __name__)
 
+# First live prediction date — predictions from here onward are leakage-free
+LIVE_PREDICTIONS_START = "2026-04-01"
+BACKTESTS_DIR = Path(__file__).resolve().parents[2] / "models" / "backtests"
 
-def _get_available_predictors():
-    """Get list of predictors that have predictions in the DB."""
+WIN_PAYOUT = 100 / 1.10  # profit on a winning $100 bet at -110
+
+
+def _season_label(season):
+    """'2025-2026' -> '2025-26'."""
+    return f"{season[:4]}-{season[7:]}"
+
+
+def _live_seasons():
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT predictor FROM Predictions ORDER BY predictor"
+            """
+            SELECT DISTINCT g.season FROM Predictions p
+            JOIN Games g ON g.game_id = p.game_id
+            WHERE g.status = 3 AND g.date_time_utc >= ?
+            ORDER BY g.season DESC
+            """,
+            (LIVE_PREDICTIONS_START,),
         ).fetchall()
     return [row[0] for row in rows]
 
 
-def _requested_filters():
-    """(predictor, live_only) from the query string. The predictor defaults to
-    the one the app was started with, as on the games page."""
-    predictor = request.args.get("predictor") or current_app.config["PREDICTOR"]
-    live_only = request.args.get("live_only", "true").lower() == "true"
-    return predictor, live_only
+def list_records():
+    """Available records, newest live season first, then backtests."""
+    records = [
+        {"id": f"live-{s}", "label": f"{_season_label(s)} Live"}
+        for s in _live_seasons()
+    ]
+    for path in sorted(BACKTESTS_DIR.glob("*.json"), reverse=True):
+        data = json.loads(path.read_text())
+        records.append(
+            {
+                "id": f"backtest-{path.stem}",
+                "label": data["label"],
+                "note": data.get("note", ""),
+            }
+        )
+    return records
 
 
-# First live prediction date — predictions from here onward are leakage-free
-LIVE_PREDICTIONS_START = "2026-04-01"
-
-
-def _fetch_dashboard_data(predictor="Phase5", live_only=False):
+def load_live_record(season=None):
     """
-    Query completed games with predictions and closing lines.
-    Computes ATS results, prediction errors, and rolling metrics.
+    Live predictions (made before tip-off) for finished games with a closing
+    line, for one season or all since live tracking began.
 
-    Args:
-        predictor: Name of predictor to show results for.
-        live_only: If True, only show predictions from April 1, 2026 onward
-                   that were made before tip-off (leakage-free live predictions).
-
-    Returns:
-        dict with keys: summary, games, rolling, predictor, available_predictors, live_only
+    Returns (games, predictions): games is {game_id: {date, home, away,
+    home_score, away_score, closing_spread}}; predictions is
+    {predictor: {game_id: pred_spread}} (positive = home favored).
     """
     # prediction_datetime is "YYYY-MM-DD HH:MM:SS" (UTC); date_time_utc is
     # "YYYY-MM-DDTHH:MM:SSZ", so normalize before comparing
-    date_filter = (
-        f"""AND g.date_time_utc >= '{LIVE_PREDICTIONS_START}'
-          AND p.prediction_datetime
-              < replace(replace(g.date_time_utc, 'T', ' '), 'Z', '')"""
-        if live_only
-        else ""
-    )
-
     query = f"""
-        SELECT
-            g.game_id,
-            g.date_time_utc,
-            g.home_team,
-            g.away_team,
-            gs.home_score,
-            gs.away_score,
-            p.prediction_set,
-            b.espn_opening_spread,
-            COALESCE(b.espn_closing_spread, b.covers_closing_spread) AS closing_spread
+        SELECT g.game_id, g.date_time_utc, g.home_team, g.away_team,
+               gs.home_score, gs.away_score, {CLOSING_SPREAD_SQL},
+               p.predictor, p.prediction_set
         FROM Games g
         JOIN Predictions p ON g.game_id = p.game_id
         JOIN Betting b ON g.game_id = b.game_id
         JOIN GameStates gs ON g.game_id = gs.game_id AND gs.is_final_state = 1
         WHERE g.status = 3
-          AND p.predictor = ?
-          AND COALESCE(b.espn_closing_spread, b.covers_closing_spread) IS NOT NULL
-          {date_filter}
-        ORDER BY g.date_time_utc ASC
+          AND g.date_time_utc >= ?
+          AND p.prediction_datetime
+              < replace(replace(g.date_time_utc, 'T', ' '), 'Z', '')
+          AND {CLOSING_SPREAD_SQL} IS NOT NULL
+          {"AND g.season = ?" if season else ""}
+        ORDER BY g.date_time_utc
     """
-
+    params = [LIVE_PREDICTIONS_START] + ([season] if season else [])
     with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (predictor,))
-        rows = cursor.fetchall()
+        rows = conn.execute(query, params).fetchall()
 
-    games = []
-    for row in rows:
-        (
-            game_id,
-            date_time_utc,
-            home_team,
-            away_team,
-            home_score,
-            away_score,
-            prediction_set_json,
-            opening_spread,
-            closing_spread,
-        ) = row
-
-        prediction_set = json.loads(prediction_set_json)
-        pred_spread = prediction_set.get("pred_spread")
-        pred_home_win_pct = prediction_set.get("pred_home_win_pct")
-
-        # Legacy predictors (Baseline, Tree, etc.) output scores, not spread.
-        # Derive spread from predicted scores if pred_spread is missing.
-        if pred_spread is None:
-            pred_home = prediction_set.get("pred_home_score")
-            pred_away = prediction_set.get("pred_away_score")
-            if pred_home is not None and pred_away is not None:
-                pred_spread = pred_home - pred_away
-            else:
+    games, predictions = {}, {}
+    for gid, dt, home, away, home_score, away_score, closing, predictor, pset in rows:
+        prediction_set = json.loads(pset)
+        spread = prediction_set.get("pred_spread")
+        # Legacy predictors output scores, not a spread
+        if spread is None:
+            home_pts = prediction_set.get("pred_home_score")
+            away_pts = prediction_set.get("pred_away_score")
+            if home_pts is None or away_pts is None:
                 continue
+            spread = home_pts - away_pts
+        games[gid] = {
+            # NBA schedule dates are Eastern; an evening tip-off is already
+            # the next day in UTC
+            "date": to_eastern_date(dt),
+            "home": home,
+            "away": away,
+            "home_score": home_score,
+            "away_score": away_score,
+            "closing_spread": closing,
+        }
+        predictions.setdefault(predictor, {})[gid] = spread
+    return games, predictions
 
-        if closing_spread is None:
-            continue
 
-        actual_margin = home_score - away_score
+def load_backtest_record(name):
+    """A saved backtest, in the same form as load_live_record."""
+    data = json.loads((BACKTESTS_DIR / f"{name}.json").read_text())
+    games = {
+        gid: g for gid, g in data["games"].items() if g["closing_spread"] is not None
+    }
+    predictions = {
+        predictor: {gid: p[0] for gid, p in by_game.items() if gid in games}
+        for predictor, by_game in data["predictions"].items()
+    }
+    return games, predictions
 
-        # ATS logic:
-        # pred_spread is model's raw output: positive = home advantage
-        # closing_spread is Vegas convention: negative = home favored
-        #
-        # Our pick: home covers when pred_spread > -closing_spread
-        # Home actually covers when actual_margin > -closing_spread
-        # Push when |actual_margin - (-closing_spread)| < 0.25
-        #   i.e. |actual_margin + closing_spread| < 0.25
 
-        vegas_line = -closing_spread  # convert to home-favored-positive
-        margin_vs_line = actual_margin - vegas_line  # >0 means home covered
+def grade_games(games, spreads):
+    """
+    Grade a predictor's spreads against the closing line and final margin,
+    in date order.
 
-        # Check for push
+    ATS: the pick is home when the predicted margin beats the Vegas line
+    (closing_spread is Vegas convention, negative = home favored); a final
+    margin within 0.25 of the line is a push.
+    """
+    graded = []
+    for gid in sorted(spreads, key=lambda g: (games[g]["date"], g)):
+        g = games[gid]
+        spread = spreads[gid]
+        margin = g["home_score"] - g["away_score"]
+        vegas_line = -g["closing_spread"]  # home-favored-positive
+        margin_vs_line = margin - vegas_line  # > 0 means home covered
         if abs(margin_vs_line) < 0.25:
-            ats_result = "P"
+            result = "P"
         else:
-            home_covered = margin_vs_line > 0
-            we_picked_home = pred_spread > vegas_line
-            ats_result = "W" if (we_picked_home == home_covered) else "L"
-
-        # Prediction error (our predicted margin vs actual margin)
-        prediction_error = pred_spread - actual_margin
-
-        # Extract date for display. NBA schedule dates are Eastern, and an
-        # evening tip-off has already rolled into the next day in UTC, so the
-        # raw timestamp would date most games a day late.
-        game_date = (
-            parse_utc_datetime(date_time_utc)
-            .astimezone(get_eastern_tz())
-            .strftime("%Y-%m-%d")
-            if date_time_utc
-            else ""
-        )
-
-        games.append(
+            result = "W" if (spread > vegas_line) == (margin_vs_line > 0) else "L"
+        graded.append(
             {
-                "game_id": game_id,
-                "date": game_date,
-                "home": home_team,
-                "away": away_team,
-                "actual_margin": actual_margin,
-                "pred_spread": round(pred_spread, 1),
-                "pred_home_win_pct": (
-                    round(pred_home_win_pct, 3)
-                    if pred_home_win_pct is not None
-                    else None
-                ),
-                "opening_spread": (
-                    round(opening_spread, 1) if opening_spread is not None else None
-                ),
-                "closing_spread": round(closing_spread, 1),
-                "ats_result": ats_result,
-                "home_covered": margin_vs_line > 0 if ats_result != "P" else None,
-                "vegas_abs_error": abs(vegas_line - actual_margin),
-                "error": round(prediction_error, 1),
-                "abs_error": round(abs(prediction_error), 1),
-            }
-        )
-
-    # Compute summary
-    ats_wins = sum(1 for g in games if g["ats_result"] == "W")
-    ats_losses = sum(1 for g in games if g["ats_result"] == "L")
-    ats_pushes = sum(1 for g in games if g["ats_result"] == "P")
-    n_decided = ats_wins + ats_losses
-    ats_pct = (ats_wins / n_decided * 100) if n_decided > 0 else 0.0
-
-    abs_errors = [g["abs_error"] for g in games]
-    mae = sum(abs_errors) / len(abs_errors) if abs_errors else 0.0
-
-    # ROI: flat $100 bets at -110 odds
-    # Win pays $90.91 profit, loss costs $100
-    win_payout = 100 / 1.10  # ~90.91
-    total_profit = (ats_wins * win_payout) - (ats_losses * 100)
-    total_wagered = n_decided * 100
-    roi = (total_profit / total_wagered * 100) if total_wagered > 0 else 0.0
-
-    # Baselines on the same games: always taking the home side, and Vegas's
-    # own closing-line error
-    home_covers = sum(1 for g in games if g["home_covered"])
-    always_home_pct = (home_covers / n_decided * 100) if n_decided > 0 else 0.0
-    vegas_mae = (
-        sum(g["vegas_abs_error"] for g in games) / len(games) if games else 0.0
-    )
-
-    summary = {
-        "always_home_ats_pct": round(always_home_pct, 1),
-        "vegas_mae": round(vegas_mae, 2),
-        "ats_wins": ats_wins,
-        "ats_losses": ats_losses,
-        "ats_pushes": ats_pushes,
-        "ats_pct": round(ats_pct, 1),
-        "roi": round(roi, 1),
-        "mae": round(mae, 2),
-        "n_games": len(games),
-    }
-
-    # Compute rolling metrics
-    window = 20
-    rolling_ats = []
-    cumulative_pl = []
-    running_pl = 0.0
-
-    for i, g in enumerate(games):
-        # Cumulative P&L
-        if g["ats_result"] == "W":
-            running_pl += win_payout
-        elif g["ats_result"] == "L":
-            running_pl -= 100
-
-        cumulative_pl.append(
-            {
+                "game_id": gid,
                 "date": g["date"],
-                "pl": round(running_pl, 2),
-                "game_index": i,
+                "home": g["home"],
+                "away": g["away"],
+                "actual_margin": margin,
+                "pred_spread": round(spread, 1),
+                "closing_spread": round(g["closing_spread"], 1),
+                "ats_result": result,
+                "home_covered": None if result == "P" else margin_vs_line > 0,
+                "abs_error": round(abs(spread - margin), 1),
+                "vegas_abs_error": abs(vegas_line - margin),
             }
         )
+    return graded
 
-        # Rolling ATS % (window of last N decided games)
-        if i >= window - 1:
-            window_games = games[i - window + 1 : i + 1]
-            window_decided = [
-                wg for wg in window_games if wg["ats_result"] in ("W", "L")
-            ]
-            window_wins = sum(1 for wg in window_decided if wg["ats_result"] == "W")
-            window_ats_pct = (
-                (window_wins / len(window_decided) * 100) if window_decided else 0
-            )
 
-            rolling_ats.append(
-                {
-                    "date": g["date"],
-                    "ats_pct": round(window_ats_pct, 1),
-                    "game_index": i,
-                }
-            )
+def summarize(graded):
+    """ATS record, ROI at -110 and spread MAE (with baselines) for graded games."""
+    wins = sum(g["ats_result"] == "W" for g in graded)
+    losses = sum(g["ats_result"] == "L" for g in graded)
+    decided = wins + losses
+    n = len(graded)
 
-    rolling = {
-        "ats": rolling_ats,
-        "cumulative_pl": cumulative_pl,
-    }
+    def pct(x, of):
+        return round(x / of * 100, 1) if of else 0.0
 
     return {
-        "summary": summary,
-        "games": games,
-        "rolling": rolling,
+        "n_games": n,
+        "ats_wins": wins,
+        "ats_losses": losses,
+        "ats_pushes": n - decided,
+        "ats_pct": pct(wins, decided),
+        "always_home_ats_pct": pct(
+            sum(bool(g["home_covered"]) for g in graded), decided
+        ),
+        "profit": round(wins * WIN_PAYOUT - losses * 100, 2),
+        "roi": pct(wins * WIN_PAYOUT - losses * 100, decided * 100),
+        "mae": round(sum(g["abs_error"] for g in graded) / n, 2) if n else 0.0,
+        "vegas_mae": (
+            round(sum(g["vegas_abs_error"] for g in graded) / n, 2) if n else 0.0
+        ),
+    }
+
+
+def _cumulative_pl(graded):
+    running, points = 0.0, []
+    for g in graded:
+        running += (
+            WIN_PAYOUT
+            if g["ats_result"] == "W"
+            else -100 if g["ats_result"] == "L" else 0
+        )
+        points.append({"date": g["date"], "pl": round(running, 2)})
+    return points
+
+
+def fetch_dashboard_data(record_id=None, predictor=None):
+    """
+    Everything the dashboard shows for one record (default: the first
+    listed) and predictor (default: the app's, else the first available).
+    """
+    records = list_records()
+    record = next((r for r in records if r["id"] == record_id), None) or (
+        records[0] if records else None
+    )
+    games, predictions = {}, {}
+    if record:
+        kind, name = record["id"].split("-", 1)
+        games, predictions = (
+            load_live_record(name) if kind == "live" else load_backtest_record(name)
+        )
+    if not predictions:
+        return {"records": records, "record": record and record["id"], "summary": None}
+
+    predictors = sorted(predictions)
+    if predictor not in predictions:
+        default = current_app.config.get("PREDICTOR")
+        predictor = default if default in predictions else predictors[0]
+
+    # The comparison uses only games every predictor has, so it's like for like
+    common = set.intersection(*(set(p) for p in predictions.values()))
+    comparison = [
+        {
+            "predictor": p,
+            **summarize(
+                grade_games(games, {g: s for g, s in spreads.items() if g in common})
+            ),
+        }
+        for p, spreads in predictions.items()
+    ]
+    comparison.sort(key=lambda row: row["mae"])
+
+    graded = grade_games(games, predictions[predictor])
+    return {
+        "records": records,
+        "record": record["id"],
+        "is_backtest": kind == "backtest",
+        "predictors": predictors,
         "predictor": predictor,
-        "live_only": live_only,
-        "available_predictors": _get_available_predictors(),
+        "summary": summarize(graded),
+        "comparison": {"n_games": len(common), "rows": comparison},
+        "cumulative_pl": _cumulative_pl(graded),
+        "games": graded[::-1],  # most recent first
     }
 
 
 @dashboard.route("/dashboard")
 def dashboard_page():
-    """Render the dashboard HTML page."""
-    predictor, live_only = _requested_filters()
-    available = _get_available_predictors()
-    return render_template(
-        "dashboard.html",
-        predictor=predictor,
-        available_predictors=available,
-        live_only=live_only,
-    )
+    """Render the dashboard page; its data comes from /dashboard/data."""
+    return render_template("dashboard.html")
 
 
 @dashboard.route("/dashboard/data")
 def dashboard_data():
-    """Return dashboard data as JSON. Accepts ?predictor= and ?live_only= params."""
+    """Dashboard data as JSON. Accepts ?record= and ?predictor=."""
     try:
-        predictor, live_only = _requested_filters()
-        data = _fetch_dashboard_data(predictor=predictor, live_only=live_only)
-        return jsonify(data)
+        return jsonify(
+            fetch_dashboard_data(
+                request.args.get("record"), request.args.get("predictor")
+            )
+        )
     except Exception:
         logging.exception("Error fetching dashboard data")
         return jsonify({"error": "Internal server error"}), 500

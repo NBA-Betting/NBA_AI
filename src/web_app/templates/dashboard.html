@@ -4,27 +4,17 @@
 
 {% block content %}
 <div class="container mt-4">
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-2">
         <div>
             <h2 class="mb-1">Prediction Results</h2>
-            <p class="text-muted mb-0">Model performance against Vegas closing lines</p>
+            <p class="text-muted mb-0">Graded against Vegas closing lines, $100 bets at -110</p>
         </div>
-        <div class="d-flex align-items-center gap-3">
-            <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" id="liveOnlyToggle" {% if live_only %}checked{% endif %}>
-                <label class="form-check-label" for="liveOnlyToggle"
-                    title="Only predictions made before tip-off. Unchecked also includes backtests, which may cover games a model was trained on.">Live Only</label>
-            </div>
-            <select id="predictorSelect" class="form-select form-select-sm w-auto" aria-label="Predictor">
-                {% if predictor not in available_predictors %}
-                <option value="{{ predictor }}" selected>{{ predictor }}</option>
-                {% endif %}
-                {% for p in available_predictors %}
-                <option value="{{ p }}" {% if p == predictor %}selected{% endif %}>{{ p }}</option>
-                {% endfor %}
-            </select>
+        <div class="d-flex align-items-center gap-2">
+            <select id="recordSelect" class="form-select form-select-sm w-auto" aria-label="Record"></select>
+            <select id="predictorSelect" class="form-select form-select-sm w-auto" aria-label="Predictor"></select>
         </div>
     </div>
+    <p id="recordNote" class="small text-muted mb-4"></p>
 
     <div id="loadingSpinner" class="text-center py-5">
         <div class="spinner-border text-primary" role="status">
@@ -34,61 +24,68 @@
 
     <div id="errorAlert" class="alert alert-danger" hidden></div>
 
-    <p id="emptyState" class="text-center text-muted py-5" hidden>
-        No completed games with {{ predictor }} predictions and closing lines{% if live_only %} yet. Turn off Live Only to include backtests{% endif %}.
-    </p>
+    <p id="emptyState" class="text-center text-muted py-5" hidden>No graded predictions yet.</p>
 
     <div id="dashboardContent" hidden>
         <!-- Summary -->
         <div class="row mb-4 g-3">
             <div class="col-md-3 col-6">
                 <div class="card summary-card h-100">
-                    <div class="card-value" id="atsRecord">--</div>
+                    <div class="card-value" id="atsRecord"></div>
                     <div class="card-label">ATS Record</div>
-                    <div class="card-detail" id="atsPct">--</div>
+                    <div class="card-detail" id="atsPct"></div>
                 </div>
             </div>
             <div class="col-md-3 col-6">
                 <div class="card summary-card h-100">
-                    <div class="card-value" id="roi">--</div>
-                    <div class="card-label">ROI at -110</div>
-                    <div class="card-detail" id="roiDetail">--</div>
+                    <div class="card-value" id="roi"></div>
+                    <div class="card-label">ROI</div>
+                    <div class="card-detail" id="roiDetail"></div>
                 </div>
             </div>
             <div class="col-md-3 col-6">
                 <div class="card summary-card h-100">
-                    <div class="card-value" id="mae">--</div>
+                    <div class="card-value" id="mae"></div>
                     <div class="card-label">Spread MAE</div>
-                    <div class="card-detail" id="maeDetail">--</div>
+                    <div class="card-detail" id="maeDetail"></div>
                 </div>
             </div>
             <div class="col-md-3 col-6">
                 <div class="card summary-card h-100">
-                    <div class="card-value" id="nGames">--</div>
-                    <div class="card-label">Games Tracked</div>
-                    <div class="card-detail" id="nGamesDetail">--</div>
+                    <div class="card-value" id="nGames"></div>
+                    <div class="card-label">Games</div>
+                    <div class="card-detail" id="nGamesDetail"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Charts -->
         <div class="row mb-4 g-3">
-            <div class="col-lg-6">
+            <!-- Cumulative P&L -->
+            <div class="col-lg-7">
                 <div class="card h-100">
                     <div class="card-body">
-                        <h6 class="card-title">Cumulative P&amp;L ($100 flat bets at -110)</h6>
+                        <h6 class="card-title">Cumulative P&amp;L</h6>
                         <div class="chart-container"><canvas id="plChart"></canvas></div>
                     </div>
                 </div>
             </div>
-            <div class="col-lg-6">
+            <!-- All models on the same games -->
+            <div class="col-lg-5">
                 <div class="card h-100">
                     <div class="card-body">
-                        <h6 class="card-title">Rolling 20-Game ATS Win Rate</h6>
-                        <div class="chart-container">
-                            <canvas id="atsChart"></canvas>
-                            <p id="atsChartEmpty" class="chart-empty text-muted" hidden>Needs 20 games</p>
-                        </div>
+                        <h6 class="card-title mb-0">Model Comparison</h6>
+                        <p class="small text-muted" id="comparisonNote"></p>
+                        <table class="table table-sm table-hover table-dashboard mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Model</th>
+                                    <th class="text-end">ATS</th>
+                                    <th class="text-end">ROI</th>
+                                    <th class="text-end">MAE</th>
+                                </tr>
+                            </thead>
+                            <tbody id="comparisonBody"></tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -97,7 +94,7 @@
         <!-- Games -->
         <div class="card mb-4">
             <div class="card-body">
-                <h6 class="card-title">Recent Games</h6>
+                <h6 class="card-title">Games</h6>
                 <div class="table-responsive">
                     <table class="table table-sm table-striped table-dashboard mb-0">
                         <thead>

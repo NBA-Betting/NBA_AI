@@ -17,22 +17,19 @@ class _DashboardConnection:
         return self
 
     def execute(self, query, params=None):
-        if "SELECT DISTINCT predictor" in query:
-            self.rows = [("Phase5",)]
-        else:
-            self.rows = [
-                (
-                    "0022500579",
-                    "2026-01-16T00:00:00Z",
-                    "DET",
-                    "PHX",
-                    110,
-                    105,
-                    '{"pred_spread": 4.0, "pred_home_win_pct": 0.6}',
-                    -3.5,
-                    -3.5,
-                )
-            ]
+        self.rows = [
+            (
+                "0022500579",
+                "2026-04-16T00:00:00Z",
+                "DET",
+                "PHX",
+                110,
+                105,
+                -3.5,
+                "Phase5",
+                '{"pred_spread": 4.0, "pred_home_win_pct": 0.6}',
+            )
+        ]
         return self
 
     def fetchall(self):
@@ -43,6 +40,6 @@ def test_dashboard_dates_are_displayed_in_eastern_time(monkeypatch):
     """An evening Eastern game must not be displayed under the next UTC day."""
     monkeypatch.setattr(dashboard_module, "get_db", _DashboardConnection)
 
-    data = dashboard_module._fetch_dashboard_data("Phase5")
+    games, _ = dashboard_module.load_live_record("2025-2026")
 
-    assert data["games"][0]["date"] == "2026-01-15"
+    assert games["0022500579"]["date"] == "2026-04-15"

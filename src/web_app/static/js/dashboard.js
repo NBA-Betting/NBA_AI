@@ -1,11 +1,18 @@
 /**
  * @module dashboard.js
  *
- * Results dashboard: summary cards, cumulative P&L and rolling ATS charts,
- * and the per-game results table, all from /dashboard/data.
+ * Results dashboard for one record (a live season, or a saved backtest) and
+ * predictor: summary cards, cumulative P&L, a comparison of all models on the
+ * same games, and the graded games. Data comes from /dashboard/data.
  */
 
 const GAMES_PAGE_SIZE = 20;
+const BREAKEVEN_ATS = 52.4; // ATS win rate that breaks even at -110
+const RECORD_NOTES = {
+  live: "Live: predictions made and stored before tip-off.",
+  backtest:
+    "Backtest: the season replayed through each model's live code with pre-game information only.",
+};
 let allGames = [];
 let gamesShown = GAMES_PAGE_SIZE;
 
@@ -19,21 +26,27 @@ function dollars(value, digits = 0) {
   return (value >= 0 ? "+$" : "-$") + Math.abs(value).toFixed(digits);
 }
 
-function currentFilters() {
-  return new URLSearchParams({
-    predictor: document.getElementById("predictorSelect").value,
-    live_only: document.getElementById("liveOnlyToggle").checked,
-  });
+function setText(id, text) {
+  document.getElementById(id).textContent = text;
 }
 
-function showError(message) {
-  const alert = document.getElementById("errorAlert");
-  alert.textContent = message;
-  alert.hidden = false;
+/** Reloads the page for a record and predictor, so the URL can be shared. */
+function navigate(record, predictor) {
+  window.location.search = new URLSearchParams({ record, predictor });
+}
+
+function fillSelect(id, options, selected) {
+  const select = document.getElementById(id);
+  select.replaceChildren(
+    ...options.map(
+      ({ value, label }) => new Option(label, value, false, value === selected),
+    ),
+  );
 }
 
 function loadDashboard() {
-  fetch(`/dashboard/data?${currentFilters()}`)
+  const params = new URLSearchParams(window.location.search);
+  fetch(`/dashboard/data?${params}`)
     .then((response) =>
       response.json().then((data) => {
         if (!response.ok) {
@@ -43,28 +56,46 @@ function loadDashboard() {
       }),
     )
     .then((data) => {
-      if (data.summary.n_games === 0) {
+      fillSelect(
+        "recordSelect",
+        data.records.map((r) => ({ value: r.id, label: r.label })),
+        data.record,
+      );
+      if (!data.summary) {
         document.getElementById("emptyState").hidden = false;
         return;
       }
+      fillSelect(
+        "predictorSelect",
+        data.predictors.map((p) => ({ value: p, label: p })),
+        data.predictor,
+      );
+      const record = data.records.find((r) => r.id === data.record);
+      setText(
+        "recordNote",
+        [RECORD_NOTES[data.is_backtest ? "backtest" : "live"], record.note]
+          .filter(Boolean)
+          .join(" "),
+      );
+
       document.getElementById("dashboardContent").hidden = false;
       populateSummary(data.summary);
-      drawPLChart(data.rolling.cumulative_pl);
-      drawATSChart(data.rolling.ats);
-      allGames = [...data.games].reverse(); // most recent first
+      drawPLChart(data.cumulative_pl);
+      renderComparison(data.comparison, data.record, data.predictor);
+      allGames = data.games;
       renderGamesTable();
     })
-    .catch((error) => showError(`Error loading dashboard: ${error.message}`))
+    .catch((error) => {
+      const alert = document.getElementById("errorAlert");
+      alert.textContent = `Error loading dashboard: ${error.message}`;
+      alert.hidden = false;
+    })
     .finally(() => {
       document.getElementById("loadingSpinner").hidden = true;
     });
 }
 
 function populateSummary(summary) {
-  const setText = (id, text) => {
-    document.getElementById(id).textContent = text;
-  };
-
   setText(
     "atsRecord",
     `${summary.ats_wins}-${summary.ats_losses}` +
@@ -72,22 +103,16 @@ function populateSummary(summary) {
   );
   setText(
     "atsPct",
-    `${summary.ats_pct}% win rate (always home: ${summary.always_home_ats_pct}%)`,
+    `${summary.ats_pct}% (breakeven ${BREAKEVEN_ATS}%, always home ${summary.always_home_ats_pct}%)`,
   );
 
   const roi = document.getElementById("roi");
   roi.textContent = `${summary.roi >= 0 ? "+" : ""}${summary.roi}%`;
   roi.classList.add(summary.roi >= 0 ? "text-profit" : "text-loss");
-
-  // $100 flat bets at -110: a win pays $90.91
-  const profit = summary.ats_wins * (100 / 1.1) - summary.ats_losses * 100;
-  setText("roiDetail", `${dollars(profit)} profit`);
+  setText("roiDetail", `${dollars(summary.profit)} on $100 bets`);
 
   setText("mae", summary.mae.toFixed(2));
-  setText(
-    "maeDetail",
-    `vs actual margin (Vegas: ${summary.vegas_mae.toFixed(2)})`,
-  );
+  setText("maeDetail", `points (Vegas: ${summary.vegas_mae.toFixed(2)})`);
   setText("nGames", summary.n_games);
   setText(
     "nGamesDetail",
@@ -95,92 +120,87 @@ function populateSummary(summary) {
   );
 }
 
-/**
- * Draws a line chart over a date series, with each point's date as its
- * tooltip title.
- */
-function drawLineChart(canvasId, points, datasets, options) {
-  new Chart(document.getElementById(canvasId), {
+function drawPLChart(plData) {
+  if (plData.length === 0) return;
+  new Chart(document.getElementById("plChart"), {
     type: "line",
-    data: { labels: points.map((d) => d.date), datasets },
+    data: {
+      labels: plData.map((d) => d.date),
+      datasets: [
+        {
+          data: plData.map((d) => d.pl),
+          borderColor:
+            plData[plData.length - 1].pl >= 0 ? "#1a7f37" : "#cf222e",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.1,
+        },
+      ],
+    },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { intersect: false, mode: "index" },
       plugins: {
-        legend: options.legend || { display: false },
-        tooltip: { callbacks: { label: options.tooltipLabel } },
+        legend: { display: false },
+        tooltip: {
+          callbacks: { label: (context) => dollars(context.parsed.y, 2) },
+        },
       },
       scales: {
         x: {
-          ticks: { maxRotation: 45, autoSkip: true, maxTicksLimit: 8 },
+          ticks: {
+            maxRotation: 0,
+            autoSkip: true,
+            maxTicksLimit: 6,
+            // "2026-01-15" -> "Jan 15"
+            callback: function (value) {
+              const [y, m, d] = this.getLabelForValue(value).split("-").map(Number);
+              return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              });
+            },
+          },
           grid: { display: false },
         },
-        y: options.y,
+        y: { ticks: { callback: (val) => dollars(val) } },
       },
     },
   });
 }
 
-function drawPLChart(plData) {
-  if (plData.length === 0) return;
-  drawLineChart(
-    "plChart",
-    plData,
-    [
-      {
-        label: "Cumulative P&L ($)",
-        data: plData.map((d) => d.pl),
-        borderColor: plData[plData.length - 1].pl >= 0 ? "#28a745" : "#dc3545",
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.1,
-      },
-    ],
-    {
-      tooltipLabel: (context) => dollars(context.parsed.y, 2),
-      y: { ticks: { callback: (val) => dollars(val) } },
-    },
+/** All models on the games they all predicted; a row selects that model. */
+function renderComparison(comparison, record, selected) {
+  setText(
+    "comparisonNote",
+    `The ${comparison.n_games} games every model predicted, best MAE first`,
   );
-}
-
-function drawATSChart(atsData) {
-  if (atsData.length === 0) {
-    document.getElementById("atsChartEmpty").hidden = false;
-    return;
-  }
-  const constant = (label, value, color, dash, width) => ({
-    label,
-    data: atsData.map(() => value),
-    borderColor: color,
-    borderDash: dash,
-    borderWidth: width,
-    pointRadius: 0,
-  });
-  drawLineChart(
-    "atsChart",
-    atsData,
-    [
-      {
-        label: "20-Game ATS %",
-        data: atsData.map((d) => d.ats_pct),
-        borderColor: "#0d6efd",
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.1,
-      },
-      constant("Breakeven (52.4%)", 52.4, "#ffc107", [6, 4], 1.5),
-      constant("Coin Flip (50%)", 50, "#adb5bd", [3, 3], 1),
-    ],
-    {
-      legend: {
-        position: "bottom",
-        labels: { boxWidth: 12, padding: 15 },
-      },
-      tooltipLabel: (context) =>
-        `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`,
-      y: { min: 20, max: 80, ticks: { callback: (val) => `${val}%` } },
-    },
+  document.getElementById("comparisonBody").replaceChildren(
+    ...comparison.rows.map((row) => {
+      const tr = document.createElement("tr");
+      tr.className = "comparison-row";
+      if (row.predictor === selected) {
+        tr.classList.add("table-active");
+      }
+      const cells = [
+        [row.predictor, ""],
+        [`${row.ats_pct.toFixed(1)}%`, "text-end"],
+        [
+          `${row.roi >= 0 ? "+" : ""}${row.roi.toFixed(1)}%`,
+          `text-end ${row.roi >= 0 ? "text-profit" : "text-loss"}`,
+        ],
+        [row.mae.toFixed(2), "text-end"],
+      ];
+      for (const [text, className] of cells) {
+        const td = document.createElement("td");
+        td.textContent = text;
+        td.className = className;
+        tr.appendChild(td);
+      }
+      tr.addEventListener("click", () => navigate(record, row.predictor));
+      return tr;
+    }),
   );
 }
 
@@ -191,7 +211,7 @@ function renderGamesTable() {
   tbody.replaceChildren(
     ...allGames.slice(0, gamesShown).map((game) => {
       const cells = [
-        [game.date, ""],
+        [game.date, "text-nowrap"],
         [game.home, ""],
         [game.away, ""],
         [signed(game.actual_margin, 0), "text-center"],
@@ -221,12 +241,14 @@ function renderGamesTable() {
 document.addEventListener("DOMContentLoaded", function () {
   loadDashboard();
 
-  // Filters reload the page so the URL can be shared
-  for (const id of ["predictorSelect", "liveOnlyToggle"]) {
-    document.getElementById(id).addEventListener("change", function () {
-      window.location.search = currentFilters();
-    });
-  }
+  const recordSelect = document.getElementById("recordSelect");
+  const predictorSelect = document.getElementById("predictorSelect");
+  recordSelect.addEventListener("change", () =>
+    navigate(recordSelect.value, predictorSelect.value),
+  );
+  predictorSelect.addEventListener("change", () =>
+    navigate(recordSelect.value, predictorSelect.value),
+  );
 
   document.getElementById("showMoreBtn").addEventListener("click", function () {
     gamesShown += GAMES_PAGE_SIZE;
