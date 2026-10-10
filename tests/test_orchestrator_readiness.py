@@ -59,13 +59,16 @@ def test_zero_predictions_cannot_report_success(pipeline, monkeypatch, raises):
 
 
 def test_partial_prediction_coverage_is_reported(pipeline, monkeypatch):
+    """A predictor skipping some games (e.g. Phase3 before a team has played
+    3 games) is reported as a warning, not an error."""
     monkeypatch.setattr(
         prediction_manager, "make_pre_game_predictions",
         lambda *args, **kwargs: {"0022600001": {}},
     )
     result = pipeline._stage_generate_predictions(["0022600001", "0022600002"], False)
-    assert result["status"] == "partial"
-    assert "0022600002" in result["error"]
+    assert result["status"] == "ok"
+    assert result["error"] is None
+    assert "0022600002" in result["warning"]
 
 
 @pytest.mark.parametrize("mode", ["pre-game", "full"])

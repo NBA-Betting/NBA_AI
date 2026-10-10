@@ -226,6 +226,8 @@ class PipelineOrchestrator:
             )
             if stage_result.get("error"):
                 summary["errors"].append(f"predictions: {stage_result['error']}")
+            if stage_result.get("warning"):
+                summary["warnings"].append(f"predictions: {stage_result['warning']}")
 
         summary["total_time"] = round(time.time() - t_start, 1)
 
@@ -467,6 +469,10 @@ class PipelineOrchestrator:
         total_preds = 0
         results_by_predictor = {}
         errors = []
+        # Games a predictor skipped (e.g. Phase3 before a team has 3 games
+        # this season) are warnings; the health check alerts if a predictor's
+        # gap keeps growing. No predictions at all is an error.
+        skipped = []
 
         for predictor_name in predictors_to_run:
             try:
@@ -482,8 +488,8 @@ class PipelineOrchestrator:
                 logger.info(f"  {predictor_name}: {n} predictions generated")
                 missing = set(game_ids) - set(predictions or {})
                 if missing:
-                    errors.append(
-                        f"{predictor_name}: missing predictions for {', '.join(sorted(missing))}"
+                    skipped.append(
+                        f"{predictor_name}: no predictions for {', '.join(sorted(missing))}"
                     )
 
             except Exception as e:
@@ -491,9 +497,13 @@ class PipelineOrchestrator:
                 results_by_predictor[predictor_name] = 0
                 errors.append(f"{predictor_name}: {e}")
 
+        if not total_preds:
+            errors.extend(skipped)
+            skipped = []
         return {
             "status": ("partial" if total_preds else "error") if errors else "ok",
             "error": "; ".join(errors) if errors else None,
+            "warning": "; ".join(skipped) if skipped else None,
             "predictions_generated": total_preds,
             "game_ids": game_ids,
             "by_predictor": results_by_predictor,

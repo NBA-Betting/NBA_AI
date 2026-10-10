@@ -9,7 +9,8 @@ overall success. This wrapper makes regressions loud without daily noise:
 - Runs `src.health_check --skip-pipeline --json` for the given season.
 - Compares against the previous run's state (data/collection_state/health_state.json).
 - Criticals always alert. Warnings alert only when the check is newly
-  failing or its `actual` value got worse since the last run.
+  failing or its value changed since the last run (for completeness
+  checks, the shortfall: expected - actual).
 - Alerts append to logs/ALERTS.log AND print to stdout (so they land in the
   cron log too). A desktop notification is attempted best-effort.
 
@@ -85,7 +86,12 @@ def find_new_issues(report: dict, prev_state: dict) -> tuple[list[str], dict]:
             continue
         key = issue_key(r)
         prev = prev_issues.get(key)
-        changed = prev is not None and _changed(prev.get("actual"), r.get("actual"))
+        # State saved before "value" existed: treat as unchanged, not new
+        changed = (
+            prev is not None
+            and "value" in prev
+            and _changed(prev["value"], _tracked_value(r))
+        )
         prev_alert = _parse_dt(prev.get("alerted_at")) if prev else None
         stale = prev_alert is None or (now - prev_alert).days >= CRITICAL_REMINDER_DAYS
         if status == "critical":
@@ -114,6 +120,17 @@ def _parse_dt(value):
         return None
 
 
+def _tracked_value(result: dict):
+    """What a warning is re-alerted on when it changes: for completeness
+    checks the shortfall (expected - actual), which stays put while known
+    gaps (e.g. Phase3 skipping each team's first games) don't grow, rather
+    than the count itself, which rises every day."""
+    try:
+        return float(result["expected"]) - float(result["actual"])
+    except (KeyError, TypeError, ValueError):
+        return result.get("actual")
+
+
 def _changed(prev_actual, curr_actual) -> bool:
     try:
         return float(curr_actual) != float(prev_actual)
@@ -126,6 +143,7 @@ def save_state(report: dict, alerted_at: dict):
         issue_key(r): {
             "status": r["status"],
             "actual": r.get("actual"),
+            "value": _tracked_value(r),
             "alerted_at": alerted_at.get(issue_key(r)),
         }
         for r in report.get("results", [])
