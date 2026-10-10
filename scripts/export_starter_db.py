@@ -9,7 +9,7 @@ Included:
 - Current season games, box scores, PBP, GameStates, betting, features
 - All predictions (every predictor)
 - Injury reports and cache
-- Reference data (players, teams, attributes, schedule)
+- Reference data (players, teams, attributes, coaches, schedule)
 - Pipeline run history
 
 Excluded:
@@ -117,6 +117,7 @@ def export_starter_db(
         "CoversAttempts",
         "ESPNGameMapping",
         "PipelineRuns",
+        "Coaches",  # the daily pipeline's coaches step would refetch it
     ]
 
     skip_tables = [
@@ -126,7 +127,6 @@ def export_starter_db(
         "DataballrSQRAPM",
         "DataballrWingspan",
         "RAPMArchive",
-        "Coaches",
         "LineupStats",
         "TwoKRatings",
         "PBPPlayerGameStatsV2",
