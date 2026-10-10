@@ -71,6 +71,7 @@ def list_records():
                 "id": f"backtest-{path.stem}",
                 "label": data["label"],
                 "note": data.get("note", ""),
+                "season_type": data.get("season_type", "Regular Season"),
             }
         )
     return records
@@ -216,6 +217,37 @@ def summarize(graded):
     }
 
 
+# A predictor with fewer games than this share of the best-covered one is
+# left out of the comparison, so it can't shrink everyone's common games
+MIN_COMPARISON_COVERAGE = 0.5
+
+
+def compare_predictors(games, predictions):
+    """
+    Score predictors on the games they all predicted, best MAE first.
+
+    Returns (rows, n_common_games, excluded predictor names).
+    """
+    most = max(len(spreads) for spreads in predictions.values())
+    included = {
+        p: spreads
+        for p, spreads in predictions.items()
+        if len(spreads) >= MIN_COMPARISON_COVERAGE * most
+    }
+    common = set.intersection(*(set(spreads) for spreads in included.values()))
+    rows = [
+        {
+            "predictor": p,
+            **summarize(
+                grade_games(games, {g: s for g, s in spreads.items() if g in common})
+            ),
+        }
+        for p, spreads in included.items()
+    ]
+    rows.sort(key=lambda row: row["mae"])
+    return rows, len(common), sorted(predictions.keys() - included.keys())
+
+
 def _cumulative_pl(graded):
     running, points = 0.0, []
     for g in graded:
@@ -251,19 +283,7 @@ def fetch_dashboard_data(record_id=None, predictor=None):
         default = current_app.config.get("PREDICTOR")
         predictor = default if default in predictions else predictors[0]
 
-    # The comparison uses only games every predictor has, so it's like for like
-    common = set.intersection(*(set(p) for p in predictions.values()))
-    comparison = [
-        {
-            "predictor": p,
-            **summarize(
-                grade_games(games, {g: s for g, s in spreads.items() if g in common})
-            ),
-        }
-        for p, spreads in predictions.items()
-    ]
-    comparison.sort(key=lambda row: row["mae"])
-
+    comparison, n_common, excluded = compare_predictors(games, predictions)
     graded = grade_games(games, predictions[predictor])
     return {
         "records": records,
@@ -272,7 +292,7 @@ def fetch_dashboard_data(record_id=None, predictor=None):
         "predictors": predictors,
         "predictor": predictor,
         "summary": summarize(graded),
-        "comparison": {"n_games": len(common), "rows": comparison},
+        "comparison": {"n_games": n_common, "rows": comparison, "excluded": excluded},
         "cumulative_pl": _cumulative_pl(graded),
         "games": graded[::-1],  # most recent first
     }

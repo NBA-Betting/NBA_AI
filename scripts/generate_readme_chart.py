@@ -2,8 +2,8 @@
 """Generate prediction model performance chart for README.
 
 Scores live predictions (made before tip-off, April 1, 2026 onward) with the
-results dashboard's code: ATS win rate, ROI at -110, and Spread MAE for all
-predictors. Produces a
+results dashboard's model comparison: ATS win rate, ROI at -110, and Spread
+MAE for all predictors on the games they all predicted. Produces a
 grouped bar chart saved to docs/images/predictor_performance.png.
 
 Usage:
@@ -23,9 +23,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.web_app.dashboard import (  # noqa: E402
     LIVE_PREDICTIONS_START as LIVE_START,
-    grade_games,
+    compare_predictors,
     load_live_record,
-    summarize,
 )
 
 OUTPUT_PATH = REPO_ROOT / "docs" / "images" / "predictor_performance.png"
@@ -200,14 +199,15 @@ def create_chart(metrics: list[dict]) -> None:
 
 
 def main():
+    # Same comparison as the dashboard: every model on the games they all
+    # predicted (models with too few games are left out)
     games, predictions = load_live_record()
-    metrics = []
-    for predictor in PREDICTORS:
-        m = summarize(grade_games(games, predictions.get(predictor, {})))
-        if m["ats_wins"] + m["ats_losses"]:
-            metrics.append({"predictor": predictor, **m})
-        else:
-            print(f"WARNING: {predictor} — no decided games, skipping.")
+    rows, n_common, excluded = compare_predictors(games, predictions)
+    by_name = {row["predictor"]: row for row in rows}
+    metrics = [by_name[p] for p in PREDICTORS if p in by_name]
+    print(f"{n_common} games every model predicted")
+    for p in excluded:
+        print(f"WARNING: {p} — too few games, left out.")
 
     if not metrics:
         print("ERROR: No metrics computed. Is the database populated?")

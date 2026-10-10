@@ -15,8 +15,11 @@ record next to the live ones.
 Usage:
     python scripts/backtest.py --predictors Phase5 Tree --season 2025-2026
     python scripts/backtest.py --predictors Phase5 --start 2026-01-01 --end 2026-02-28
-    python scripts/backtest.py --predictors Baseline Linear Tree MLP Ensemble Phase3 Phase5 \
+    python scripts/backtest.py --predictors Phase5 Phase3 Tree MLP Linear Baseline \
         --season 2025-2026 --output models/backtests/2025-2026.json
+
+Ensemble can't be backtested: it combines predictions already stored in the
+Predictions table rather than replaying its components.
 """
 
 import argparse
@@ -26,6 +29,7 @@ import logging
 import math
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -55,14 +59,27 @@ def load_games(args) -> list[dict]:
     if args.season:
         query += " AND g.season = ?"
         params.append(args.season)
+    # --start/--end are Eastern (schedule) dates; evening games fall on the
+    # next UTC day, so widen the UTC bounds and filter on the Eastern date
     if args.start:
         query += " AND g.date_time_utc >= ?"
         params.append(args.start)
     if args.end:
         query += " AND g.date_time_utc < ?"
-        params.append(args.end + "T99")
+        params.append(
+            (datetime.strptime(args.end, "%Y-%m-%d") + timedelta(days=2)).strftime(
+                "%Y-%m-%d"
+            )
+        )
     with get_db(DB_PATH) as conn:
-        rows = conn.execute(query + " ORDER BY g.date_time_utc", params).fetchall()
+        rows = [
+            r
+            for r in conn.execute(query + " ORDER BY g.date_time_utc", params)
+            if (not args.start or to_eastern_date(r[1]) >= args.start)
+            and (not args.end or to_eastern_date(r[1]) <= args.end)
+        ]
+        if not rows:
+            raise SystemExit("No finished games in that range")
         seasons = sorted({r[2] for r in rows})
         prev = f"{int(seasons[0][:4]) - 1}-{seasons[0][:4]}"
         naive = conn.execute(

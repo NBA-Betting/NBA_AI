@@ -8,11 +8,13 @@
 
 const GAMES_PAGE_SIZE = 20;
 const BREAKEVEN_ATS = 52.4; // ATS win rate that breaks even at -110
-const RECORD_NOTES = {
-  live: "Live: predictions made and stored before tip-off.",
-  backtest:
-    "Backtest: the season replayed through each model's live code with pre-game information only.",
-};
+/** What a record is: live predictions, or a replayed season. */
+function recordNote(record, isBacktest) {
+  const what = isBacktest
+    ? `Backtest: the ${record.season_type.toLowerCase()} replayed through each model's live code with pre-game information only.`
+    : "Live: predictions made and stored before tip-off, regular season and playoffs.";
+  return [what, record.note].filter(Boolean).join(" ");
+}
 let allGames = [];
 let gamesShown = GAMES_PAGE_SIZE;
 
@@ -71,12 +73,7 @@ function loadDashboard() {
         data.predictor,
       );
       const record = data.records.find((r) => r.id === data.record);
-      setText(
-        "recordNote",
-        [RECORD_NOTES[data.is_backtest ? "backtest" : "live"], record.note]
-          .filter(Boolean)
-          .join(" "),
-      );
+      setText("recordNote", recordNote(record, data.is_backtest));
 
       document.getElementById("dashboardContent").hidden = false;
       populateSummary(data.summary);
@@ -174,7 +171,10 @@ function drawPLChart(plData) {
 function renderComparison(comparison, record, selected) {
   setText(
     "comparisonNote",
-    `The ${comparison.n_games} games every model predicted, best MAE first`,
+    `The ${comparison.n_games} games every model predicted, best MAE first` +
+      (comparison.excluded.length
+        ? ` (${comparison.excluded.join(", ")} left out: too few games)`
+        : ""),
   );
   document.getElementById("comparisonBody").replaceChildren(
     ...comparison.rows.map((row) => {
