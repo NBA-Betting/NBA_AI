@@ -98,7 +98,8 @@
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" id="liveOnlyToggle"
                         {% if live_only %}checked{% endif %} onchange="updateFilters()">
-                    <label class="form-check-label" for="liveOnlyToggle">Live Only</label>
+                    <label class="form-check-label" for="liveOnlyToggle"
+                        title="Only predictions made before tip-off. Unchecked also includes backtests, which may cover games a model was trained on.">Live Only</label>
                 </div>
                 <select id="predictorSelect" class="form-select form-select-sm" style="width: auto;" onchange="updateFilters()">
                     {% for p in available_predictors %}
