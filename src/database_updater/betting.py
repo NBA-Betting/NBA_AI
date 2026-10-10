@@ -504,8 +504,8 @@ def _extract_espn_lines(
             "away": {"open": {...}, "close": {...}}
         },
         "total": {
-            "home": {"open": {...}, "close": {...}},
-            "away": {"open": {...}, "close": {...}}
+            "over": {"open": {...}, "close": {...}},
+            "under": {"open": {...}, "close": {...}}
         },
         "moneyline": {
             "home": {"open": {...}, "close": {...}},
@@ -534,13 +534,14 @@ def _extract_espn_lines(
         lines["spread_home_odds"] = _convert_odds(home_spread_data.get("odds"))
         lines["spread_away_odds"] = _convert_odds(away_spread_data.get("odds"))
 
-    # Extract total
+    # Extract total: "over"/"under" with lines like "o216.5" (since 2026-01),
+    # earlier "home" = over and "away" = under with bare numbers
     total_data = odds_data.get("total", {})
-    over_data = total_data.get("home", {}).get(line_type, {})  # home = over
-    under_data = total_data.get("away", {}).get(line_type, {})  # away = under
+    over_data = total_data.get("over", total_data.get("home", {})).get(line_type, {})
+    under_data = total_data.get("under", total_data.get("away", {})).get(line_type, {})
 
     if over_data.get("line") is not None:
-        lines["total"] = float(over_data["line"])
+        lines["total"] = float(str(over_data["line"]).lstrip("ou"))
         lines["over_odds"] = _convert_odds(over_data.get("odds"))
         lines["under_odds"] = _convert_odds(under_data.get("odds"))
 
@@ -1602,9 +1603,14 @@ def update_betting_backfill(season: str) -> dict:
             (season,),
         )
 
+        # Covers codes are today's franchises; Games keeps SEA, NJN, NOH
         game_lookup = {}
         for row in cursor.fetchall():
-            key = (_eastern_date(row["date_time_utc"]), row["home_team"], row["away_team"])
+            key = (
+                _eastern_date(row["date_time_utc"]),
+                NBATeamConverter.get_abbreviation(row["home_team"]),
+                NBATeamConverter.get_abbreviation(row["away_team"]),
+            )
             game_lookup[key] = row["game_id"]
 
         logger.info(f"Found {len(game_lookup)} games in DB for {season}")

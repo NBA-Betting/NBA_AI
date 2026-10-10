@@ -81,6 +81,7 @@ COVERS_ABBREV_TO_NBA = {
     "BOS": "BOS",
     "BK": "BKN",
     "BKN": "BKN",
+    "NJ": "BKN",
     "CHA": "CHA",
     "CHAR": "CHA",
     "CHI": "CHI",

@@ -162,8 +162,8 @@ def create_feature_sets(prior_states_dict, db_path=DB_PATH):
             axis=1,
         )
 
-        # Convert NaN values to None
-        features_df = features_df.where(pd.notnull(features_df), None)
+        # Convert NaN values to None (object dtype: a float column keeps NaN)
+        features_df = features_df.astype(object).where(pd.notnull(features_df), None)
 
         # Convert the DataFrame to a dictionary and store it in the features_dict
         features_dict[game_id] = features_df.to_dict(orient="records")[0]
