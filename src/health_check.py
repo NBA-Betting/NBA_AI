@@ -31,14 +31,14 @@ import logging
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Optional
 
 from src.config import config
 from src.database import get_db
 from src.logging_config import setup_logging
-from src.utils import get_current_eastern_date, validate_season_format
+from src.utils import get_current_eastern_date, to_eastern_date, validate_season_format
 
 # Configuration
 DB_PATH = config["database"]["path"]
@@ -1231,20 +1231,20 @@ class SeasonHealthChecker:
         with get_db(self.db_path) as conn:
             cursor = conn.cursor()
 
-            # Get unique game days for this season
+            # Eastern game days (the schedule's dates; evening tip-offs are
+            # already the next day in UTC)
             result, _ = self._timed_query(
                 cursor,
                 """
-                SELECT COUNT(DISTINCT DATE(date_time_utc)) 
-                FROM Games
+                SELECT DISTINCT date_time_utc FROM Games
                 WHERE season = ? AND status = 3
                 AND season_type IN ('Regular Season', 'Post Season')
                 """,
                 (self.season,),
             )
-            game_days = result[0][0]
+            game_days = sorted({to_eastern_date(r[0]) for r in result})
 
-            if game_days == 0:
+            if not game_days:
                 self._add_result(
                     stage,
                     "completeness",
@@ -1254,105 +1254,80 @@ class SeasonHealthChecker:
                 )
                 return
 
-            # Get unique injury report days for this season
             result, qtime = self._timed_query(
                 cursor,
                 """
-                SELECT COUNT(DISTINCT DATE(report_timestamp))
-                FROM InjuryReports
+                SELECT DISTINCT DATE(report_timestamp) FROM InjuryReports
                 WHERE source = 'NBA_Official' AND season = ?
                 """,
                 (self.season,),
             )
-            injury_days = result[0][0]
+            report_days = {r[0] for r in result}
 
-            # Coverage should be close to 100% of game days
-            # (injuries are reported daily when games are played)
-            coverage_pct = (injury_days / game_days * 100) if game_days else 0
+            # A game day is covered by a report that day, or the day before
+            # (what rosters fall back to when today's isn't out yet)
+            def previous_day(d):
+                return (datetime.strptime(d, "%Y-%m-%d") - timedelta(days=1)).strftime(
+                    "%Y-%m-%d"
+                )
+
+            uncovered = [
+                d
+                for d in game_days
+                if d not in report_days and previous_day(d) not in report_days
+            ]
+            covered = len(game_days) - len(uncovered)
+            coverage_pct = covered / len(game_days) * 100
+            message = (
+                f"{covered}/{len(game_days)} game days have an injury report "
+                f"({coverage_pct:.1f}%)"
+            )
+            if uncovered:
+                message += f"; missing: {', '.join(uncovered[-5:])}"
 
             if coverage_pct >= 95:
-                self._add_result(
-                    stage,
-                    "completeness",
-                    "injury_coverage",
-                    CheckStatus.PASS,
-                    f"{injury_days}/{game_days} game days have injury reports ({coverage_pct:.1f}%)",
-                    expected=game_days,
-                    actual=injury_days,
-                    query_time_ms=qtime,
-                )
+                status = CheckStatus.PASS
             elif coverage_pct >= 50:
-                self._add_result(
-                    stage,
-                    "completeness",
-                    "injury_coverage",
-                    CheckStatus.WARN,
-                    f"Injury coverage: {injury_days}/{game_days} days ({coverage_pct:.1f}%)",
-                    expected=game_days,
-                    actual=injury_days,
-                    query_time_ms=qtime,
-                )
+                status = CheckStatus.WARN
             else:
-                self._add_result(
-                    stage,
-                    "completeness",
-                    "injury_coverage",
-                    CheckStatus.CRITICAL,
-                    f"Low injury coverage: {injury_days}/{game_days} days ({coverage_pct:.1f}%)",
-                    expected=game_days,
-                    actual=injury_days,
-                    query_time_ms=qtime,
-                )
+                status = CheckStatus.CRITICAL
+            self._add_result(
+                stage,
+                "completeness",
+                "injury_coverage",
+                status,
+                message,
+                expected=len(game_days),
+                actual=covered,
+                query_time_ms=qtime,
+            )
 
-            # Check for cached dates with no data (indicates fetch failures)
-            # This catches the case where InjuryCache says we fetched but InjuryReports is empty
+            # Game days marked fetched in InjuryCache but with no report that
+            # day point to failed fetches (off-days legitimately have none)
             result, qtime = self._timed_query(
                 cursor,
-                """
-                SELECT c.report_date
-                FROM InjuryCache c
-                WHERE c.report_date BETWEEN 
-                    (SELECT DATE(MIN(date_time_utc)) FROM Games WHERE season = ? AND status = 3)
-                    AND 
-                    (SELECT DATE(MAX(date_time_utc)) FROM Games WHERE season = ? AND status = 3)
-                AND NOT EXISTS (
-                    SELECT 1 FROM InjuryReports r 
-                    WHERE DATE(r.report_timestamp) = c.report_date 
-                    AND r.source = 'NBA_Official'
-                )
-                """,
-                (self.season, self.season),
+                "SELECT report_date FROM InjuryCache WHERE report_date BETWEEN ? AND ?",
+                (game_days[0], game_days[-1]),
             )
-            empty_cache_dates = len(result)
-
-            if empty_cache_dates == 0:
-                self._add_result(
-                    stage,
-                    "integrity",
-                    "injury_cache_integrity",
-                    CheckStatus.PASS,
-                    "All cached dates have injury data",
-                    query_time_ms=qtime,
-                )
-            elif empty_cache_dates <= 10:
-                # A few empty dates are normal (All-Star break, off-days)
-                self._add_result(
-                    stage,
-                    "integrity",
-                    "injury_cache_integrity",
-                    CheckStatus.PASS,
-                    f"{empty_cache_dates} cached dates have no data (likely off-days)",
-                    query_time_ms=qtime,
-                )
-            else:
-                self._add_result(
-                    stage,
-                    "integrity",
-                    "injury_cache_integrity",
-                    CheckStatus.WARN,
-                    f"{empty_cache_dates} cached dates have no injury data",
-                    query_time_ms=qtime,
-                )
+            empty = sorted(
+                r[0]
+                for r in result
+                if r[0] in set(game_days) and r[0] not in report_days
+            )
+            self._add_result(
+                stage,
+                "integrity",
+                "injury_cache_integrity",
+                CheckStatus.WARN if len(empty) > 3 else CheckStatus.PASS,
+                (
+                    f"{len(empty)} game days fetched with no report: {', '.join(empty[-5:])}"
+                    if empty
+                    else "Every fetched game day has injury data"
+                ),
+                expected=0,
+                actual=len(empty),
+                query_time_ms=qtime,
+            )
 
     # -------------------------------------------------------------------------
     # Players Checks
