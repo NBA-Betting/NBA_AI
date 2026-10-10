@@ -13,7 +13,7 @@ overall success. This wrapper makes regressions loud without daily noise:
   checks, the shortfall: expected - actual).
 - Pipeline runs (PipelineRuns) since the last check that ended with errors,
   or never finished, always alert: the orchestrator's own failures are
-  otherwise only in the cron log.
+  otherwise only in the cron log. So does a nightly backup older than 2 days.
 - Alerts append to logs/ALERTS.log AND print to stdout (so they land in the
   cron log too). A desktop notification is attempted best-effort.
 
@@ -147,6 +147,20 @@ def _changed(prev_actual, curr_actual) -> bool:
 
 # A run still marked running after this long crashed or hung
 RUN_STUCK_AFTER = timedelta(hours=3)
+# Newest precious-table backup (scripts/backup_precious_tables.py, nightly)
+BACKUP_DIR = PROJECT_ROOT / "data" / "backups" / "daily"
+BACKUP_MAX_AGE = timedelta(days=2)
+
+
+def backup_alerts() -> list[str]:
+    """Alert if the nightly backup of irreplaceable tables has stopped."""
+    backups = sorted(BACKUP_DIR.glob("precious_*.sqlite.gz"))
+    if not backups:
+        return ["[CRITICAL] backups: no precious-table backups found"]
+    age = datetime.now() - datetime.fromtimestamp(backups[-1].stat().st_mtime)
+    if age > BACKUP_MAX_AGE:
+        return [f"[CRITICAL] backups: newest is {backups[-1].name}, {age.days} days old"]
+    return []
 
 
 def pipeline_run_alerts(last_seen: str | None) -> tuple[list[str], str | None]:
@@ -242,7 +256,7 @@ def main():
         datetime.now(timezone.utc) - timedelta(days=1)
     ).strftime("%Y-%m-%d %H:%M:%S")
     run_alerts, last_run = pipeline_run_alerts(last_seen)
-    alerts = run_alerts + alerts
+    alerts = run_alerts + backup_alerts() + alerts
     save_state(report, alerted_at, last_run)
 
     summary = report.get("summary", {})

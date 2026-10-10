@@ -50,6 +50,8 @@ def backup(db_path: str, outdir: Path) -> Path:
         logger.info("Backup for %s already exists, skipping", stamp)
         return gz_path
 
+    # A run that died midway leaves its uncompressed file; start clean
+    raw_path.unlink(missing_ok=True)
     conn = sqlite3.connect(raw_path)
     try:
         conn.execute("ATTACH DATABASE ? AS src", (f"file:{db_path}?mode=ro",))
