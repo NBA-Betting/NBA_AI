@@ -153,8 +153,11 @@ def process_game(
                     prev_clock = period_start_seconds
                 continue
 
-            # Skip events with no player
-            if not evt.player_id or evt.player_id == 0:
+            # Team events (team rebounds, team turnovers) have no player but
+            # can still end a possession
+            if not evt.player_id:
+                if _is_possession_ending_event(evt, events, offense_team_id, tracker):
+                    _credit_possession(tracker, offense_team_id, player_stats)
                 continue
 
             pid = evt.player_id

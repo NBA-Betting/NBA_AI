@@ -215,6 +215,10 @@ def from_older(raw: dict, idx: int) -> Event:
     desc = raw.get("description", "") or ""
     person_id = _safe_int(raw.get("personId"))
     team_id = _safe_int(raw.get("teamId"))
+    # Team actions (team rebounds, turnovers, timeouts) carry the team id as
+    # personId: they belong to the team, not a player
+    if 1610612737 <= person_id <= 1610612766:
+        team_id, person_id = team_id or person_id, 0
     period = _safe_int(raw.get("period"))
     clock_seconds = parse_clock(raw.get("clock", ""))
     loc_x = _safe_int(raw.get("xLegacy"), default=None)
@@ -276,9 +280,6 @@ def from_older(raw: dict, idx: int) -> Event:
         evt.action_type = "rebound"
         evt.is_rebound = True
         # Offensive vs defensive is resolved in _link_older_events
-        if 1610612737 <= person_id <= 1610612766:
-            # Team rebound: personId holds the team id
-            evt.team_id, evt.player_id = person_id, 0
 
     # --- Turnover ---
     elif action_type_raw == "Turnover":

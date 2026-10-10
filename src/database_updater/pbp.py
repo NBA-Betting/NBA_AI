@@ -282,6 +282,18 @@ def save_pbp(pbp_data, db_path=DB_PATH):
                     )
                     existing_count = cursor.fetchone()[0]
 
+                    # Never replace a game's PBP with a shorter copy: a feed
+                    # only grows during a game, so fewer actions means a
+                    # truncated fetch (or a terser format than the stored one)
+                    if existing_count > len(pbp_logs_sorted):
+                        conn.execute("ROLLBACK")
+                        logging.warning(
+                            f"Game ID {game_id} - refetch has {len(pbp_logs_sorted)} "
+                            f"actions, {existing_count} stored; keeping stored PBP"
+                        )
+                        unchanged_count += 1
+                        continue
+
                     # Delete existing logs for the game_id
                     conn.execute("DELETE FROM PbP_Logs WHERE game_id = ?", (game_id,))
 

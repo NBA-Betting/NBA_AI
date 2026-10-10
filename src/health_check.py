@@ -913,6 +913,40 @@ class SeasonHealthChecker:
                         query_time_ms=qtime,
                     )
 
+            # 4. Final PBP score agrees with the box score (both feed models:
+            # GameStates the legacy features, TeamBox the Phase5 features)
+            result, qtime = self._timed_query(
+                cursor,
+                """
+                SELECT g.game_id FROM Games g
+                JOIN GameStates gs ON gs.game_id = g.game_id AND gs.is_final_state = 1
+                JOIN Teams th ON th.abbreviation = g.home_team
+                JOIN Teams ta ON ta.abbreviation = g.away_team
+                JOIN TeamBox bh ON bh.game_id = g.game_id AND bh.team_id = th.team_id
+                JOIN TeamBox ba ON ba.game_id = g.game_id AND ba.team_id = ta.team_id
+                WHERE g.season = ? AND g.boxscore_data_finalized = 1
+                AND g.season_type IN ('Regular Season', 'Post Season')
+                AND (gs.home_score != bh.pts OR gs.away_score != ba.pts)
+                """,
+                (self.season,),
+            )
+            mismatched = [r[0] for r in result]
+            self._add_result(
+                stage,
+                "consistency",
+                "final_score_matches_box",
+                CheckStatus.WARN if mismatched else CheckStatus.PASS,
+                (
+                    f"{len(mismatched)} games' final PBP score differs from the box score: "
+                    f"{', '.join(mismatched[:5])}"
+                    if mismatched
+                    else "Final PBP scores match the box scores"
+                ),
+                expected=0,
+                actual=len(mismatched),
+                query_time_ms=qtime,
+            )
+
     # -------------------------------------------------------------------------
     # Features Checks
     # -------------------------------------------------------------------------
