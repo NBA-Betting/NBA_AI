@@ -15,15 +15,14 @@ record next to the live ones.
 Usage:
     python scripts/backtest.py --predictors Phase5 Tree --season 2025-2026
     python scripts/backtest.py --predictors Phase5 --start 2026-01-01 --end 2026-02-28
-    python scripts/backtest.py --predictors Phase5 Phase3 Tree MLP Linear Baseline \
+    python scripts/backtest.py --predictors Phase5 Phase3 Ensemble Tree MLP Linear Baseline \
         --season 2025-2026 --output models/backtests/2025-2026.json
 
-Ensemble can't be backtested: it combines predictions already stored in the
-Predictions table rather than replaying its components.
+Ensemble in a backtest replays its components itself (it would otherwise
+combine whatever is stored in the Predictions table).
 """
 
 import argparse
-import inspect
 import json
 import logging
 import math
@@ -39,10 +38,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import DB_PATH, get_db  # noqa: E402
 from src.database_updater.betting import CLOSING_SPREAD_SQL  # noqa: E402
-from src.predictions.prediction_manager import (  # noqa: E402
-    PREDICTORS_CONFIG,
-    determine_predictor_class,
-)
+from src.predictions.prediction_manager import create_predictor  # noqa: E402
 from src.utils import to_eastern_date  # noqa: E402
 
 
@@ -111,11 +107,7 @@ def load_games(args) -> list[dict]:
 
 def predict(name: str, game_ids: list[str]) -> dict[str, tuple[float, float | None]]:
     """{game_id: (spread, home win prob)} from the predictor's own code."""
-    cls, _ = determine_predictor_class(name)
-    kwargs = {"model_paths": PREDICTORS_CONFIG.get(name, {}).get("model_paths", [])}
-    if "historical" in inspect.signature(cls.__init__).parameters:
-        kwargs["historical"] = True
-    preds = cls(**kwargs).make_pre_game_predictions(game_ids)
+    preds = create_predictor(name, historical=True).make_pre_game_predictions(game_ids)
     out = {}
     for gid, p in preds.items():
         spread = p.get("pred_spread")
