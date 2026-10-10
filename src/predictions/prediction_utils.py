@@ -1,13 +1,12 @@
 import numpy as np
 
-# Pre-game logistic constants, refit July 2026 on 10,410 predicted-margin vs
-# outcome pairs (2023-24 + 2024-25 seasons, all legacy predictors pooled).
-# The original constants (a=-0.2504, b=0.1949) had roughly twice the correct
-# slope — a predicted margin maps to a much less certain outcome than an
-# in-game score difference does — and imposed an unexplained away lean at
-# margin 0. Improved live Brier for Baseline/MLP/Tree, neutral for Linear.
-PREGAME_A = 0.0278
-PREGAME_B = 0.0984
+# Pre-game logistic constants: P(home win) = 1 / (1 + exp(-(A + B * margin))).
+# Refit Oct 2026 on the shipped v0.5 models' predictions for 2025-26 (held out
+# of their training): Baseline/Linear/Tree/MLP pooled, n=4,856. 6-fold CV Brier
+# 0.2096 vs 0.2118 for the July 2026 constants (0.0278, 0.0984), which were fit
+# on an older model generation's predictions and were underconfident.
+PREGAME_A = 0.0769
+PREGAME_B = 0.1505
 
 
 def calculate_home_win_prob(
