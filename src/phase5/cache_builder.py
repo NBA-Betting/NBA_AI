@@ -229,10 +229,29 @@ ALTITUDE_MAP = {
 # ---------------------------------------------------------------------------
 
 
+# Game types in L1 sequences, for training and live updates alike. The current
+# l1.pt and the Phase B/C data it fed were built from regular-season games only.
+L1_SEASON_TYPES = ("Regular Season",)
+
+# Profile for players without a PlayerAttributes row (e.g. call-ups)
+DEFAULT_PROFILE = {
+    "height_inches": 78,
+    "weight": 215,
+    "draft_pick": 60,
+    "undrafted": 1.0,
+    "birth_year": 2000,  # debut season; see _load_player_profile
+    "wingspan_inches": 78,
+    "pos_g": 0.0,
+    "pos_f": 1.0,
+    "pos_c": 0.0,
+}
+
+
 def _load_player_games(conn, person_id: int) -> list[dict]:
-    """Load all games for a player, chronologically, with box + PBP + DPM."""
+    """Load a player's L1_SEASON_TYPES games, chronologically."""
+    placeholders = ",".join("?" * len(L1_SEASON_TYPES))
     cursor = conn.execute(
-        """
+        f"""
         SELECT
             pb.game_id,
             g.date_time_utc,
@@ -248,10 +267,10 @@ def _load_player_games(conn, person_id: int) -> list[dict]:
         WHERE pb.player_id = ?
         AND g.status = 3
         AND pb.min > 0
-        AND g.season_type IN ('Regular Season', 'Post Season')
+        AND g.season_type IN ({placeholders})
         ORDER BY g.date_time_utc
         """,
-        (person_id,),
+        (person_id, *L1_SEASON_TYPES),
     )
     columns = [
         "game_id",
@@ -290,13 +309,32 @@ def _load_dpm_targets(conn, person_id: int) -> dict[str, dict]:
     return result
 
 
+def _debut_year(conn, person_id: int) -> int | None:
+    """Start year of the player's first season with minutes."""
+    row = conn.execute(
+        """
+        SELECT MIN(CAST(substr(g.season, 1, 4) AS INTEGER)) FROM PlayerBox pb
+        JOIN Games g ON g.game_id = pb.game_id
+        WHERE pb.player_id = ? AND pb.min > 0 AND g.status = 3
+        """,
+        (person_id,),
+    ).fetchone()
+    return row[0] if row else None
+
+
 def _load_player_profile(conn, person_id: int) -> dict:
-    """Load static player profile for prior network."""
+    """Load static player profile for prior network.
+
+    "birth_year" is the player's debut season (PlayerAttributes.from_year), so
+    context column 0 ("age") is years since debut. That is what the trained L1
+    model saw: PlayerAttributes.birth_year held from_year when its cache was
+    built (real birth years were filled in later).
+    """
     cursor = conn.execute(
         """
         SELECT
             pa.height_inches, pa.weight, pa.draft_number, pa.undrafted,
-            pa.birth_year, pa.position,
+            pa.from_year, pa.position,
             dw.wingspan_in
         FROM PlayerAttributes pa
         LEFT JOIN DataballrWingspan dw ON pa.person_id = dw.nba_id
@@ -328,7 +366,7 @@ def _load_player_profile(conn, person_id: int) -> dict:
         "weight": weight or 215,
         "draft_pick": draft_pick or 60,  # undrafted → 60 (last pick equivalent)
         "undrafted": float(undrafted or 0),
-        "birth_year": birth_year or 1990,
+        "birth_year": birth_year or _debut_year(conn, person_id) or 2000,
         "wingspan_inches": wingspan
         or (height or 78),  # default to height if no wingspan
         "pos_g": pos_g,
@@ -426,9 +464,15 @@ def build_player_cache(
     person_id: int,
     team_stats: dict,
     team_id_to_abbr: dict[int, str] | None = None,
+    min_games: int = 5,
+    require_profile: bool = True,
 ) -> dict | None:
     """
-    Build cache data for one player.
+    Build cache data for one player: the L1 input sequence used both for
+    training and for live vector updates.
+
+    Players with fewer than min_games games return None, as do players without
+    a PlayerAttributes row unless require_profile=False (DEFAULT_PROFILE).
 
     Returns dict with:
         game_ids: list of game_id strings
@@ -441,12 +485,14 @@ def build_player_cache(
         has_pbp: (N,) bool array — whether PBP stats are available
     """
     games = _load_player_games(conn, person_id)
-    if not games or len(games) < 5:
+    if not games or len(games) < min_games:
         return None
 
     profile = _load_player_profile(conn, person_id)
     if not profile:
-        return None
+        if require_profile:
+            return None
+        profile = {**DEFAULT_PROFILE, "birth_year": int(games[0]["season"][:4])}
 
     pbp_data = _load_pbp_stats(conn, person_id)
     dpm_data = _load_dpm_targets(conn, person_id)
@@ -589,6 +635,7 @@ def build_player_cache(
         "has_dpm": has_dpm,
         "has_pbp": has_pbp,
         "team_ids": np.array(team_ids, dtype=np.int64),
+        "dates": [g.get("date_time_utc", "") for g in games],
     }
 
 
