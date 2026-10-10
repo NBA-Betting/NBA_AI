@@ -26,7 +26,6 @@ import pandas as pd
 from src.database import DB_PATH, get_db
 from src.phase5.arena_data import HISTORICAL_TO_MODERN
 from src.phase5.travel import compute_travel_features
-from src.utils import determine_current_season
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +94,15 @@ class TeamFeatureComputer:
     def __init__(self, db_path: str | Path = DB_PATH):
         self.db_path = str(db_path)
 
-    def compute_for_games(self, game_ids: list[str]) -> dict[str, dict]:
+    def compute_for_games(
+        self, game_ids: list[str], rosters: dict | None = None
+    ) -> dict[str, dict]:
         """
         Compute features for the given games from data before each tip-off.
+
+        rosters: projected rosters ({game_id: {"home_players": [...],
+        "away_players": [...]}}, as from RosterAssembler), used to estimate
+        roster continuity before a team's first game of the season.
 
         Returns {game_id: {
             "home_team_features": np.array(34,),  # raw, unnormalized
@@ -148,8 +153,9 @@ class TeamFeatureComputer:
                 ]
                 entry = {"game_context": context}
                 for side, team in (("home", home), ("away", away)):
+                    roster = (rosters or {}).get(game_id, {}).get(f"{side}_players")
                     feats = self._compute_team_rolling(
-                        conn, team, date_utc, season, team_id_map
+                        conn, team, date_utc, season, team_id_map, roster
                     )
                     coach_feats, coach_id, coach_games = coaching[
                         (team, season, date_utc)
@@ -168,12 +174,13 @@ class TeamFeatureComputer:
         before_date: str,
         season: str,
         team_id_map: dict[str, str],
+        roster: list[int] | None = None,
     ) -> np.ndarray:
         """
         Compute 34-d rolling team features for a team before a given date.
 
-        Uses the same formulas as build_l3l4_cache.py. Coaching features
-        (indices 24-27) are left at zero and filled in compute_for_games.
+        Coaching features (indices 24-27) are left at zero and filled in
+        compute_for_games.
         """
         features = np.zeros(34, dtype=np.float32)
 
@@ -301,7 +308,7 @@ class TeamFeatureComputer:
 
         # Roster continuity (index 32) and multi-year trend (index 33)
         features[32] = _roster_continuity(
-            conn, team_abbr, team_id, season, before_date
+            conn, team_abbr, team_id, season, before_date, roster
         )
         features[33] = _multi_year_trend(conn, team_abbr, team_id, season)
 
@@ -398,12 +405,16 @@ class TeamFeatureComputer:
 
 
 def _roster_continuity(
-    conn, team_abbr: str, team_id: str, season: str, before_date: str
+    conn,
+    team_abbr: str,
+    team_id: str,
+    season: str,
+    before_date: str,
+    roster: list[int] | None = None,
 ) -> float:
     """Fraction of this season's minutes so far played by players who were on
-    the team last season (compute_roster_continuity in build_l3l4_cache.py,
-    which uses full-season minutes). Before the team has played, estimated
-    from the current roster (current season only, else 0.5)."""
+    the team last season. Before the team has played, estimated from the
+    projected roster (0.5 without one)."""
     start = int(season[:4])
     prev_season = f"{start - 1}-{start}"
     rows = conn.execute(
@@ -432,31 +443,22 @@ def _roster_continuity(
         )
     }
     if total_min == 0:
-        if season != determine_current_season():
+        if not roster:
             return 0.5
-        return _projected_continuity(conn, team_abbr, prev_season, prev_players)
+        return _projected_continuity(conn, roster, prev_season, prev_players)
     return sum(m for pid, m in rows if pid in prev_players) / total_min
 
 
-# Before a team's first game: weight the current roster by last season's minutes,
+# Before a team's first game: weight the projected roster by last season's minutes,
 # with newcomers floored and the roster trimmed to a rotation. On 2024-25/2025-26
-# openers this tracked the training (full-season) value with MAE 0.07 vs 0.19 for 0.5.
+# openers this tracked the full-season value with MAE 0.07 vs 0.19 for 0.5.
 CONTINUITY_NEWCOMER_MINUTES = 1000.0
 CONTINUITY_ROSTER_SIZE = 13
 
 
 def _projected_continuity(
-    conn, team_abbr: str, prev_season: str, prev_players: set
+    conn, roster: list[int], prev_season: str, prev_players: set
 ) -> float:
-    roster = [
-        r[0]
-        for r in conn.execute(
-            "SELECT person_id FROM Players WHERE team = ? AND roster_status = 1",
-            (team_abbr,),
-        )
-    ]
-    if not roster:
-        return 0.5
     placeholders = ",".join("?" * len(roster))
     prev_min = dict(
         conn.execute(

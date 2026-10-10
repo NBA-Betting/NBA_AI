@@ -223,7 +223,7 @@ class Phase5Predictor(BasePredictor):
         rosters = self._roster_assembler.get_projected_rosters(game_ids)
 
         # Step 2: Compute team features and game context
-        team_feats = self._team_features.compute_for_games(game_ids)
+        team_feats = self._team_features.compute_for_games(game_ids, rosters)
 
         # Step 3: For each game, run L1→L2→L3→L4
         predictions = {}
