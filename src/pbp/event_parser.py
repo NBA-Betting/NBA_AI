@@ -91,6 +91,10 @@ class Event:
     is_period_start: bool = False
     is_period_end: bool = False
 
+    # Jump ball (v3): winner and loser, who are on court even when the tip
+    # goes to the team (personId 0)
+    jump_ball_player_ids: list = field(default_factory=list)
+
     # V3-specific
     possession_team_id: int = 0  # from v3's 'possession' field
     qualifiers: list = field(default_factory=list)
@@ -404,6 +408,16 @@ def from_v3(raw: dict, idx: int) -> Event:
         action_number=_safe_int(raw.get("actionNumber")),
         order_number=_safe_int(raw.get("orderNumber")),
     )
+
+    if action_type_raw == "jumpball":
+        evt.jump_ball_player_ids = [
+            pid
+            for pid in (
+                _safe_int(raw.get("jumpBallWonPersonId")),
+                _safe_int(raw.get("jumpBallLostPersonId")),
+            )
+            if pid
+        ]
 
     # --- Field goal ---
     if action_type_raw in _V3_FG_TYPES:

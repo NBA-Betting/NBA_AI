@@ -76,6 +76,24 @@ def load_game_events(conn, game_id: str) -> list[dict]:
     return events
 
 
+def box_player_names(conn, game_id: str) -> dict[int, tuple[int, list[str]]]:
+    """{player_id: (team_id, name forms)} from the game's box score, so subs
+    of players with no other actions resolve ("SUB: Waters III FOR ...")."""
+    names = {}
+    for pid, tid, full in conn.execute(
+        "SELECT player_id, team_id, player_name FROM PlayerBox WHERE game_id = ?",
+        (game_id,),
+    ):
+        parts = (full or "").split()
+        if len(parts) < 2:
+            continue
+        forms = {full, " ".join(parts[1:]), parts[-1]}
+        if parts[-1].rstrip(".").upper() in ("JR", "SR", "II", "III", "IV", "V"):
+            forms.add(parts[-2])
+        names[int(pid)] = (int(tid), sorted(forms))
+    return names
+
+
 def get_game_teams(conn, game_id: str) -> tuple[int, int]:
     """Get home and away team IDs for a game from the Games table."""
     # Try to get team IDs from TeamBox (more reliable)
@@ -152,8 +170,17 @@ def get_game_ids_for_season(conn, season: str) -> list[str]:
 
 
 def get_all_game_ids(conn) -> list[str]:
-    """Get all game_ids that have PBP data."""
-    cursor = conn.execute("SELECT DISTINCT game_id FROM PbP_Logs ORDER BY game_id")
+    """Games whose PBP and box score are final. Stats are built once per game
+    (resume skips processed games), so a game fetched mid-play must wait;
+    the box score supplies names for resolving substitutions."""
+    cursor = conn.execute(
+        """
+        SELECT DISTINCT p.game_id FROM PbP_Logs p
+        JOIN Games g ON g.game_id = p.game_id
+        WHERE g.game_data_finalized = 1 AND g.boxscore_data_finalized = 1
+        ORDER BY p.game_id
+        """
+    )
     return [row[0] for row in cursor]
 
 
@@ -205,7 +232,9 @@ def process_games(
                 logging.warning(f"Could not determine teams for {game_id}, skipping")
                 continue
 
-            result = process_game(events_raw, home_id, away_id, game_id)
+            result = process_game(
+                events_raw, home_id, away_id, game_id, box_player_names(conn, game_id)
+            )
 
             for pid, pdata in result.items():
                 row = [pid, game_id, pdata["team_id"]]

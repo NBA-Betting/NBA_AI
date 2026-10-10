@@ -56,8 +56,13 @@ def process_game(
     home_team_id: int,
     away_team_id: int,
     game_id: str = "",
+    player_names: dict[int, tuple[int, list[str]]] | None = None,
 ) -> dict[int, dict]:
     """
+    player_names: optional {player_id: (team_id, [name forms])} for the
+    game's roster (box score), to resolve substitutions of players with no
+    other actions.
+
     Process all PBP events for one game and return per-player stats.
 
     Returns:
@@ -70,7 +75,7 @@ def process_game(
     if not events:
         return {}
 
-    tracker = LineupTracker(events, home_team_id, away_team_id)
+    tracker = LineupTracker(events, home_team_id, away_team_id, player_names)
 
     # Resolve assist player names → IDs for older format events
     _resolve_assist_names(events, tracker)
@@ -100,6 +105,7 @@ def process_game(
 
         period_events = [e for e in events if e.period == period]
         prev_clock = period_start_seconds
+        pending_seconds: list[tuple[dict[int, set[int]], float]] = []
         prev_offense_team = 0
 
         for evt_i, evt in enumerate(period_events):
@@ -121,14 +127,19 @@ def process_game(
                         offense_team_id = evt.team_id
 
             # --- Seconds attribution ---
+            # Before the first possession is known (older format learns it at
+            # the first make, free throw or turnover) seconds are held with the
+            # lineup on court, then credited once that team is known: it had
+            # the ball all along
             seconds_elapsed = prev_clock - evt.clock_seconds
-            if seconds_elapsed > 0 and offense_team_id:
-                on_court = tracker.get_current_players()
-                for tid, players in on_court.items():
-                    is_offense = tid == offense_team_id
-                    key = "seconds_played_off" if is_offense else "seconds_played_def"
-                    for pid in players:
-                        player_stats[pid][key] += seconds_elapsed
+            if seconds_elapsed > 0:
+                on_court = {
+                    tid: set(players)
+                    for tid, players in tracker.get_current_players().items()
+                }
+                pending_seconds.append((on_court, seconds_elapsed))
+            if offense_team_id:
+                _credit_seconds(player_stats, pending_seconds, offense_team_id)
             prev_clock = evt.clock_seconds
 
             # --- Substitution handling ---
@@ -176,6 +187,9 @@ def process_game(
             if _is_possession_ending_event(evt, events, offense_team_id, tracker):
                 _credit_possession(tracker, offense_team_id, player_stats)
 
+        # Offense never known this period: still count the playing time
+        _credit_seconds(player_stats, pending_seconds, offense_team_id)
+
     # Build result
     result = {}
     for pid, stats in player_stats.items():
@@ -188,6 +202,18 @@ def process_game(
         }
 
     return result
+
+
+def _credit_seconds(player_stats, pending_seconds, offense_team_id):
+    """Credit held (lineup, seconds) spans as offensive or defensive time,
+    then clear them. offense_team_id 0 (unknown) counts as defense for both."""
+    for on_court, seconds in pending_seconds:
+        for tid, players in on_court.items():
+            is_offense = offense_team_id and tid == offense_team_id
+            key = "seconds_played_off" if is_offense else "seconds_played_def"
+            for pid in players:
+                player_stats[pid][key] += seconds
+    pending_seconds.clear()
 
 
 # ---------------------------------------------------------------------------
