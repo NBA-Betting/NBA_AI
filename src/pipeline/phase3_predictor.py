@@ -305,6 +305,9 @@ class Phase3Predictor(BasePredictor):
                 len(sample.away_context),
                 data_cfg.min_history_games,
             )
+            self.skipped[game_id] = (
+                f"fewer than {data_cfg.min_history_games} games this season"
+            )
             return None
 
         # Encode the sample into tensor batch

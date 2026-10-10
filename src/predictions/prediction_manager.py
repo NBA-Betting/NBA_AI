@@ -113,7 +113,10 @@ def determine_predictor_class(predictor_name):
 
 
 @log_execution_time(average_over="game_ids")
-def make_pre_game_predictions(game_ids, predictor_name=None, save=True):
+def make_pre_game_predictions(game_ids, predictor_name=None, save=True, skipped=None):
+    """Predict the games with the named predictor (optionally saving them).
+    If a dict is passed as `skipped`, it receives the games the predictor
+    deliberately didn't predict, {game_id: reason}."""
     # Determine the predictor class based on the provided name
     predictor_class, predictor_name = determine_predictor_class(predictor_name)
 
@@ -129,6 +132,8 @@ def make_pre_game_predictions(game_ids, predictor_name=None, save=True):
 
     # Create the predictions
     pre_game_predictions = predictor_instance.make_pre_game_predictions(game_ids)
+    if skipped is not None:
+        skipped.update(predictor_instance.skipped)
     pre_game_predictions = _drop_implausible_predictions(
         pre_game_predictions, predictor_name
     )

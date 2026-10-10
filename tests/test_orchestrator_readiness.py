@@ -59,12 +59,25 @@ def test_zero_predictions_cannot_report_success(pipeline, monkeypatch, raises):
 
 
 def test_partial_prediction_coverage_is_reported(pipeline, monkeypatch):
-    """A predictor skipping some games (e.g. Phase3 before a team has played
-    3 games) is reported as a warning, not an error."""
+    """A game a predictor fails to predict without saying why is an error."""
     monkeypatch.setattr(
         prediction_manager, "make_pre_game_predictions",
         lambda *args, **kwargs: {"0022600001": {}},
     )
+    result = pipeline._stage_generate_predictions(["0022600001", "0022600002"], False)
+    assert result["status"] == "partial"
+    assert "0022600002" in result["error"]
+
+
+def test_deliberately_skipped_games_are_warnings(pipeline, monkeypatch):
+    """A game the predictor skips with a reason (e.g. Phase3 before a team
+    has 3 games this season) is a warning, not an error."""
+
+    def predict(game_ids, name, save=True, skipped=None):
+        skipped["0022600002"] = "fewer than 3 games this season"
+        return {"0022600001": {}}
+
+    monkeypatch.setattr(prediction_manager, "make_pre_game_predictions", predict)
     result = pipeline._stage_generate_predictions(["0022600001", "0022600002"], False)
     assert result["status"] == "ok"
     assert result["error"] is None
@@ -97,7 +110,7 @@ def test_existing_forecasts_refresh_and_started_games_are_preserved(pipeline, mo
         )
     calls = []
 
-    def predict(ids, name, save):
+    def predict(ids, name, save, skipped=None):
         calls.append((ids, name))
         return {gid: new for gid in ids}
 

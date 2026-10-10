@@ -31,7 +31,7 @@ import logging
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -1038,15 +1038,19 @@ class SeasonHealthChecker:
         with get_db(self.db_path) as conn:
             cursor = conn.cursor()
 
-            # Get games with pre_game_data_finalized=1 (eligible for predictions)
+            # Games eligible for predictions: pre-game data finalized and
+            # already tipped off. Upcoming games are flagged finalized days
+            # ahead, which would make the count drift with the schedule.
+            now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             result, _ = self._timed_query(
                 cursor,
                 """
                 SELECT COUNT(*) FROM Games
                 WHERE season = ? AND pre_game_data_finalized = 1
                 AND season_type IN ('Regular Season', 'Post Season')
+                AND date_time_utc <= ?
                 """,
-                (self.season,),
+                (self.season, now_utc),
             )
             eligible_games = result[0][0]
 
@@ -1071,8 +1075,9 @@ class SeasonHealthChecker:
                     WHERE g.season = ? AND g.pre_game_data_finalized = 1
                     AND p.predictor = ?
                     AND g.season_type IN ('Regular Season', 'Post Season')
+                    AND g.date_time_utc <= ?
                     """,
-                    (self.season, predictor),
+                    (self.season, predictor, now_utc),
                 )
                 pred_games = result[0][0]
                 coverage_pct = (

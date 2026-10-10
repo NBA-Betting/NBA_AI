@@ -11,6 +11,9 @@ overall success. This wrapper makes regressions loud without daily noise:
 - Criticals always alert. Warnings alert only when the check is newly
   failing or its value changed since the last run (for completeness
   checks, the shortfall: expected - actual).
+- Pipeline runs (PipelineRuns) since the last check that ended with errors,
+  or never finished, always alert: the orchestrator's own failures are
+  otherwise only in the cron log.
 - Alerts append to logs/ALERTS.log AND print to stdout (so they land in the
   cron log too). A desktop notification is attempted best-effort.
 
@@ -23,12 +26,16 @@ Usage:
 
 import argparse
 import json
+import sqlite3
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.database import DB_PATH  # noqa: E402
 STATE_PATH = PROJECT_ROOT / "data" / "collection_state" / "health_state.json"
 ALERTS_LOG = PROJECT_ROOT / "logs" / "ALERTS.log"
 PYTHON = PROJECT_ROOT / "venv" / "bin" / "python"
@@ -138,7 +145,38 @@ def _changed(prev_actual, curr_actual) -> bool:
         return str(curr_actual) != str(prev_actual)
 
 
-def save_state(report: dict, alerted_at: dict):
+# A run still marked running after this long crashed or hung
+RUN_STUCK_AFTER = timedelta(hours=3)
+
+
+def pipeline_run_alerts(last_seen: str | None) -> tuple[list[str], str | None]:
+    """
+    Alerts for pipeline runs started after `last_seen` (PipelineRuns
+    started_at, UTC) that ended with errors or never finished. Returns
+    (alert lines, newest started_at checked).
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT run_type, started_at, status, errors FROM PipelineRuns"
+            " WHERE started_at > ? ORDER BY started_at",
+            (last_seen or "",),
+        ).fetchall()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    alerts, newest = [], last_seen
+    for run_type, started_at, status, errors in rows:
+        if status == "running":
+            started = datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
+            if now - started < RUN_STUCK_AFTER:
+                break  # still going: check it again next time
+            alerts.append(f"[CRITICAL] pipeline/{run_type}: started {started_at} UTC, never finished")
+        elif status != "success":
+            detail = "; ".join(json.loads(errors or "[]")) or "no error recorded"
+            alerts.append(f"[CRITICAL] pipeline/{run_type} {status} ({started_at} UTC): {detail}")
+        newest = started_at
+    return alerts, newest
+
+
+def save_state(report: dict, alerted_at: dict, last_run: str | None):
     issues = {
         issue_key(r): {
             "status": r["status"],
@@ -151,7 +189,14 @@ def save_state(report: dict, alerted_at: dict):
     }
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(
-        json.dumps({"updated": datetime.now().isoformat(), "issues": issues}, indent=2)
+        json.dumps(
+            {
+                "updated": datetime.now().isoformat(),
+                "last_pipeline_run": last_run,
+                "issues": issues,
+            },
+            indent=2,
+        )
     )
 
 
@@ -192,7 +237,13 @@ def main():
             pass
 
     alerts, alerted_at = find_new_issues(report, prev_state)
-    save_state(report, alerted_at)
+    # First run with this check: start from now rather than replaying history
+    last_seen = prev_state.get("last_pipeline_run") or (
+        datetime.now(timezone.utc) - timedelta(days=1)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    run_alerts, last_run = pipeline_run_alerts(last_seen)
+    alerts = run_alerts + alerts
+    save_state(report, alerted_at, last_run)
 
     summary = report.get("summary", {})
     print(
