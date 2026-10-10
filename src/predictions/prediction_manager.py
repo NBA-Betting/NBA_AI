@@ -157,7 +157,8 @@ def make_pre_game_predictions(game_ids, predictor_name=None, save=True):
 def save_predictions(predictions, predictor_name, db_path=DB_PATH):
     """
     Save predictions to the Predictions table.
-    Validates that predictions are made before game start time.
+    Predictions for games that have started are allowed (backtests), but never
+    replace a stored prediction that was made before that game's tip-off.
 
     Parameters:
     predictions (dict): The predictions to save.
@@ -166,9 +167,6 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
 
     Returns:
     None
-
-    Raises:
-    ValueError: If prediction is made after game start time.
     """
     if not predictions:
         logging.debug("No predictions to save.")
@@ -193,6 +191,14 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
         game_times = {
             row[0]: pd.to_datetime(row[1], utc=True) for row in cursor.fetchall()
         }
+        cursor.execute(
+            f"SELECT game_id, prediction_datetime FROM Predictions "
+            f"WHERE predictor = ? AND game_id IN ({placeholders})",
+            [predictor_name, *game_ids],
+        )
+        saved_at = {
+            row[0]: pd.to_datetime(row[1], utc=True) for row in cursor.fetchall()
+        }
 
         # Check each game
         for game_id in game_ids:
@@ -206,6 +212,13 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
             time_until_game = (game_time - prediction_datetime).total_seconds() / 60
 
             if time_until_game < 0:
+                if game_id in saved_at and saved_at[game_id] < game_time:
+                    logging.warning(
+                        f"Keeping the pre-game {predictor_name} prediction for "
+                        f"{game_id}; not replacing it after tip-off ({game_time})."
+                    )
+                    predictions = {k: v for k, v in predictions.items() if k != game_id}
+                    continue
                 # Allow predictions for past games (for historical analysis)
                 logging.debug(
                     f"Saving prediction for completed game {game_id}: prediction time "
