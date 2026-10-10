@@ -54,7 +54,7 @@ The system runs multiple prediction engines, each taking a different approach to
 
 - **Phase 5 (Hierarchical)**: A 4-level neural architecture that models basketball from the ground up — individual player abilities (L1, Kalman filter), player synergy (L2, GATv2), team effects (L3), and game-level matchup prediction (L4). ~1.4M parameters, trained on play-by-play and box score data.
 
-- **Phase 3 (Transformer)**: A roster-conditioned temporal transformer that processes each team's full season history with player-level attention. ~25M parameters, captures game-to-game dynamics and roster interactions.
+- **Phase 3 (Transformer)**: A roster-conditioned temporal transformer that processes each team's full season history with player-level attention. ~27M parameters, captures game-to-game dynamics and roster interactions.
 
 ### Traditional ML Models
 
@@ -65,7 +65,7 @@ The system runs multiple prediction engines, each taking a different approach to
 
 ### Ensemble
 
-- **Ensemble**: Equal-weight combination of all five models above. Averages spreads arithmetically and win probabilities in log-odds space.
+- **Ensemble**: Equal-weight combination of Phase5, Phase3, Linear, Tree, and MLP (whichever have predictions, at least two). Averages spreads arithmetically and win probabilities in log-odds space.
 
 ### Performance
 

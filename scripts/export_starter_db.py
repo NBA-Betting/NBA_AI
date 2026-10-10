@@ -16,7 +16,7 @@ Excluded:
 - Historical seasons (only needed for model training)
 - Training-only tables (RAPM, Darkball, lineups, etc.)
 
-Output: data/NBA_AI_starter.sqlite.gz (~85 MB compressed)
+Output: data/NBA_AI_starter.sqlite.gz (~100 MB compressed)
 
 Usage:
     python scripts/export_starter_db.py

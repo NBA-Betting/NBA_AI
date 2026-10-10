@@ -301,7 +301,7 @@
           <li>
             <strong>Phase 3 (Transformer):</strong> A roster-conditioned
             temporal transformer that processes each team's full season history
-            with player-level attention. ~25M parameters, captures game-to-game
+            with player-level attention. ~27M parameters, captures game-to-game
             dynamics and roster interactions.
           </li>
         </ul>
@@ -331,9 +331,10 @@
 
         <ul>
           <li>
-            <strong>Ensemble:</strong> Equal-weight combination of all five
-            models above. Averages spreads arithmetically and win probabilities
-            in log-odds space.
+            <strong>Ensemble:</strong> Equal-weight combination of Phase5,
+            Phase3, Linear, Tree, and MLP (whichever have predictions, at least
+            two). Averages spreads arithmetically and win probabilities in
+            log-odds space.
           </li>
         </ul>
       </div>
@@ -419,7 +420,9 @@ cp .env.example .env</code></pre>
         </p>
 
         <pre><code># Automated (add via 'crontab -e')
-TZ=US/Eastern
+# Note: cron schedules use your system's local timezone. Pick an hour that is
+# morning US Eastern for you (e.g. 10am ET = "0 7" on a US Pacific machine),
+# so the run lands after the previous night's games and before the day's games.
 0 10 * * * cd /path/to/NBA_AI && venv/bin/python -m src.pipeline.orchestrator --mode=full --season=Current >> logs/cron_daily.log 2>&amp;1</code></pre>
 
         <h3>Included Models</h3>
