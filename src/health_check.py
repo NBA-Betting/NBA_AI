@@ -1257,25 +1257,16 @@ class SeasonHealthChecker:
             result, qtime = self._timed_query(
                 cursor,
                 """
-                SELECT DISTINCT DATE(report_timestamp) FROM InjuryReports
+                SELECT DISTINCT DATE(report_timestamp), game_date FROM InjuryReports
                 WHERE source = 'NBA_Official' AND season = ?
                 """,
                 (self.season,),
             )
             report_days = {r[0] for r in result}
-
-            # A game day is covered by a report that day, or the day before
-            # (what rosters fall back to when today's isn't out yet)
-            def previous_day(d):
-                return (datetime.strptime(d, "%Y-%m-%d") - timedelta(days=1)).strftime(
-                    "%Y-%m-%d"
-                )
-
-            uncovered = [
-                d
-                for d in game_days
-                if d not in report_days and previous_day(d) not in report_days
-            ]
+            # A game day is covered when some report lists its games
+            # (rows carry the game date they're for)
+            covered_days = {r[1] for r in result if r[1]}
+            uncovered = [d for d in game_days if d not in covered_days]
             covered = len(game_days) - len(uncovered)
             coverage_pct = covered / len(game_days) * 100
             message = (

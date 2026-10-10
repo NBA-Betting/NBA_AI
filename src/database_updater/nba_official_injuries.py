@@ -244,6 +244,11 @@ def parse_injury_pdf(pdf_content: bytes) -> pd.DataFrame:
 
     records = []
     lines = all_text.split("\n")
+    # (game_date, team) for every team in a listed matchup, and those marked
+    # NOTYETSUBMITTED: a covered team without rows has no injuries, a team
+    # not yet submitted tells us nothing new
+    covered = set()
+    not_submitted = set()
 
     current_date = None
     current_time = None
@@ -328,11 +333,23 @@ def parse_injury_pdf(pdf_content: bytes) -> pd.DataFrame:
                     current_team = None
                     rest = matchup_match.group(2)
 
+        if current_date and current_matchup:
+            game_date = datetime.strptime(current_date, "%m/%d/%Y").strftime("%Y-%m-%d")
+            for team in current_matchup.split("@"):
+                covered.add((game_date, team))
+
         # Strip team name prefix if present (e.g., "DallasMavericks Cisse,Moussa...")
         team_strip = re.match(rf"^({team_pattern})\s+(.*)", rest)
         if team_strip:
             current_team = team_names[team_strip.group(1)]
             rest = team_strip.group(2)
+
+        if rest.replace(" ", "").upper() == "NOTYETSUBMITTED":
+            if current_date and current_team:
+                not_submitted.add(
+                    (datetime.strptime(current_date, "%m/%d/%Y").strftime("%Y-%m-%d"), current_team)
+                )
+            continue
 
         # Match player line with reason: "Player,Name Status Reason"
         player_match = re.match(
@@ -365,7 +382,9 @@ def parse_injury_pdf(pdf_content: bytes) -> pd.DataFrame:
             # Include ALL absences (injuries + rest/personal/etc.)
             records.append(
                 {
-                    "game_date": current_date,
+                    "game_date": datetime.strptime(current_date, "%m/%d/%Y").strftime(
+                        "%Y-%m-%d"
+                    ),
                     "game_time": current_time,
                     "matchup": current_matchup,
                     "team": current_team,
@@ -380,7 +399,10 @@ def parse_injury_pdf(pdf_content: bytes) -> pd.DataFrame:
                 }
             )
 
-    return pd.DataFrame(records)
+    df = pd.DataFrame(records)
+    df.attrs["covered"] = covered
+    df.attrs["not_submitted"] = not_submitted
+    return df
 
 
 def fetch_injury_report(date: datetime) -> tuple[pd.DataFrame, str]:
@@ -414,8 +436,13 @@ def fetch_injury_report(date: datetime) -> tuple[pd.DataFrame, str]:
                 # Always parse first — a PDF can contain NOTYETSUBMITTED markers for
                 # individual teams while still carrying complete data for others.
                 df = parse_injury_pdf(resp.content)
-                if len(df) > 0:
+                # Usable once any listed team has submitted (a submitted team
+                # with no rows has no injuries)
+                if len(df) > 0 or df.attrs.get("covered", set()) - df.attrs.get(
+                    "not_submitted", set()
+                ):
                     df["report_date"] = date_str
+                    df.attrs["report_date"] = date_str
                     logging.debug(
                         f"Injury PDF for {date_str}: fetched {time_fmt} with {len(df)} records"
                     )
@@ -611,21 +638,37 @@ def _should_fetch_injury_date(report_date: datetime, db_path: str = DB_PATH) -> 
         )
         return True
     else:
-        # Past date: permanent cache UNLESS it was 'not_found' within the last 7 days
-        # (the NBA publishes injury PDFs at 7pm ET, so a 10am fetch may miss them)
-        from src.utils import get_utc_now
+        from src.utils import get_eastern_tz, get_utc_now
 
-        if cached_status == "not_found":
-            now_utc = get_utc_now()
-            if last_fetch.tzinfo is None:
-                last_fetch = last_fetch.replace(tzinfo=timezone.utc)
-            days_ago = (now_utc - last_fetch).total_seconds() / 86400
-            if days_ago < 7:
-                logging.debug(
-                    f"Past date {date_str} was 'not_found' {days_ago:.1f} days ago - retrying"
-                )
-                return True
+        if last_fetch.tzinfo is None:
+            last_fetch = last_fetch.replace(tzinfo=timezone.utc)
+        # Fetched while that day was still on (e.g. the 10am snapshot, with
+        # teams not yet submitted): fetch once more for its final report
+        day_end = get_eastern_tz().localize(
+            datetime(report_date.year, report_date.month, report_date.day) + timedelta(days=1)
+        )
+        if cached_status in ("success", "not_yet_submitted") and last_fetch < day_end:
+            return True
+        # Not found on a day with games: keep retrying (once a day); off-days
+        # legitimately have no report and are left alone
+        if cached_status == "not_found" and _has_games(date_str, db_path):
+            return (get_utc_now() - last_fetch).total_seconds() > 86400
         return False
+
+
+def _has_games(date_str: str, db_path: str = DB_PATH) -> bool:
+    """Whether regular-season or playoff games were scheduled on an Eastern date."""
+    from src.utils import to_eastern_date
+
+    day = datetime.strptime(date_str, "%Y-%m-%d")
+    with get_db(db_path) as conn:
+        rows = conn.execute(
+            """SELECT date_time_utc FROM Games
+            WHERE date_time_utc >= ? AND date_time_utc < ?
+            AND season_type IN ('Regular Season', 'Post Season')""",
+            (day.strftime("%Y-%m-%d"), (day + timedelta(days=2)).strftime("%Y-%m-%d")),
+        ).fetchall()
+    return any(to_eastern_date(r[0]) == date_str for r in rows)
 
 
 def _find_dates_missing_data(dates: list, db_path: str = DB_PATH) -> list:
@@ -770,192 +813,108 @@ def _rematch_unmatched_players(db_path: str = DB_PATH) -> int:
 
 
 def _ensure_injury_unique_constraint(db_path: str = DB_PATH):
-    """Add unique constraint to prevent duplicate injury records.
-
-    Uses (player_name, report_timestamp, source, team) as the semantic key
-    since nba_player_id can be NULL for unmatched players.
-    """
+    """Rows are keyed by player, game date, source and team (one status per
+    player per game). Adds the game_date column to older databases."""
     with get_db(db_path) as conn:
-        cursor = conn.cursor()
-
-        # Check if new constraint already exists
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_injury_semantic_unique'"
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(InjuryReports)")}
+        if "game_date" not in columns:
+            conn.execute("ALTER TABLE InjuryReports ADD COLUMN game_date TEXT")
+        conn.execute("DROP INDEX IF EXISTS idx_injury_unique")
+        conn.execute("DROP INDEX IF EXISTS idx_injury_semantic_unique")
+        conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_injury_game_unique
+            ON InjuryReports(player_name, game_date, source, COALESCE(team, ''))"""
         )
-        if cursor.fetchone():
-            return  # Already exists
-
-        # Remove old constraint if it exists (the one that included nba_player_id)
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_injury_unique'"
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_injury_game_team ON InjuryReports(game_date, team)"
         )
-        if cursor.fetchone():
-            cursor.execute("DROP INDEX idx_injury_unique")
-            logging.debug("Dropped old idx_injury_unique index")
-
-        # Remove existing semantic duplicates before adding constraint
-        # Keep the record with an nba_player_id if possible, otherwise keep the first
-        logging.debug(
-            "Removing duplicate injury records before adding unique constraint..."
-        )
-        cursor.execute("""
-            DELETE FROM InjuryReports
-            WHERE id NOT IN (
-                SELECT MIN(CASE WHEN nba_player_id IS NOT NULL THEN id ELSE id + 1000000000 END)
-                FROM InjuryReports
-                GROUP BY player_name, report_timestamp, source, COALESCE(team, '')
-            )
-        """)
-        removed = cursor.rowcount
-        if removed > 0:
-            logging.info(f"Removed {removed} duplicate injury records")
-
-        # Add semantic unique constraint (without nba_player_id which can be NULL)
-        cursor.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_injury_semantic_unique 
-            ON InjuryReports(player_name, report_timestamp, source, COALESCE(team, ''))
-        """)
         conn.commit()
 
 
 def save_injury_records(df: pd.DataFrame, db_path: str = DB_PATH) -> dict:
-    """Save injury records to database with player ID matching and UPSERT logic.
+    """Save one injury report: rows are per player per *game date* (a report
+    lists today's games and, in the evening, tomorrow's).
+
+    For each team in the report's matchups that has submitted, its rows for
+    that game date replace the stored ones, unless those come from a newer
+    report. Teams marked NOTYETSUBMITTED keep what is stored (typically the
+    previous evening's report for the same games).
 
     Returns:
         dict: {"added": int, "updated": int, "total": int}
     """
-    if df.empty:
+    covered = df.attrs.get("covered", set())
+    not_submitted = df.attrs.get("not_submitted", set())
+    submitted = covered - not_submitted
+    if df.empty and not submitted:
         return {"added": 0, "updated": 0, "total": 0}
+    report_date = df["report_date"].iloc[0] if not df.empty else df.attrs["report_date"]
 
-    # Ensure unique constraint exists
     _ensure_injury_unique_constraint(db_path)
-
-    # Build player lookup for matching
     player_lookup = build_player_lookup(db_path)
+    leg_parts = {
+        "Ankle", "Knee", "Hamstring", "Calf", "Thigh", "Foot", "Toe",
+        "Achilles", "Quad", "Groin", "Leg",
+    }
 
-    conn = create_connection(db_path)
-
-    db_records = []
+    rows_by_team = {}
     for _, row in df.iterrows():
-        team = row.get("team")
-
-        # Format player name
+        team, game_date = row.get("team"), row["game_date"]
+        if not team or (game_date, team) not in submitted:
+            continue
         player_name = row["player_name"]
         if "," in player_name and ", " not in player_name:
             player_name = player_name.replace(",", ", ")
-
-        # Match to NBA player ID
-        nba_player_id = match_player_id(player_lookup, player_name, team)
-
-        # Determine injury location category
-        leg_parts = [
-            "Ankle",
-            "Knee",
-            "Hamstring",
-            "Calf",
-            "Thigh",
-            "Foot",
-            "Toe",
-            "Achilles",
-            "Quad",
-            "Groin",
-            "Leg",
-        ]
-        injury_location = "Leg" if row["body_part"] in leg_parts else "Other"
-
-        # Derive season from report_date (Oct-Dec = current year, Jan-Sep = previous year)
-        report_date = row["report_date"]
-        if report_date:
-            year = int(report_date[:4])
-            month = int(report_date[5:7])
-            if month >= 10:  # Oct-Dec = start of new season
-                season = f"{year}-{year + 1}"
-            else:  # Jan-Sep = end of previous season
-                season = f"{year - 1}-{year}"
-        else:
-            season = None
-
-        db_records.append(
+        year, month = int(game_date[:4]), int(game_date[5:7])
+        season = f"{year}-{year + 1}" if month >= 10 else f"{year - 1}-{year}"
+        rows_by_team.setdefault((game_date, team), []).append(
             {
-                "nba_player_id": nba_player_id,
+                "nba_player_id": match_player_id(player_lookup, player_name, team),
                 "player_name": player_name,
                 "team": team,
                 "status": row["status"],
                 "injury_type": row["injury_type"],
                 "body_part": row["body_part"],
-                "injury_location": injury_location,
+                "injury_location": "Leg" if row["body_part"] in leg_parts else "Other",
                 "injury_side": row["injury_side"],
                 "category": row.get("category", "Injury"),
-                "report_timestamp": row["report_date"],
+                "report_timestamp": report_date,
+                "game_date": game_date,
                 "source": "NBA_Official",
                 "season": season,
             }
         )
 
-    # Use semantic key (player_name, report_timestamp, source, team) for deduplication
-    # This handles NULL nba_player_id correctly
-    cursor = conn.cursor()
-
-    # Check which records already exist using semantic key
-    existing_keys = set()
-    if db_records:
-        # Build semantic keys to check
-        semantic_keys = [
-            (r["player_name"], r["report_timestamp"], r["source"], r["team"] or "")
-            for r in db_records
-        ]
-
-        # Query in batches if needed
-        for i in range(0, len(semantic_keys), 500):
-            batch = semantic_keys[i : i + 500]
-            placeholders = ",".join(["(?,?,?,?)"] * len(batch))
-            flat_params = [item for key in batch for item in key]
-
-            cursor.execute(
-                f"""
-                SELECT player_name, report_timestamp, source, COALESCE(team, '')
-                FROM InjuryReports
-                WHERE (player_name, report_timestamp, source, COALESCE(team, '')) IN (VALUES {placeholders})
-            """,
-                flat_params,
+    added = updated = 0
+    with get_db(db_path) as conn:
+        for game_date, team in sorted(submitted):
+            stored = conn.execute(
+                """SELECT MAX(report_timestamp), COUNT(*) FROM InjuryReports
+                WHERE source = 'NBA_Official' AND game_date = ? AND team = ?""",
+                (game_date, team),
+            ).fetchone()
+            if stored[0] and stored[0] > report_date:
+                continue  # a newer report already covers this team's game
+            conn.execute(
+                """DELETE FROM InjuryReports
+                WHERE source = 'NBA_Official' AND game_date = ? AND team = ?""",
+                (game_date, team),
             )
-            existing_keys.update(cursor.fetchall())
+            records = rows_by_team.get((game_date, team), [])
+            if records:
+                columns = list(records[0])
+                conn.executemany(
+                    f"INSERT INTO InjuryReports ({', '.join(columns)}) "
+                    f"VALUES ({', '.join('?' * len(columns))})",
+                    [[r[c] for c in columns] for r in records],
+                )
+            if stored[1]:
+                updated += len(records)
+            else:
+                added += len(records)
+        conn.commit()
 
-    # Count added vs updated
-    added_count = 0
-    updated_count = 0
-
-    for record in db_records:
-        key = (
-            record["player_name"],
-            record["report_timestamp"],
-            record["source"],
-            record["team"] or "",
-        )
-        if key in existing_keys:
-            updated_count += 1
-        else:
-            added_count += 1
-
-    # Use INSERT OR REPLACE with semantic unique index
-    records_df = pd.DataFrame(db_records)
-
-    # Pandas to_sql doesn't support OR REPLACE, so use executemany
-    columns = list(records_df.columns)
-    placeholders_str = ",".join(["?"] * len(columns))
-
-    cursor.executemany(
-        f"""
-        INSERT OR REPLACE INTO InjuryReports ({','.join(columns)})
-        VALUES ({placeholders_str})
-        """,
-        records_df.values.tolist(),
-    )
-
-    conn.commit()
-    conn.close()
-
-    return {"added": added_count, "updated": updated_count, "total": len(records_df)}
+    return {"added": added, "updated": updated, "total": added + updated}
 
 
 def update_nba_official_injuries(
@@ -1082,7 +1041,7 @@ def update_nba_official_injuries(
         if stage_logger:
             stage_logger.log_api_call()
 
-        if status == "success" and not df.empty:
+        if status == "success":
             counts = save_injury_records(df, db_path)
             total_added += counts["added"]
             total_updated += counts["updated"]
@@ -1196,122 +1155,44 @@ def update_nba_official_injuries(
 
 
 def backfill_injury_reports(
-    start_date: str, end_date: str, db_path: str = DB_PATH, batch_size: int = 50
+    start_date: str, end_date: str, db_path: str = DB_PATH
 ) -> int:
     """
-    Backfill NBA Official injury reports for a date range.
-
-    This is for historical data collection. Uses batch saving and progress bars
-    for efficient processing of large date ranges.
+    (Re)fetch NBA Official injury reports for a date range, oldest first, so
+    each game ends up with its latest report. Ignores the fetch cache.
 
     Args:
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
         db_path: Path to database
-        batch_size: Number of days to process before saving (default: 50)
 
     Returns:
-        Number of records inserted
+        Number of records saved
     """
-    from datetime import datetime, timedelta
-
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-
     if start_dt > end_dt:
         raise ValueError("start_date must be before end_date")
 
-    # Generate all dates in range
-    current_dt = start_dt
-    dates = []
-    while current_dt <= end_dt:
-        dates.append(current_dt)
-        current_dt += timedelta(days=1)
-
+    dates = [start_dt + timedelta(days=i) for i in range((end_dt - start_dt).days + 1)]
     logging.info(
         f"Backfilling NBA Official injury reports for {len(dates)} days ({start_date} to {end_date})..."
     )
 
-    conn = create_connection(db_path)
-    total_inserted = 0
-    total_cached = 0
-    total_not_found = 0
-
-    # Batch collection for efficient saving
-    batch_dfs = []
-
-    # Progress bar for large backfills
+    total = 0
     with tqdm(dates, desc="Backfilling injury reports", unit="day") as pbar:
         for dt in pbar:
             date_str = dt.strftime("%Y-%m-%d")
+            df, status = fetch_injury_report(dt)
+            if status == "success":
+                total += save_injury_records(df, db_path)["total"]
+            if status in ("success", "not_found", "not_yet_submitted"):
+                _update_injury_cache(date_str, db_path, status=status)
+            pbar.set_postfix({"saved": total, "last": status})
+            time.sleep(0.1)  # Be nice to NBA servers
 
-            # Check if we already have data for this date
-            existing = pd.read_sql(
-                "SELECT COUNT(*) as cnt FROM InjuryReports WHERE source = 'NBA_Official' AND report_timestamp = ?",
-                conn,
-                params=(date_str,),
-            )["cnt"].iloc[0]
-
-            if existing > 0:
-                logging.debug(f"{date_str}: already have {existing} records")
-                total_cached += 1
-                pbar.set_postfix(
-                    {
-                        "cached": total_cached,
-                        "inserted": total_inserted,
-                        "not_found": total_not_found,
-                    }
-                )
-                continue
-
-            # Fetch the report
-            df = fetch_injury_report(dt)
-            if not df.empty:
-                batch_dfs.append(df)
-                pbar.set_postfix(
-                    {
-                        "cached": total_cached,
-                        "batch": len(batch_dfs),
-                        "pending": total_inserted,
-                    }
-                )
-
-                # Save batch if it reaches batch_size
-                if len(batch_dfs) >= batch_size:
-                    combined_df = pd.concat(batch_dfs, ignore_index=True)
-                    count = save_injury_records(combined_df, db_path)["added"]
-                    logging.info(
-                        f"Saved batch: {count} records from {len(batch_dfs)} days"
-                    )
-                    total_inserted += count
-                    batch_dfs = []  # Clear batch
-            else:
-                logging.debug(f"{date_str}: no report available")
-                total_not_found += 1
-                pbar.set_postfix(
-                    {
-                        "cached": total_cached,
-                        "inserted": total_inserted,
-                        "not_found": total_not_found,
-                    }
-                )
-
-            # Rate limiting - be respectful to NBA servers
-            time.sleep(0.2)
-
-    # Save any remaining records in the last batch
-    if batch_dfs:
-        combined_df = pd.concat(batch_dfs, ignore_index=True)
-        count = save_injury_records(combined_df, db_path)["added"]
-        logging.info(f"Saved final batch: {count} records from {len(batch_dfs)} days")
-        total_inserted += count
-
-    conn.close()
-
-    logging.info(
-        f"Backfill complete: {total_inserted} new records, {total_cached} cached, {total_not_found} not found ({len(dates)} days total)"
-    )
-    return total_inserted
+    _rematch_unmatched_players(db_path)
+    return total
 
 
 def main():

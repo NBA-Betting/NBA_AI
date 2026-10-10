@@ -18,7 +18,7 @@ def roster_db(tmp_path):
         CREATE TABLE Players (person_id INTEGER, team TEXT, roster_status INTEGER);
         CREATE TABLE PlayerBox (game_id TEXT, team_id INTEGER, player_id INTEGER, min REAL);
         CREATE TABLE InjuryReports (nba_player_id INTEGER, team TEXT, status TEXT,
-                                    report_timestamp TEXT);
+                                    report_timestamp TEXT, game_date TEXT, source TEXT);
         INSERT INTO Teams VALUES (1, 'BOS'), (2, 'NYK');
         INSERT INTO Games VALUES
             ('opener', 'BOS', 'NYK', '2026-10-20T23:00:00Z', 1, 'Regular Season');
@@ -92,10 +92,15 @@ def test_recent_team_games_require_usable_regular_season_boxes(roster_db):
 def test_rookie_rosters_still_subtract_injuries_and_cap_players(roster_db):
     conn, assembler = roster_db
     conn.executemany("INSERT INTO Players VALUES (?, 'BOS', 1)", [(pid,) for pid in range(1, 18)])
-    conn.executemany("INSERT INTO InjuryReports VALUES (?, 'BOS', ?, ?)", [
-        (1, "Out", "2026-10-20T12:00:00Z"),
-        (2, "Questionable", "2026-10-20T12:00:00Z"),
-    ])
+    conn.executemany(
+        "INSERT INTO InjuryReports VALUES (?, 'BOS', ?, '2026-10-20', ?, 'NBA_Official')",
+        [
+            (1, "Out", "2026-10-20"),
+            (2, "Questionable", "2026-10-20"),
+            # Tomorrow's game in the same evening report: not this game's status
+            (3, "Out", "2026-10-21"),
+        ],
+    )
     conn.commit()
     projected = assembler.get_projected_rosters(["opener"])["opener"]
     assert projected["home_players"] == list(range(2, 17))

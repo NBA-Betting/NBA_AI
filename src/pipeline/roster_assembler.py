@@ -324,34 +324,21 @@ class RosterAssembler:
 
     def _load_injuries(self, conn, game_date) -> dict[str, set[int]]:
         """
-        Load the injury report for a game date (Eastern), falling back to the
-        previous day's report if today's isn't published yet.
+        Injury statuses for a game date (Eastern): the latest report covering
+        each team's game that day (that day's, or the previous evening's for
+        teams that haven't submitted yet).
 
         Returns {"out": {pid, ...}, "questionable": {pid, ...}}. Doubtful
         players are treated as out.
         """
         result: dict[str, set[int]] = {"out": set(), "questionable": set()}
-        row = conn.execute(
-            """
-            SELECT MAX(report_timestamp) FROM InjuryReports
-            WHERE report_timestamp >= ? AND report_timestamp < ?
-            """,
-            (
-                (game_date - timedelta(days=1)).isoformat(),
-                (game_date + timedelta(days=1)).isoformat(),
-            ),
-        ).fetchone()
-        if not row or not row[0]:
-            return result
-
         rows = conn.execute(
             """
-            SELECT nba_player_id, status
-            FROM InjuryReports
-            WHERE report_timestamp LIKE ?
+            SELECT nba_player_id, status FROM InjuryReports
+            WHERE game_date = ? AND source = 'NBA_Official'
             AND nba_player_id IS NOT NULL
             """,
-            (f"{row[0][:10]}%",),
+            (game_date.isoformat(),),
         ).fetchall()
 
         for pid, status in rows:
