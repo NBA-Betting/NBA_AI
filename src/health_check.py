@@ -37,6 +37,7 @@ from typing import Any, Optional
 
 from src.config import config
 from src.database import get_db
+from src.database_updater.betting import CLOSING_SPREAD_SQL
 from src.logging_config import setup_logging
 from src.utils import get_current_eastern_date, to_eastern_date, validate_season_format
 
@@ -1194,15 +1195,17 @@ class SeasonHealthChecker:
                 )
                 return
 
-            # Check Betting coverage
+            # Check closing-line coverage (a Betting row can be a placeholder
+            # or hold lines the dashboard doesn't read)
             result, qtime = self._timed_query(
                 cursor,
-                """
+                f"""
                 SELECT COUNT(DISTINCT g.game_id)
                 FROM Games g
                 JOIN Betting b ON g.game_id = b.game_id
                 WHERE g.season = ? AND g.status = 3
                 AND g.season_type IN ('Regular Season', 'Post Season')
+                AND {CLOSING_SPREAD_SQL} IS NOT NULL
                 """,
                 (self.season,),
             )
@@ -1217,7 +1220,7 @@ class SeasonHealthChecker:
                     "completeness",
                     "betting_coverage",
                     CheckStatus.PASS,
-                    f"{betting_games}/{completed_games} games have Betting data ({coverage_pct:.1f}%)",
+                    f"{betting_games}/{completed_games} games have a closing line ({coverage_pct:.1f}%)",
                     expected=completed_games,
                     actual=betting_games,
                     query_time_ms=qtime,
