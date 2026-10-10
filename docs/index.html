@@ -187,7 +187,7 @@
           The system runs a fully automated daily pipeline that collects game
           data, updates player ability models, and generates pre-game predictions
           for all upcoming games using multiple prediction engines. A Flask web
-          app displays predictions alongside Vegas opening lines, with a
+          app displays predictions alongside Vegas lines, with a
           dashboard for tracking model performance over time.
         </p>
 
@@ -346,7 +346,7 @@
         <ul>
           <li>Python 3.10+</li>
           <li>PyTorch (required for MLP predictor; optional for others)</li>
-          <li>~2GB disk space (starter database expands to ~1.4GB)</li>
+          <li>~2GB disk space (starter database expands to ~1.6GB)</li>
         </ul>
 
         <h3>1. Install</h3>
@@ -462,8 +462,9 @@ TZ=US/Eastern
         </table>
 
         <p>
-          These models are combined by the <strong>Ensemble</strong> predictor
-          (equal-weight average).
+          Linear, Tree, and MLP are combined by the <strong>Ensemble</strong>
+          predictor (equal-weight average), along with Phase5 and Phase3 when
+          their models are present.
         </p>
 
         <p>
