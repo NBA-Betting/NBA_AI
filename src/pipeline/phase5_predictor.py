@@ -59,15 +59,18 @@ SPREAD_SIGMA = 15.0
 class Phase5Predictor(BasePredictor):
     """Phase 5 Hierarchical model predictor."""
 
-    def __init__(self, model_paths=None):
+    def __init__(self, model_paths=None, historical: bool = False):
+        """historical: predict past games as of their tip-off (backtests):
+        pre-game rosters from appearances, and no L1 vector update."""
         super().__init__(model_paths)
+        self.historical = historical
         self._models_loaded = False
         self._device = None
         self._l2_model = None
         self._l3_model = None
         self._l4_model = None
         self._l2_cfg = None
-        self._roster_assembler = RosterAssembler()
+        self._roster_assembler = RosterAssembler(historical=historical)
         self._team_features = TeamFeatureComputer()
         self._l1_updater = None  # Lazy-loaded on first freshness check
 
@@ -192,7 +195,8 @@ class Phase5Predictor(BasePredictor):
             prediction_type, roster_confidence
         }}
         """
-        self._ensure_l1_fresh()
+        if not self.historical:
+            self._ensure_l1_fresh()
         self._ensure_models_loaded()
 
         # Step 1: Assemble rosters

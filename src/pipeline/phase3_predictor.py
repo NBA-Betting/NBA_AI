@@ -59,7 +59,7 @@ ROSTER_CAP = 11
 class Phase3Predictor(BasePredictor):
     """Phase 3 transformer model predictor (Exp 5 / 5b roster-temporal)."""
 
-    def __init__(self, model_paths: Optional[dict] = None):
+    def __init__(self, model_paths: Optional[dict] = None, historical: bool = False):
         """
         Initialize Phase 3 predictor.
 
@@ -68,9 +68,12 @@ class Phase3Predictor(BasePredictor):
                 checkpoint: path to model .pt file
                 config: path to .yaml config file
                 cache_dir: path to phase3 cache directory
+            historical: predict past games as of their tip-off (backtests):
+                pre-game rosters from appearances, and no cache update
         """
         super().__init__()
         model_paths = model_paths or {}
+        self.historical = historical
 
         self._checkpoint_path = model_paths.get("checkpoint")
         self._config_path = model_paths.get("config")
@@ -234,7 +237,8 @@ class Phase3Predictor(BasePredictor):
                 roster_confidence
             }}
         """
-        self._ensure_cache_fresh()
+        if not self.historical:
+            self._ensure_cache_fresh()
         self._ensure_models_loaded()
 
         predictions = {}
@@ -439,7 +443,9 @@ class Phase3Predictor(BasePredictor):
         try:
             from src.pipeline.roster_assembler import RosterAssembler
 
-            assembler = RosterAssembler(db_path=str(db_path))
+            assembler = RosterAssembler(
+                db_path=str(db_path), historical=self.historical
+            )
             rosters = assembler.get_projected_rosters([game_id])
             roster_info = rosters.get(game_id)
 
