@@ -89,6 +89,10 @@ FUTURE_CUTOFF_DAYS = 2  # Don't fetch for games more than 2 days out
 ESPN_LOOKBACK_DAYS = 7  # ESPN API has data for ~7 days back
 COVERS_FINALIZATION_DELAY_DAYS = 1  # Wait 1 day after ESPN window before using Covers
 
+# The closing line used to grade predictions (Vegas convention, negative =
+# home favored): ESPN's when present, else Covers'. SQL on Betting aliased "b".
+CLOSING_SPREAD_SQL = "COALESCE(b.espn_closing_spread, b.covers_closing_spread)"
+
 # Caching thresholds
 CACHE_HOURS = 1  # Cache all non-finalized games for 1 hour, then re-check for new lines
 
@@ -359,9 +363,13 @@ def get_espn_event_id(
             for event in events:
                 competitors = event.get("competitions", [{}])[0].get("competitors", [])
                 if len(competitors) >= 2:
-                    # ESPN: competitors[0] is home, competitors[1] is away
-                    espn_home = competitors[0].get("team", {}).get("abbreviation", "")
-                    espn_away = competitors[1].get("team", {}).get("abbreviation", "")
+                    # Home/away from ESPN's homeAway field (list order is
+                    # usually home first, but not guaranteed)
+                    sides = {c.get("homeAway"): c for c in competitors}
+                    home_c = sides.get("home", competitors[0])
+                    away_c = sides.get("away", competitors[1])
+                    espn_home = home_c.get("team", {}).get("abbreviation", "")
+                    espn_away = away_c.get("team", {}).get("abbreviation", "")
 
                     # Normalize team abbreviations (ESPN uses different codes sometimes)
                     if _teams_match(home_team, espn_home) and _teams_match(
@@ -496,8 +504,8 @@ def _extract_espn_lines(
             "away": {"open": {...}, "close": {...}}
         },
         "total": {
-            "home": {"open": {...}, "close": {...}},
-            "away": {"open": {...}, "close": {...}}
+            "over": {"open": {...}, "close": {...}},
+            "under": {"open": {...}, "close": {...}}
         },
         "moneyline": {
             "home": {"open": {...}, "close": {...}},
@@ -520,19 +528,22 @@ def _extract_espn_lines(
     home_spread_data = point_spread.get("home", {}).get(line_type, {})
     away_spread_data = point_spread.get("away", {}).get(line_type, {})
 
-    if home_spread_data.get("line") is not None:
+    spread = _parse_line(home_spread_data.get("line"))
+    if spread is not None:
         # ESPN provides spread from home perspective (negative = favored)
-        lines["spread"] = float(home_spread_data["line"])
+        lines["spread"] = spread
         lines["spread_home_odds"] = _convert_odds(home_spread_data.get("odds"))
         lines["spread_away_odds"] = _convert_odds(away_spread_data.get("odds"))
 
-    # Extract total
+    # Extract total: "over"/"under" with lines like "o216.5" (since 2026-01),
+    # earlier "home" = over and "away" = under with bare numbers
     total_data = odds_data.get("total", {})
-    over_data = total_data.get("home", {}).get(line_type, {})  # home = over
-    under_data = total_data.get("away", {}).get(line_type, {})  # away = under
+    over_data = total_data.get("over", total_data.get("home", {})).get(line_type, {})
+    under_data = total_data.get("under", total_data.get("away", {})).get(line_type, {})
 
-    if over_data.get("line") is not None:
-        lines["total"] = float(over_data["line"])
+    total = _parse_line(over_data.get("line"))
+    if total is not None:
+        lines["total"] = total
         lines["over_odds"] = _convert_odds(over_data.get("odds"))
         lines["under_odds"] = _convert_odds(under_data.get("odds"))
 
@@ -547,6 +558,15 @@ def _extract_espn_lines(
         lines["ml_away"] = _convert_odds(away_ml_data.get("odds"))
 
     return lines if lines else None
+
+
+def _parse_line(line) -> Optional[float]:
+    """ESPN line text as a number ("-5.5", totals as "o216.5"); None when
+    missing or "OFF" (no line posted)."""
+    try:
+        return float(str(line).lstrip("ou"))
+    except ValueError:
+        return None
 
 
 def _extract_espn_flat_lines(odds_data: dict) -> Optional[dict]:
@@ -1096,7 +1116,11 @@ def update_betting_data(
             game_datetime = datetime.strptime(
                 game["date_time_utc"], "%Y-%m-%dT%H:%M:%SZ"
             )
-            days_ago = (now - game_datetime.replace(tzinfo=timezone.utc)).days
+            # Fractional days, as in should_fetch_betting: whole days sent a
+            # 7.x-day-old game to ESPN, which then refused it as too old
+            days_ago = (
+                now - game_datetime.replace(tzinfo=timezone.utc)
+            ).total_seconds() / 86400
 
             # ESPN window: -FUTURE_CUTOFF_DAYS to +ESPN_LOOKBACK_DAYS
             if -FUTURE_CUTOFF_DAYS <= days_ago <= ESPN_LOOKBACK_DAYS:
@@ -1163,14 +1187,21 @@ def _get_games_needing_betting_data(
         return conn.execute(query, game_ids).fetchall()
 
     if date_range:
+        # Eastern dates: evening games fall on the next UTC day, so widen the
+        # UTC bounds and filter on the Eastern date
+        start, end = date_range
         query = """
             SELECT g.game_id, g.date_time_utc, g.home_team, g.away_team, g.status
             FROM Games g
-            WHERE date(g.date_time_utc) BETWEEN ? AND ?
+            WHERE g.date_time_utc >= ? AND g.date_time_utc < date(?, '+2 days')
               AND g.season_type IN ('Regular Season', 'Post Season')
             ORDER BY g.date_time_utc
         """
-        return conn.execute(query, date_range).fetchall()
+        return [
+            row
+            for row in conn.execute(query, (start, end)).fetchall()
+            if start <= _eastern_date(row["date_time_utc"]) <= end
+        ]
 
     # Season mode - get games needing betting data
     future_cutoff = (now + timedelta(days=FUTURE_CUTOFF_DAYS)).strftime(
@@ -1240,14 +1271,16 @@ def _should_use_cache(
 
     hours_since_update = (now - updated_at).total_seconds() / 3600
 
-    # Rule 2: Games without ESPN ID = cache for 24 hours (ESPN won't have it, use Covers)
+    # Rule 2: Games without ESPN ID or lines = cache for ~a day (ESPN won't
+    # have it, use Covers). Under 24h so the next daily run still re-checks:
+    # a game with no line yet the day before must get one on game day.
     # Only applies if we've tried before (has updated_at) but no ESPN ID or lines
     if (
         existing.get("espn_event_id") is None
         and existing.get("espn_current_spread") is None
         and existing.get("espn_closing_spread") is None
     ):
-        return hours_since_update < 24.0
+        return hours_since_update < 20.0
 
     # Rule 3: Completed games - need one re-fetch to get closing lines
     if game_status == 3:  # Final
@@ -1588,9 +1621,14 @@ def update_betting_backfill(season: str) -> dict:
             (season,),
         )
 
+        # Covers codes are today's franchises; Games keeps SEA, NJN, NOH
         game_lookup = {}
         for row in cursor.fetchall():
-            key = (_eastern_date(row["date_time_utc"]), row["home_team"], row["away_team"])
+            key = (
+                _eastern_date(row["date_time_utc"]),
+                NBATeamConverter.get_abbreviation(row["home_team"]),
+                NBATeamConverter.get_abbreviation(row["away_team"]),
+            )
             game_lookup[key] = row["game_id"]
 
         logger.info(f"Found {len(game_lookup)} games in DB for {season}")

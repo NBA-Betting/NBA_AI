@@ -57,8 +57,8 @@ nba_api:
 default_predictor: "Tree"
 
 # Predictors Configuration
-# Models v0.5: trained on all seasons through 2024-2025, validated on 2025-2026
-# Ridge MAE 9.7, XGBoost MAE 9.6, MLP MAE 9.5 (retrained Apr 2026)
+# Legacy models: trained on 2000-01 through 2024-25, validated on 2025-26 (see
+# models/*/metadata.json); results in the dashboard and scripts/backtest.py
 predictors:
   Baseline: {}  # Formula-based, no models required
   Linear:
@@ -71,18 +71,7 @@ predictors:
   MLP:
     model_paths:
       - "models/mlp/model.pth"
-  # Ensemble:  # Requires PyTorch for MLP component
-  #   model_paths:
-  #     Linear:
-  #       - "models/linear/model.joblib"
-  #     Tree:
-  #       - "models/tree/model.joblib"
-  #     MLP:
-  #       - "models/mlp/model.pth"
-  Phase5:  # Phase 5 Hierarchical (L1→L2→L3→L4)
-    model_paths:
-      l2: "models/phase5/l2.pt"
-      l3l4: "models/phase5/l3l4.pt"
+  Phase5: {}  # Phase 5 Hierarchical (L1→L2→L3→L4); loads models/phase5/
   Phase3:  # Phase 3 Exp 5 Transformer (roster-temporal)
     model_paths:
       checkpoint: "models/phase3/model.pt"

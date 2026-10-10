@@ -29,7 +29,7 @@ Usage:
 
 import argparse
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from tqdm import tqdm
 
@@ -55,6 +55,8 @@ from src.utils import log_execution_time, lookup_basic_game_info
 
 # Configuration
 DB_PATH = config["database"]["path"]
+# An unfinished game this old no longer holds back its teams' later games
+BLOCKING_STALE_DAYS = 3
 
 
 def _validate_pbp(game_ids, db_path=DB_PATH, suppress_no_final_state=False):
@@ -1271,13 +1273,34 @@ def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
             AND (g2.home_team = g1.home_team OR g2.away_team = g1.home_team OR g2.home_team = g1.away_team OR g2.away_team = g1.away_team)
             AND (g2.game_data_finalized = 0 OR g2.boxscore_data_finalized = 0)
             AND g2.status_text != 'PPD'  -- Ignore postponed games when checking for blocking
+            -- A game still unfinished days later (missing box score, API gap)
+            -- stops blocking, or both teams would get no features all season
+            AND g2.date_time_utc > ?
       )
     """
+    stale_before = (datetime.now(timezone.utc) - timedelta(days=BLOCKING_STALE_DAYS)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
     with get_db(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute(query, (season, season, season))
+        cursor.execute(query, (season, season, season, stale_before))
         results = cursor.fetchall()
+        stale = conn.execute(
+            """
+            SELECT game_id FROM Games
+            WHERE season = ? AND season_type IN ('Regular Season', 'Post Season')
+            AND (game_data_finalized = 0 OR boxscore_data_finalized = 0)
+            AND status_text != 'PPD' AND date_time_utc <= ?
+            """,
+            (season, stale_before),
+        ).fetchall()
+    if stale:
+        logging.warning(
+            f"{len(stale)} games still unfinalized after {BLOCKING_STALE_DAYS} days "
+            f"(no longer blocking later games' features): "
+            f"{', '.join(r[0] for r in stale[:10])}"
+        )
 
     return [row[0] for row in results]
 

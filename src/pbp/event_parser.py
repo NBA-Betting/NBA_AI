@@ -91,6 +91,10 @@ class Event:
     is_period_start: bool = False
     is_period_end: bool = False
 
+    # Jump ball (v3): winner and loser, who are on court even when the tip
+    # goes to the team (personId 0)
+    jump_ball_player_ids: list = field(default_factory=list)
+
     # V3-specific
     possession_team_id: int = 0  # from v3's 'possession' field
     qualifiers: list = field(default_factory=list)
@@ -211,6 +215,10 @@ def from_older(raw: dict, idx: int) -> Event:
     desc = raw.get("description", "") or ""
     person_id = _safe_int(raw.get("personId"))
     team_id = _safe_int(raw.get("teamId"))
+    # Team actions (team rebounds, turnovers, timeouts) carry the team id as
+    # personId: they belong to the team, not a player
+    if 1610612737 <= person_id <= 1610612766:
+        team_id, person_id = team_id or person_id, 0
     period = _safe_int(raw.get("period"))
     clock_seconds = parse_clock(raw.get("clock", ""))
     loc_x = _safe_int(raw.get("xLegacy"), default=None)
@@ -272,9 +280,6 @@ def from_older(raw: dict, idx: int) -> Event:
         evt.action_type = "rebound"
         evt.is_rebound = True
         # Offensive vs defensive is resolved in _link_older_events
-        if 1610612737 <= person_id <= 1610612766:
-            # Team rebound: personId holds the team id
-            evt.team_id, evt.player_id = person_id, 0
 
     # --- Turnover ---
     elif action_type_raw == "Turnover":
@@ -404,6 +409,16 @@ def from_v3(raw: dict, idx: int) -> Event:
         action_number=_safe_int(raw.get("actionNumber")),
         order_number=_safe_int(raw.get("orderNumber")),
     )
+
+    if action_type_raw == "jumpball":
+        evt.jump_ball_player_ids = [
+            pid
+            for pid in (
+                _safe_int(raw.get("jumpBallWonPersonId")),
+                _safe_int(raw.get("jumpBallLostPersonId")),
+            )
+            if pid
+        ]
 
     # --- Field goal ---
     if action_type_raw in _V3_FG_TYPES:

@@ -74,10 +74,10 @@ def create_game_states(games_info):
 
     game_states = {}
 
-    try:
-        for game_id, game_info in tqdm(
-            games_info.items(), desc="Creating game states", unit="game", leave=False
-        ):
+    for game_id, game_info in tqdm(
+        games_info.items(), desc="Creating game states", unit="game", leave=False
+    ):
+        try:
             home = game_info["home"]
             away = game_info["away"]
             # Eastern date, as in history; features compute rest days from it
@@ -159,6 +159,8 @@ def create_game_states(games_info):
                             game_is_complete
                             and row.get("subType") == "end"
                             and int(row.get("period", 1)) >= 4
+                            # tied: overtime rows not in the feed yet
+                            and row.get("scoreHome") != row.get("scoreAway")
                         )
                     )
 
@@ -209,10 +211,17 @@ def create_game_states(games_info):
                                 points = int(match.group(1))
                                 players[team][player_id]["points"] = points
 
-                    if row.get("scoreHome"):
-                        current_home_score = int(row["scoreHome"])
-                    if row.get("scoreAway"):
-                        current_away_score = int(row["scoreAway"])
+                    # Older feeds put "0" on rows that didn't score, and
+                    # period-end/replay rows can carry a stale earlier score:
+                    # keep the running score unless a scoring play lowers it
+                    home_score = int(row.get("scoreHome") or 0) or current_home_score
+                    away_score = int(row.get("scoreAway") or 0) or current_away_score
+                    if row.get("actionType") in ("Made Shot", "Free Throw") or (
+                        home_score >= current_home_score
+                        and away_score >= current_away_score
+                    ):
+                        current_home_score = home_score
+                        current_away_score = away_score
 
                     current_game_state = {
                         "game_id": game_id,
@@ -237,6 +246,8 @@ def create_game_states(games_info):
                                     game_is_complete
                                     and row.get("subType") == "end"
                                     and int(row.get("period", 1)) >= 4
+                                    # tied: overtime rows not in the feed yet
+                                    and current_home_score != current_away_score
                                 )
                             )
                         ),
@@ -245,9 +256,10 @@ def create_game_states(games_info):
 
                     game_states[game_id].append(current_game_state)
 
-    except Exception as e:
-        logging.error(f"An error occurred while creating game states: {e}")
-        return {}
+        except Exception as e:
+            # One malformed feed must not discard every other game
+            logging.error(f"Game {game_id}: could not create game states: {e}")
+            game_states.pop(game_id, None)
 
     # Aggregate warning for games that produced 0 states
     empty_count = sum(1 for game_id, states in game_states.items() if not states)

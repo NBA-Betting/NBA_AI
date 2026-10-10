@@ -50,6 +50,9 @@ class BasePredictor(ABC):
                                          Ignored for formula-based predictors.
         """
         self.model_paths = model_paths or []
+        # Games deliberately not predicted ({game_id: reason}), e.g. too
+        # little history; any other missing game is a failure
+        self.skipped = {}
 
     @abstractmethod
     def make_pre_game_predictions(self, game_ids):

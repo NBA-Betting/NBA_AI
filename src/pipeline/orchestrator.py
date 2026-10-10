@@ -226,6 +226,8 @@ class PipelineOrchestrator:
             )
             if stage_result.get("error"):
                 summary["errors"].append(f"predictions: {stage_result['error']}")
+            if stage_result.get("warning"):
+                summary["warnings"].append(f"predictions: {stage_result['warning']}")
 
         summary["total_time"] = round(time.time() - t_start, 1)
 
@@ -467,13 +469,18 @@ class PipelineOrchestrator:
         total_preds = 0
         results_by_predictor = {}
         errors = []
+        # Games a predictor deliberately skipped (e.g. Phase3 before a team
+        # has 3 games this season) are warnings; any other missing game is
+        # an error, as is producing no predictions at all
+        skipped_msgs = []
 
         for predictor_name in predictors_to_run:
             try:
                 # Each pre-game run follows fresh injuries/betting; replace
                 # earlier forecasts, with Ensemble recomputed last.
+                skipped = {}
                 predictions = make_pre_game_predictions(
-                    game_ids, predictor_name, save=False
+                    game_ids, predictor_name, save=False, skipped=skipped
                 )
                 save_predictions(predictions or {}, predictor_name, db_path=self.db_path)
                 n = len(predictions) if predictions else 0
@@ -481,19 +488,26 @@ class PipelineOrchestrator:
                 results_by_predictor[predictor_name] = n
                 logger.info(f"  {predictor_name}: {n} predictions generated")
                 missing = set(game_ids) - set(predictions or {})
-                if missing:
+                failed = sorted(missing - skipped.keys())
+                if failed:
                     errors.append(
-                        f"{predictor_name}: missing predictions for {', '.join(sorted(missing))}"
+                        f"{predictor_name}: missing predictions for {', '.join(failed)}"
                     )
+                for gid in sorted(missing & skipped.keys()):
+                    skipped_msgs.append(f"{predictor_name}: skipped {gid} ({skipped[gid]})")
 
             except Exception as e:
                 logger.warning(f"  {predictor_name} failed: {e}")
                 results_by_predictor[predictor_name] = 0
                 errors.append(f"{predictor_name}: {e}")
 
+        if not total_preds:
+            errors.extend(skipped_msgs)
+            skipped_msgs = []
         return {
             "status": ("partial" if total_preds else "error") if errors else "ok",
             "error": "; ".join(errors) if errors else None,
+            "warning": "; ".join(skipped_msgs) if skipped_msgs else None,
             "predictions_generated": total_preds,
             "game_ids": game_ids,
             "by_predictor": results_by_predictor,

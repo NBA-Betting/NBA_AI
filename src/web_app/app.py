@@ -85,7 +85,7 @@ def create_app(predictor):
             query_date_str = current_date_str
             query_date = current_date_local
 
-        query_date_display_str = query_date.strftime("%a, %b %d")
+        query_date_display_str = f"{query_date:%a, %b} {query_date.day}"
         next_date = query_date + timedelta(days=1)
         prev_date = query_date - timedelta(days=1)
         next_date_str = next_date.strftime("%Y-%m-%d")
@@ -97,7 +97,6 @@ def create_app(predictor):
             query_date_display_str=query_date_display_str,
             prev_date=prev_date_str,
             next_date=next_date_str,
-            predictor=app.config["PREDICTOR"],
         )
 
     @app.route("/game-dates")

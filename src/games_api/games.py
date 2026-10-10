@@ -27,6 +27,7 @@ import sqlite3
 
 from src.config import config
 from src.database import get_db
+from src.database_updater.betting import CLOSING_SPREAD_SQL
 from src.logging_config import setup_logging
 from src.utils import (
     log_execution_time,
@@ -76,7 +77,7 @@ def get_normal_data(conn, game_ids, predictor_name, pbp_limit=50):
         s.play_id AS state_play_id, s.game_date, s.home, s.away, s.clock, s.period,
         s.home_score, s.away_score, s.total, s.home_margin, s.is_final_state, s.players_data,
         pr.predictor, pr.prediction_datetime, pr.prediction_set,
-        b.espn_opening_spread
+        b.espn_opening_spread, {CLOSING_SPREAD_SQL} AS closing_spread
     FROM Games g
     LEFT JOIN LatestGameStates s ON g.game_id = s.game_id AND s.rn = 1
     LEFT JOIN Predictions pr ON g.game_id = pr.game_id AND pr.predictor = ?
@@ -105,6 +106,7 @@ def get_normal_data(conn, game_ids, predictor_name, pbp_limit=50):
             "game_states": [],
             "predictions": {"pre_game": {}},
             "opening_spread": row["espn_opening_spread"],
+            "closing_spread": row["closing_spread"],
         }
 
         # Add the latest game state (only one per game from CTE)

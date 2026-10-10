@@ -148,7 +148,7 @@ def create_feature_sets(prior_states_dict, db_path=DB_PATH):
         season_start = season_starts.get(game_info["season"]) if has_fallback else None
         rest_and_day_of_season_features_df = _create_rest_and_season_features(
             home_schedule_df, away_schedule_df, game_date,
-            season_start=season_start[:10] if season_start else None,
+            season_start=to_eastern_date(season_start) if season_start else None,
         )
 
         # Concatenate all the features into a single DataFrame
@@ -162,8 +162,8 @@ def create_feature_sets(prior_states_dict, db_path=DB_PATH):
             axis=1,
         )
 
-        # Convert NaN values to None
-        features_df = features_df.where(pd.notnull(features_df), None)
+        # Convert NaN values to None (object dtype: a float column keeps NaN)
+        features_df = features_df.astype(object).where(pd.notnull(features_df), None)
 
         # Convert the DataFrame to a dictionary and store it in the features_dict
         features_dict[game_id] = features_df.to_dict(orient="records")[0]

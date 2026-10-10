@@ -216,14 +216,18 @@ class Phase5Predictor(BasePredictor):
                 pred = self._predict_single_game(
                     game_id, rosters[game_id], team_feats[game_id]
                 )
-                predictions[game_id] = pred
+                if pred is not None:
+                    predictions[game_id] = pred
             except Exception as e:
                 logger.warning(f"Error predicting game {game_id}: {e}")
 
         return predictions
 
-    def _predict_single_game(self, game_id: str, roster: dict, features: dict) -> dict:
-        """Run the full L2→L3→L4 forward pass for a single game."""
+    def _predict_single_game(
+        self, game_id: str, roster: dict, features: dict
+    ) -> dict | None:
+        """Run the full L2→L3→L4 forward pass for a single game (None if
+        the game is skipped, with the reason in self.skipped)."""
         device = self._device
 
         # L1 states before tip-off for the roster players
@@ -232,9 +236,11 @@ class Phase5Predictor(BasePredictor):
         away_data = self._load_player_data(roster["away_players"], tip_off)
         n_home, n_away = int(home_data["mask"].sum()), int(away_data["mask"].sum())
         if min(n_home, n_away) < MIN_L1_PLAYERS:
-            raise ValueError(
+            self.skipped[game_id] = (
                 f"too few players with L1 vectors (home {n_home}, away {n_away})"
             )
+            logger.warning(f"Skipping game {game_id}: {self.skipped[game_id]}")
+            return None
 
         # Normalize team features and game context
         home_tf = self._normalize(

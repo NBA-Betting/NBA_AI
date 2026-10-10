@@ -32,6 +32,7 @@ from zoneinfo import ZoneInfo
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from src.database import DB_PATH, get_db
+from src.phase5.arena_data import franchise_abbrs
 
 logger = logging.getLogger(__name__)
 # Keep players without NBA history in the roster, below established rotation players.
@@ -181,20 +182,23 @@ class RosterAssembler:
 
         Returns list of {player_id, avg_minutes} dicts.
         """
+        # Games keeps the abbreviation of the day (SEA), Teams today's (OKC)
+        abbrs = franchise_abbrs(team_abbr)
         team_row = conn.execute(
             "SELECT team_id FROM Teams WHERE abbreviation = ?",
-            (team_abbr,),
+            (abbrs[0],),
         ).fetchone()
         if not team_row:
             return []
         team_id = team_row[0]
 
         # Step 1: Find the team's last 3 games with usable player boxes
+        q = ",".join("?" * len(abbrs))
         game_rows = conn.execute(
-            """
+            f"""
             SELECT g.game_id
             FROM Games g
-            WHERE (home_team = ? OR away_team = ?)
+            WHERE (home_team IN ({q}) OR away_team IN ({q}))
             AND status = 3
             AND date_time_utc < ?
             AND season_type IN ('Regular Season', 'Post Season')
@@ -205,7 +209,7 @@ class RosterAssembler:
             ORDER BY date_time_utc DESC
             LIMIT 3
             """,
-            (team_abbr, team_abbr, before_date, team_id),
+            (*abbrs, *abbrs, before_date, team_id),
         ).fetchall()
 
         game_ids = [row[0] for row in game_rows]
@@ -324,34 +328,21 @@ class RosterAssembler:
 
     def _load_injuries(self, conn, game_date) -> dict[str, set[int]]:
         """
-        Load the injury report for a game date (Eastern), falling back to the
-        previous day's report if today's isn't published yet.
+        Injury statuses for a game date (Eastern): the latest report covering
+        each team's game that day (that day's, or the previous evening's for
+        teams that haven't submitted yet).
 
         Returns {"out": {pid, ...}, "questionable": {pid, ...}}. Doubtful
         players are treated as out.
         """
         result: dict[str, set[int]] = {"out": set(), "questionable": set()}
-        row = conn.execute(
-            """
-            SELECT MAX(report_timestamp) FROM InjuryReports
-            WHERE report_timestamp >= ? AND report_timestamp < ?
-            """,
-            (
-                (game_date - timedelta(days=1)).isoformat(),
-                (game_date + timedelta(days=1)).isoformat(),
-            ),
-        ).fetchone()
-        if not row or not row[0]:
-            return result
-
         rows = conn.execute(
             """
-            SELECT nba_player_id, status
-            FROM InjuryReports
-            WHERE report_timestamp LIKE ?
+            SELECT nba_player_id, status FROM InjuryReports
+            WHERE game_date = ? AND source = 'NBA_Official'
             AND nba_player_id IS NOT NULL
             """,
-            (f"{row[0][:10]}%",),
+            (game_date.isoformat(),),
         ).fetchall()
 
         for pid, status in rows:

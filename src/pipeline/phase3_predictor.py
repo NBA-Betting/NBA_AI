@@ -28,6 +28,7 @@ import numpy as np
 import torch
 
 from src.predictions.prediction_engines.base_predictor import BasePredictor
+from src.utils import to_eastern_date
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,7 @@ class Phase3Predictor(BasePredictor):
         super().__init__()
         model_paths = model_paths or {}
         self.historical = historical
+        self._roster_assembler = None  # created on first use, then reused
 
         self._checkpoint_path = model_paths.get("checkpoint")
         self._config_path = model_paths.get("config")
@@ -261,9 +263,10 @@ class Phase3Predictor(BasePredictor):
         """
         Build input batch for a single game and run model inference.
 
-        Handles both completed games (in cache) and upcoming games (not in cache).
-        For upcoming games, looks up game info from the DB, gets projected rosters
-        from RosterAssembler, and builds context sequences from prior cached games.
+        Every game, finished or not, is built as of its tip-off: context from
+        prior cached games and the projected roster from RosterAssembler. (The
+        cache's own sample for a finished game uses the players who logged
+        minutes, which reveals the result.)
 
         Returns prediction dict, or None if the game cannot be processed.
         """
@@ -286,15 +289,7 @@ class Phase3Predictor(BasePredictor):
             max_context_games=data_cfg.max_context_games,
         )
 
-        if game_id in game_features:
-            # Completed game in cache -- use standard path
-            sample = builder.build_sample(game_id)
-            roster_confidence = 1.0
-        else:
-            # Upcoming game not in cache -- build sample from DB + projected rosters
-            sample, roster_confidence = self._build_sample_for_upcoming_game(
-                game_id, builder, player_id_map
-            )
+        sample, roster_confidence = self._build_pre_game_sample(game_id, builder)
 
         if sample is None:
             return None
@@ -310,6 +305,9 @@ class Phase3Predictor(BasePredictor):
                 len(sample.home_context),
                 len(sample.away_context),
                 data_cfg.min_history_games,
+            )
+            self.skipped[game_id] = (
+                f"fewer than {data_cfg.min_history_games} games this season"
             )
             return None
 
@@ -351,14 +349,11 @@ class Phase3Predictor(BasePredictor):
             "roster_confidence": round(roster_confidence, 3),
         }
 
-    def _build_sample_for_upcoming_game(
-        self,
-        game_id: str,
-        builder,
-        player_id_map: dict,
+    def _build_pre_game_sample(
+        self, game_id: str, builder
     ) -> tuple[Optional["Phase2Sample"], float]:
         """
-        Build a Phase2Sample for an upcoming game that is NOT in the cache.
+        Build a Phase2Sample for a game as of its tip-off.
 
         Looks up game info from the DB, gets projected rosters via
         RosterAssembler, and constructs context sequences from the team's
@@ -391,8 +386,8 @@ class Phase3Predictor(BasePredictor):
         home_team = HISTORICAL_TO_CURRENT.get(home_team, home_team)
         away_team = HISTORICAL_TO_CURRENT.get(away_team, away_team)
 
-        # Extract date string (YYYY-MM-DD) for comparison with cache dates
-        target_date = date_time_utc[:10] if date_time_utc else None
+        # Eastern date (YYYY-MM-DD), as the cache stores game dates
+        target_date = to_eastern_date(date_time_utc) if date_time_utc else None
         if not target_date:
             logger.warning("Game %s has no date_time_utc", game_id)
             return None, 0.0
@@ -402,7 +397,7 @@ class Phase3Predictor(BasePredictor):
             return None, 0.0
 
         logger.info(
-            "Building sample for upcoming game %s: %s @ %s on %s (%s)",
+            "Building pre-game sample for %s: %s @ %s on %s (%s)",
             game_id,
             away_team,
             home_team,
@@ -441,12 +436,13 @@ class Phase3Predictor(BasePredictor):
         # Step 3: Get projected rosters via RosterAssembler
         roster_confidence = 1.0
         try:
-            from src.pipeline.roster_assembler import RosterAssembler
+            if self._roster_assembler is None:
+                from src.pipeline.roster_assembler import RosterAssembler
 
-            assembler = RosterAssembler(
-                db_path=str(db_path), historical=self.historical
-            )
-            rosters = assembler.get_projected_rosters([game_id])
+                self._roster_assembler = RosterAssembler(
+                    db_path=str(db_path), historical=self.historical
+                )
+            rosters = self._roster_assembler.get_projected_rosters([game_id])
             roster_info = rosters.get(game_id)
 
             if roster_info:
