@@ -352,12 +352,10 @@ def fetch_matchups_for_date(
     if delay > 0:
         time.sleep(delay)
 
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=30)
-        response.raise_for_status()
-    except requests.RequestException as e:
-        logger.error(f"Failed to fetch Covers matchups for {game_date}: {e}")
-        return []
+    # A failed request raises (the caller counts it as an error); an empty
+    # list would read as a date without games
+    response = requests.get(url, headers=HEADERS, timeout=30)
+    response.raise_for_status()
 
     return _parse_matchups_page(response.text, game_date)
 

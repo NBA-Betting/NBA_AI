@@ -363,9 +363,13 @@ def get_espn_event_id(
             for event in events:
                 competitors = event.get("competitions", [{}])[0].get("competitors", [])
                 if len(competitors) >= 2:
-                    # ESPN: competitors[0] is home, competitors[1] is away
-                    espn_home = competitors[0].get("team", {}).get("abbreviation", "")
-                    espn_away = competitors[1].get("team", {}).get("abbreviation", "")
+                    # Home/away from ESPN's homeAway field (list order is
+                    # usually home first, but not guaranteed)
+                    sides = {c.get("homeAway"): c for c in competitors}
+                    home_c = sides.get("home", competitors[0])
+                    away_c = sides.get("away", competitors[1])
+                    espn_home = home_c.get("team", {}).get("abbreviation", "")
+                    espn_away = away_c.get("team", {}).get("abbreviation", "")
 
                     # Normalize team abbreviations (ESPN uses different codes sometimes)
                     if _teams_match(home_team, espn_home) and _teams_match(
@@ -1100,7 +1104,11 @@ def update_betting_data(
             game_datetime = datetime.strptime(
                 game["date_time_utc"], "%Y-%m-%dT%H:%M:%SZ"
             )
-            days_ago = (now - game_datetime.replace(tzinfo=timezone.utc)).days
+            # Fractional days, as in should_fetch_betting: whole days sent a
+            # 7.x-day-old game to ESPN, which then refused it as too old
+            days_ago = (
+                now - game_datetime.replace(tzinfo=timezone.utc)
+            ).total_seconds() / 86400
 
             # ESPN window: -FUTURE_CUTOFF_DAYS to +ESPN_LOOKBACK_DAYS
             if -FUTURE_CUTOFF_DAYS <= days_ago <= ESPN_LOOKBACK_DAYS:
@@ -1244,14 +1252,16 @@ def _should_use_cache(
 
     hours_since_update = (now - updated_at).total_seconds() / 3600
 
-    # Rule 2: Games without ESPN ID = cache for 24 hours (ESPN won't have it, use Covers)
+    # Rule 2: Games without ESPN ID or lines = cache for ~a day (ESPN won't
+    # have it, use Covers). Under 24h so the next daily run still re-checks:
+    # a game with no line yet the day before must get one on game day.
     # Only applies if we've tried before (has updated_at) but no ESPN ID or lines
     if (
         existing.get("espn_event_id") is None
         and existing.get("espn_current_spread") is None
         and existing.get("espn_closing_spread") is None
     ):
-        return hours_since_update < 24.0
+        return hours_since_update < 20.0
 
     # Rule 3: Completed games - need one re-fetch to get closing lines
     if game_status == 3:  # Final
