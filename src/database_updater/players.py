@@ -426,6 +426,18 @@ def save_players(players_data, db_path=DB_PATH, stage_logger=None):
                 f"No player changes detected (checked {len(players_data)} players)"
             )
 
+        # Players absent from the league-wide list (inserted by other paths) are
+        # never updated above; clear their roster flag so they aren't projected.
+        if len(players_data) >= 1000:
+            cursor.execute(
+                f"""
+                UPDATE Players SET roster_status = 0
+                WHERE roster_status = 1 AND person_id NOT IN ({placeholders})
+            """,
+                person_ids,
+            )
+            updated_count += cursor.rowcount
+
         conn.commit()
 
         # Validate saved data

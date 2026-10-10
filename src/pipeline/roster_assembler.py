@@ -3,7 +3,7 @@ Roster Assembler: project who will play in upcoming games.
 
 Strategy: "injury subtraction"
   1. For each team, get their most recent game's active roster (PlayerBox, min > 0)
-  2. Subtract players listed as "Out" in the latest InjuryReports
+  2. Subtract players listed as "Out" or "Doubtful" in the game-day InjuryReports
   3. "Questionable" players are included (they play ~70% of the time)
   4. Sort by average recent minutes to identify rotation order
 
@@ -16,7 +16,9 @@ Usage:
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -54,8 +56,7 @@ class RosterAssembler:
             # Load game metadata
             games = self._load_game_info(conn, game_ids)
 
-            # Load latest injury reports (today's)
-            injuries_by_team = self._load_current_injuries(conn)
+            injuries_by_date = {}
 
             for game_id in game_ids:
                 game = games.get(game_id)
@@ -75,15 +76,20 @@ class RosterAssembler:
                     conn, away_team, game["date_time_utc"]
                 )
 
-                # Apply injury subtraction
-                home_out = injuries_by_team.get(home_team, {}).get("out", set())
-                away_out = injuries_by_team.get(away_team, {}).get("out", set())
-                home_questionable = injuries_by_team.get(home_team, {}).get(
-                    "questionable", set()
+                # Apply injury subtraction. Matched by player ID: a player is on
+                # only one roster, so the report's team label isn't needed.
+                game_date = (
+                    datetime.fromisoformat(game["date_time_utc"].replace("Z", "+00:00"))
+                    .astimezone(ZoneInfo("America/New_York"))
+                    .date()
                 )
-                away_questionable = injuries_by_team.get(away_team, {}).get(
-                    "questionable", set()
-                )
+                if game_date not in injuries_by_date:
+                    injuries_by_date[game_date] = self._load_injuries(conn, game_date)
+                injuries = injuries_by_date[game_date]
+                home_out = {p["player_id"] for p in home_roster} & injuries["out"]
+                away_out = {p["player_id"] for p in away_roster} & injuries["out"]
+                home_questionable = injuries["questionable"]
+                away_questionable = injuries["questionable"]
 
                 home_players = [
                     p for p in home_roster if p["player_id"] not in home_out
@@ -243,39 +249,43 @@ class RosterAssembler:
             for pid, m in sorted(roster.items(), key=lambda x: (-x[1], x[0]))
         ]
 
-    def _load_current_injuries(self, conn) -> dict[str, dict[str, set[int]]]:
+    def _load_injuries(self, conn, game_date) -> dict[str, set[int]]:
         """
-        Load the most recent injury reports, grouped by team.
+        Load the injury report for a game date (Eastern), falling back to the
+        previous day's report if today's isn't published yet.
 
-        Returns {team_abbr: {"out": {pid, ...}, "questionable": {pid, ...}}}.
+        Returns {"out": {pid, ...}, "questionable": {pid, ...}}. Doubtful
+        players are treated as out.
         """
-        # Get the most recent report date
-        row = conn.execute("SELECT MAX(report_timestamp) FROM InjuryReports").fetchone()
+        result: dict[str, set[int]] = {"out": set(), "questionable": set()}
+        row = conn.execute(
+            """
+            SELECT MAX(report_timestamp) FROM InjuryReports
+            WHERE report_timestamp >= ? AND report_timestamp < ?
+            """,
+            (
+                (game_date - timedelta(days=1)).isoformat(),
+                (game_date + timedelta(days=1)).isoformat(),
+            ),
+        ).fetchone()
         if not row or not row[0]:
-            return {}
+            return result
 
-        latest_date = row[0][:10]  # YYYY-MM-DD
-
-        # Load all injuries from that date
         rows = conn.execute(
             """
-            SELECT nba_player_id, team, status
+            SELECT nba_player_id, status
             FROM InjuryReports
             WHERE report_timestamp LIKE ?
             AND nba_player_id IS NOT NULL
             """,
-            (f"{latest_date}%",),
+            (f"{row[0][:10]}%",),
         ).fetchall()
 
-        result: dict[str, dict[str, set[int]]] = {}
-        for pid, team, status in rows:
-            if team not in result:
-                result[team] = {"out": set(), "questionable": set()}
-
+        for pid, status in rows:
             status_lower = (status or "").lower()
-            if status_lower == "out":
-                result[team]["out"].add(int(pid))
-            elif status_lower in ("questionable", "doubtful"):
-                result[team]["questionable"].add(int(pid))
+            if status_lower in ("out", "doubtful"):
+                result["out"].add(int(pid))
+            elif status_lower == "questionable":
+                result["questionable"].add(int(pid))
 
         return result

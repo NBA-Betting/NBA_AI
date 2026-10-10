@@ -27,6 +27,7 @@ import logging
 import re
 import sqlite3
 import time
+import unicodedata
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -247,42 +248,43 @@ def parse_injury_pdf(pdf_content: bytes) -> pd.DataFrame:
     current_date = None
     current_time = None
     current_matchup = None
+    current_team = None
 
-    # Known team name patterns (CamelCase without spaces as they appear in PDFs)
-    team_names = [
-        "AtlantaHawks",
-        "BostonCeltics",
-        "BrooklynNets",
-        "CharlotteHornets",
-        "ChicagoBulls",
-        "ClevelandCavaliers",
-        "DallasMavericks",
-        "DenverNuggets",
-        "DetroitPistons",
-        "GoldenStateWarriors",
-        "HoustonRockets",
-        "IndianaPacers",
-        "LosAngelesClippers",
-        "LosAngelesLakers",
-        "LAClippers",
-        "LALakers",
-        "MemphisGrizzlies",
-        "MiamiHeat",
-        "MilwaukeeBucks",
-        "MinnesotaTimberwolves",
-        "NewOrleansPelicans",
-        "NewYorkKnicks",
-        "OklahomaCityThunder",
-        "OrlandoMagic",
-        "Philadelphia76ers",
-        "PhoenixSuns",
-        "PortlandTrailBlazers",
-        "SacramentoKings",
-        "SanAntonioSpurs",
-        "TorontoRaptors",
-        "UtahJazz",
-        "WashingtonWizards",
-    ]
+    # Known team names (CamelCase without spaces as they appear in PDFs) -> abbreviation
+    team_names = {
+        "AtlantaHawks": "ATL",
+        "BostonCeltics": "BOS",
+        "BrooklynNets": "BKN",
+        "CharlotteHornets": "CHA",
+        "ChicagoBulls": "CHI",
+        "ClevelandCavaliers": "CLE",
+        "DallasMavericks": "DAL",
+        "DenverNuggets": "DEN",
+        "DetroitPistons": "DET",
+        "GoldenStateWarriors": "GSW",
+        "HoustonRockets": "HOU",
+        "IndianaPacers": "IND",
+        "LosAngelesClippers": "LAC",
+        "LosAngelesLakers": "LAL",
+        "LAClippers": "LAC",
+        "LALakers": "LAL",
+        "MemphisGrizzlies": "MEM",
+        "MiamiHeat": "MIA",
+        "MilwaukeeBucks": "MIL",
+        "MinnesotaTimberwolves": "MIN",
+        "NewOrleansPelicans": "NOP",
+        "NewYorkKnicks": "NYK",
+        "OklahomaCityThunder": "OKC",
+        "OrlandoMagic": "ORL",
+        "Philadelphia76ers": "PHI",
+        "PhoenixSuns": "PHX",
+        "PortlandTrailBlazers": "POR",
+        "SacramentoKings": "SAC",
+        "SanAntonioSpurs": "SAS",
+        "TorontoRaptors": "TOR",
+        "UtahJazz": "UTA",
+        "WashingtonWizards": "WAS",
+    }
     team_pattern = "|".join(team_names)
 
     for line in lines:
@@ -297,15 +299,16 @@ def parse_injury_pdf(pdf_content: bytes) -> pd.DataFrame:
 
         rest = line
 
-        # Match: "MM/DD/YYYY HH:MM(ET) ABC@XYZ ..."
+        # Match: "MM/DD/YYYY HH:MM(ET) ABC@XYZ ..." (time is sometimes omitted)
         date_match = re.match(
-            r"(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})\(ET\)\s+([A-Z]{3}@[A-Z]{3})\s*(.*)",
+            r"(\d{2}/\d{2}/\d{4})\s+(?:(\d{2}:\d{2})\(ET\)\s+)?([A-Z]{3}@[A-Z]{3})\s*(.*)",
             rest,
         )
         if date_match:
             current_date = date_match.group(1)
             current_time = date_match.group(2)
             current_matchup = date_match.group(3)
+            current_team = None
             rest = date_match.group(4)
         else:
             # Match: "HH:MM(ET) ABC@XYZ ..."
@@ -315,29 +318,32 @@ def parse_injury_pdf(pdf_content: bytes) -> pd.DataFrame:
             if time_match:
                 current_time = time_match.group(1)
                 current_matchup = time_match.group(2)
+                current_team = None
                 rest = time_match.group(3)
             else:
                 # Match: "ABC@XYZ ..." (matchup at start of line)
                 matchup_match = re.match(r"([A-Z]{3}@[A-Z]{3})\s+(.*)", rest)
                 if matchup_match:
                     current_matchup = matchup_match.group(1)
+                    current_team = None
                     rest = matchup_match.group(2)
 
         # Strip team name prefix if present (e.g., "DallasMavericks Cisse,Moussa...")
         team_strip = re.match(rf"^({team_pattern})\s+(.*)", rest)
         if team_strip:
+            current_team = team_names[team_strip.group(1)]
             rest = team_strip.group(2)
 
         # Match player line with reason: "Player,Name Status Reason"
         player_match = re.match(
-            r"^([A-Za-z\'\-]+,\s*[A-Za-z\'\-]+(?:\s*(?:Jr\.?|Sr\.?|III|IV|II|V))?)\s+"
+            r"^([A-Za-z\'\-\.]+,\s*[A-Za-z\'\-\.]+(?:\s*(?:Jr\.?|Sr\.?|III|IV|II|V))?)\s+"
             r"(Out|Available|Questionable|Doubtful|Probable)\s+(.+)$",
             rest,
         )
         if not player_match:
             # Match player line without reason: "Player,Name Status"
             player_match = re.match(
-                r"^([A-Za-z\'\-]+,\s*[A-Za-z\'\-]+(?:\s*(?:Jr\.?|Sr\.?|III|IV|II|V))?)\s+"
+                r"^([A-Za-z\'\-\.]+,\s*[A-Za-z\'\-\.]+(?:\s*(?:Jr\.?|Sr\.?|III|IV|II|V))?)\s+"
                 r"(Out|Available|Questionable|Doubtful|Probable)$",
                 rest,
             )
@@ -362,6 +368,7 @@ def parse_injury_pdf(pdf_content: bytes) -> pd.DataFrame:
                     "game_date": current_date,
                     "game_time": current_time,
                     "matchup": current_matchup,
+                    "team": current_team,
                     "player_name": player_name,
                     "status": status,
                     "reason": reason,
@@ -441,31 +448,23 @@ def fetch_injury_report(date: datetime) -> tuple[pd.DataFrame, str]:
 
 
 def normalize_player_name(name: str) -> str:
-    """Normalize player name for matching to Players table."""
+    """Normalize player name for matching to Players table.
+
+    Returns "last,first" lowercased with suffixes, accents, spaces and punctuation
+    removed: PDF text drops spaces ("JonesGarcia") and accents ("Porzingis").
+    """
     if not name:
         return ""
-    # Split attached suffixes (WalkerIV -> Walker IV)
-    name = re.sub(r"([a-z])(II|III|IV|Jr|Sr)([,\s]|$)", r"\1 \2\3", name)
+    # Split attached suffixes (WalkerIV -> Walker IV, OubreJr. -> Oubre Jr.)
+    name = re.sub(r"([a-z])(II|III|IV|Jr|Sr)(\.?)([,\s]|$)", r"\1 \2\3\4", name)
     # Remove suffixes entirely for matching
     name = re.sub(
         r"\s+(Jr\.?|Sr\.?|III|II|IV)(\s|$|,)", r"\2", name, flags=re.IGNORECASE
     )
-    # Remove periods, apostrophes and extra spaces
-    name = name.replace(".", "").replace("'", "").strip()
-    # Handle special chars (ć -> c, etc)
-    replacements = {
-        "ć": "c",
-        "č": "c",
-        "ž": "z",
-        "š": "s",
-        "đ": "d",
-        "ö": "o",
-        "ü": "u",
-        "ä": "a",
-    }
-    for old, new in replacements.items():
-        name = name.replace(old, new)
-    return name.lower()
+    # Strip accents (Đ has no decomposition; the PDFs spell it "Dj")
+    name = name.replace("Đ", "Dj").replace("đ", "dj")
+    name = unicodedata.normalize("NFKD", name).lower()
+    return re.sub(r"[^a-z,]", "", name)
 
 
 def _ensure_injury_cache_table(db_path: str = DB_PATH):
@@ -715,24 +714,59 @@ def _find_dates_missing_data(dates: list, db_path: str = DB_PATH) -> list:
 
 
 def build_player_lookup(db_path: str = DB_PATH) -> dict:
-    """Build a lookup dict mapping normalized names to NBA player IDs."""
+    """Build a lookup mapping normalized names to candidate players.
+
+    Returns {name_key: [(person_id, team, to_year), ...]}. Several players can
+    share a name, so resolve with match_player_id().
+    """
     with get_db(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT person_id, first_name, last_name, full_name FROM Players"
-        )
-        players = cursor.fetchall()
+        players = conn.execute(
+            "SELECT person_id, first_name, last_name, full_name, team, to_year FROM Players"
+        ).fetchall()
 
     player_lookup = {}
-    for person_id, first_name, last_name, full_name in players:
+    swapped = {}
+    for person_id, first_name, last_name, full_name, team, to_year in players:
+        candidate = (person_id, team, to_year or 0)
+        keys = {normalize_player_name(full_name)} if full_name else set()
         if last_name and first_name:
-            key1 = normalize_player_name(f"{last_name}, {first_name}")
-            player_lookup[key1] = person_id
-        if full_name:
-            key2 = normalize_player_name(full_name)
-            player_lookup[key2] = person_id
+            keys.add(normalize_player_name(f"{last_name}, {first_name}"))
+            # Some reports list the given name first ("Yang, Hansen")
+            swapped[normalize_player_name(f"{first_name}, {last_name}")] = candidate
+        for key in keys:
+            player_lookup.setdefault(key, []).append(candidate)
+    for key, candidate in swapped.items():
+        player_lookup.setdefault(key, [candidate])
 
     return player_lookup
+
+
+def match_player_id(player_lookup: dict, name: str, team: Optional[str] = None):
+    """Resolve a report name to a person_id, preferring a player on `team`."""
+    candidates = player_lookup.get(normalize_player_name(name))
+    if not candidates:
+        return None
+    on_team = [c for c in candidates if team and c[1] == team]
+    return max(on_team or candidates, key=lambda c: c[2])[0]
+
+
+def _rematch_unmatched_players(db_path: str = DB_PATH) -> int:
+    """Fill nba_player_id on rows saved before the player could be matched."""
+    player_lookup = build_player_lookup(db_path)
+    with get_db(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, player_name, team FROM InjuryReports WHERE nba_player_id IS NULL"
+        ).fetchall()
+        updates = []
+        for row_id, name, team in rows:
+            person_id = match_player_id(player_lookup, name, team)
+            if person_id:
+                updates.append((person_id, row_id))
+        conn.executemany(
+            "UPDATE InjuryReports SET nba_player_id = ? WHERE id = ?", updates
+        )
+        conn.commit()
+    return len(updates)
 
 
 def _ensure_injury_unique_constraint(db_path: str = DB_PATH):
@@ -803,9 +837,7 @@ def save_injury_records(df: pd.DataFrame, db_path: str = DB_PATH) -> dict:
 
     db_records = []
     for _, row in df.iterrows():
-        matchup = row.get("matchup", "")
-        away_team = matchup.split("@")[0] if "@" in matchup else None
-        home_team = matchup.split("@")[1] if "@" in matchup else None
+        team = row.get("team")
 
         # Format player name
         player_name = row["player_name"]
@@ -813,8 +845,7 @@ def save_injury_records(df: pd.DataFrame, db_path: str = DB_PATH) -> dict:
             player_name = player_name.replace(",", ", ")
 
         # Match to NBA player ID
-        normalized_name = normalize_player_name(player_name)
-        nba_player_id = player_lookup.get(normalized_name)
+        nba_player_id = match_player_id(player_lookup, player_name, team)
 
         # Determine injury location category
         leg_parts = [
@@ -848,7 +879,7 @@ def save_injury_records(df: pd.DataFrame, db_path: str = DB_PATH) -> dict:
             {
                 "nba_player_id": nba_player_id,
                 "player_name": player_name,
-                "team": away_team or home_team,
+                "team": team,
                 "status": row["status"],
                 "injury_type": row["injury_type"],
                 "body_part": row["body_part"],
@@ -1147,6 +1178,10 @@ def update_nba_official_injuries(
                 f"This may indicate an API or parsing issue."
             )
 
+    rematched = _rematch_unmatched_players(db_path)
+    if rematched:
+        logging.debug(f"Injury reports: matched {rematched} previously unmatched players")
+
     # Get total count
     with get_db(db_path) as conn:
         cursor = conn.cursor()
@@ -1244,7 +1279,7 @@ def backfill_injury_reports(
                 # Save batch if it reaches batch_size
                 if len(batch_dfs) >= batch_size:
                     combined_df = pd.concat(batch_dfs, ignore_index=True)
-                    count = save_injury_records(combined_df, db_path)
+                    count = save_injury_records(combined_df, db_path)["added"]
                     logging.info(
                         f"Saved batch: {count} records from {len(batch_dfs)} days"
                     )
@@ -1267,7 +1302,7 @@ def backfill_injury_reports(
     # Save any remaining records in the last batch
     if batch_dfs:
         combined_df = pd.concat(batch_dfs, ignore_index=True)
-        count = save_injury_records(combined_df, db_path)
+        count = save_injury_records(combined_df, db_path)["added"]
         logging.info(f"Saved final batch: {count} records from {len(batch_dfs)} days")
         total_inserted += count
 
