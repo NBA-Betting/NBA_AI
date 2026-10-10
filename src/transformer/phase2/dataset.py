@@ -368,22 +368,20 @@ def _encode_team_context(
         for r, rid in enumerate(roster_ids):
             if rid == 0:
                 continue  # Padding player
-            app_idx = 0
-            # Scan all context games for this player's appearances
-            for g in range(n_games):
-                if app_idx >= A:
-                    break
-                # Check player_ids for this game
-                for p in range(max_players):
-                    if player_ids[g, p] == rid:
-                        form_points[r, app_idx] = player_points[g, p]
-                        form_days[r, app_idx] = days_before_arr[g]
-                        form_mask[r, app_idx] = False
-                        if use_stats:
-                            form_stats[r, app_idx] = player_stats_arr[g, p]
-                            form_pm_available[r, app_idx] = player_pm_available[g, p]
-                        app_idx += 1
-                        break
+            # The player's most recent A appearances, kept in chronological order
+            appearances = [
+                (g, p)
+                for g in range(n_games)
+                for p in range(max_players)
+                if player_ids[g, p] == rid
+            ][-A:]
+            for app_idx, (g, p) in enumerate(appearances):
+                form_points[r, app_idx] = player_points[g, p]
+                form_days[r, app_idx] = days_before_arr[g]
+                form_mask[r, app_idx] = False
+                if use_stats:
+                    form_stats[r, app_idx] = player_stats_arr[g, p]
+                    form_pm_available[r, app_idx] = player_pm_available[g, p]
 
         result["roster_form_points"] = form_points
         result["roster_form_days"] = form_days
