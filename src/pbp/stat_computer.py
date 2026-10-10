@@ -193,13 +193,20 @@ def process_game(
         # Offense never known this period: still count the playing time
         _credit_seconds(player_stats, pending_seconds, offense_team_id)
 
-    # Build result
+    # Build result. Players who only ever appear through lineups (no own
+    # events) take their team from the court or the box score; anyone never
+    # placed on a team (coaches charged with technicals) is not a player row.
+    box_teams = {pid: tid for pid, (tid, _) in (player_names or {}).items()}
     result = {}
     for pid, stats in player_stats.items():
-        if pid == 0:
+        team_id = player_teams.get(pid) or next(
+            (tid for tid, ever in tracker._ever_on_court.items() if pid in ever),
+            box_teams.get(pid, 0),
+        )
+        if pid == 0 or not team_id:
             continue
         result[pid] = {
-            "team_id": player_teams.get(pid, 0),
+            "team_id": team_id,
             "stats": stats,
             "lineup_starters_found": tracker.all_starters_found,
         }

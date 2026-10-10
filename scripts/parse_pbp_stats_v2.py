@@ -26,6 +26,7 @@ from src.database import get_db, DB_PATH
 from src.logging_config import setup_logging
 from src.pbp.constants import STAT_COLUMNS
 from src.pbp.stat_computer import process_game
+from src.utils import NBATeamConverter
 
 # ---------------------------------------------------------------------------
 # DB schema
@@ -115,9 +116,12 @@ def get_game_teams(conn, game_id: str) -> tuple[int, int]:
                 tuple(team_ids),
             )
             abbr_map = {r[1]: int(r[0]) for r in cursor}
-            home_id = abbr_map.get(home_abbr, team_ids[0])
-            away_id = abbr_map.get(away_abbr, team_ids[1])
-            return int(home_id), int(away_id)
+            # Games keeps the abbreviation of the day (SEA, NJN, NOH);
+            # Teams has today's
+            home_id = abbr_map.get(NBATeamConverter.get_abbreviation(home_abbr))
+            away_id = abbr_map.get(NBATeamConverter.get_abbreviation(away_abbr))
+            if home_id and away_id:
+                return home_id, away_id
         return int(team_ids[0]), int(team_ids[1])
 
     # Fallback: extract from PBP events
