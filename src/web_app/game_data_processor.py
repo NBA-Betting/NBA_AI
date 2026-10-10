@@ -195,7 +195,7 @@ def process_game_data(games, user_tz=None):
             """Format spread as 'TEAM by X'. Positive = home favored."""
             if spread_val is None or spread_val == "":
                 return ""
-            v = float(spread_val)
+            v = round(float(spread_val), 1)
             if v > 0:
                 return f"{home} by {v:.1f}"
             elif v < 0:
@@ -390,7 +390,7 @@ def _format_date_time_display(game, user_tz=None):
     elif game_date == previous_date:
         date_display = "Yesterday"
     else:
-        date_display = game_date.strftime("%b %d")
+        date_display = f"{game_date:%b} {game_date.day}"
 
     time_display = game_date_time_local.strftime("%I:%M %p").lstrip("0")
 
