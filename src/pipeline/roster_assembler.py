@@ -2,10 +2,18 @@
 Roster Assembler: project who will play in upcoming games.
 
 Strategy: "injury subtraction"
-  1. For each team, get their most recent game's active roster (PlayerBox, min > 0)
-  2. Subtract players listed as "Out" or "Doubtful" in the game-day InjuryReports
-  3. "Questionable" players are included (they play ~70% of the time)
-  4. Sort by average recent minutes to identify rotation order
+  1. For each team, take the players who logged minutes in its last 3 games
+  2. Reconcile with who is on the team now: drop departures, add arrivals
+  3. Subtract players listed as "Out" or "Doubtful" in the game-day InjuryReports
+  4. "Questionable" players are included (they play ~70% of the time)
+  5. Sort by average recent minutes to identify rotation order
+
+Team membership (step 2) comes from the current Players table for upcoming
+games. For past games (historical=True: training data and backtests) it is
+inferred from appearances, using only roster facts public before tip-off:
+a player whose next appearance is for another team has left; one whose next
+appearance (within ARRIVAL_WINDOW_DAYS) is for this team after playing
+elsewhere, or nowhere, has arrived. Both modes share every other step.
 
 Usage:
     from src.pipeline.roster_assembler import RosterAssembler
@@ -16,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+from bisect import bisect_left
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -27,13 +36,18 @@ from src.database import DB_PATH, get_db
 logger = logging.getLogger(__name__)
 # Keep players without NBA history in the roster, below established rotation players.
 NEW_PLAYER_MINUTES = 5.0
+# Historical mode: how far ahead an arrival's first game for the team may be
+ARRIVAL_WINDOW_DAYS = 30
 
 
 class RosterAssembler:
     """Projects rosters for upcoming games using injury subtraction."""
 
-    def __init__(self, db_path: str | Path = DB_PATH):
+    def __init__(self, db_path: str | Path = DB_PATH, historical: bool = False):
         self.db_path = str(db_path)
+        self.historical = historical
+        self._appearances = None  # historical mode, loaded on first use
+        self._team_appearances = None
 
     def get_projected_rosters(self, game_ids: list[str]) -> dict[str, dict]:
         """
@@ -213,41 +227,100 @@ class RosterAssembler:
 
         roster = {int(row[0]): float(row[1]) for row in rows}
 
-        # Reconcile with the NBA's current player list (Players.team, refreshed
-        # daily): drop players who have since left the team, and add players who
-        # have joined but have not yet played for it (offseason moves, trades).
-        current = {
-            int(row[0])
-            for row in conn.execute(
-                "SELECT person_id FROM Players WHERE team = ? AND roster_status = 1",
-                (team_abbr,),
-            )
-        }
+        # Reconcile with who is on the team now: drop players who have left,
+        # add players who joined but haven't played for it (moves, trades)
+        if self.historical:
+            current = self._historical_members(conn, int(team_id), before_date, roster)
+        else:
+            current = {
+                int(row[0])
+                for row in conn.execute(
+                    "SELECT person_id FROM Players WHERE team = ? AND roster_status = 1",
+                    (team_abbr,),
+                )
+            }
         if current:
             roster = {pid: m for pid, m in roster.items() if pid in current}
             for pid in current - roster.keys():
                 # Order new arrivals by their own recent minutes, wherever played
-                row = conn.execute(
-                    """
-                    SELECT AVG(min) FROM (
-                        SELECT pb.min FROM PlayerBox pb
-                        JOIN Games g ON g.game_id = pb.game_id
-                        WHERE pb.player_id = ? AND pb.min > 0
-                        AND g.date_time_utc < ? AND g.status = 3
-                        AND g.season_type IN ('Regular Season', 'Post Season')
-                        ORDER BY g.date_time_utc DESC LIMIT 3
-                    )
-                    """,
-                    (pid, before_date),
-                ).fetchone()
-                roster[pid] = (
-                    float(row[0]) if row and row[0] is not None else NEW_PLAYER_MINUTES
-                )
+                roster[pid] = self._recent_minutes(conn, pid, before_date)
 
         return [
             {"player_id": pid, "avg_minutes": m}
             for pid, m in sorted(roster.items(), key=lambda x: (-x[1], x[0]))
         ]
+
+    def _recent_minutes(self, conn, pid: int, before_date: str) -> float:
+        """Average minutes over a player's last 3 games before the date."""
+        if self.historical:
+            dates, _, minutes = self._load_appearances(conn).get(pid, ([], [], []))
+            recent = minutes[: bisect_left(dates, before_date)][-3:]
+            return sum(recent) / len(recent) if recent else NEW_PLAYER_MINUTES
+        row = conn.execute(
+            """
+            SELECT AVG(min) FROM (
+                SELECT pb.min FROM PlayerBox pb
+                JOIN Games g ON g.game_id = pb.game_id
+                WHERE pb.player_id = ? AND pb.min > 0
+                AND g.date_time_utc < ? AND g.status = 3
+                AND g.season_type IN ('Regular Season', 'Post Season')
+                ORDER BY g.date_time_utc DESC LIMIT 3
+            )
+            """,
+            (pid, before_date),
+        ).fetchone()
+        return float(row[0]) if row and row[0] is not None else NEW_PLAYER_MINUTES
+
+    def _load_appearances(self, conn) -> dict[int, tuple[list, list, list]]:
+        """{player_id: (dates, team_ids, minutes)} of every regular/postseason
+        appearance, chronologically (historical mode)."""
+        if self._appearances is None:
+            apps: dict[int, tuple[list, list, list]] = {}
+            by_team: dict[int, list[tuple[str, int]]] = {}
+            for pid, team_id, minutes, date_utc in conn.execute(
+                """
+                SELECT pb.player_id, pb.team_id, pb.min, g.date_time_utc
+                FROM PlayerBox pb JOIN Games g ON g.game_id = pb.game_id
+                WHERE pb.min > 0 AND g.status = 3
+                AND g.season_type IN ('Regular Season', 'Post Season')
+                ORDER BY g.date_time_utc
+                """
+            ):
+                dates, teams, mins = apps.setdefault(int(pid), ([], [], []))
+                dates.append(date_utc)
+                teams.append(int(team_id))
+                mins.append(float(minutes))
+                by_team.setdefault(int(team_id), []).append((date_utc, int(pid)))
+            self._appearances = apps
+            self._team_appearances = by_team
+        return self._appearances
+
+    def _historical_members(
+        self, conn, team_id: int, before_date: str, recent: dict
+    ) -> set[int]:
+        """Team members as of a past tip-off, from appearances (see module doc)."""
+        apps = self._load_appearances(conn)
+        window_end = (
+            datetime.fromisoformat(before_date.replace("Z", "+00:00"))
+            + timedelta(days=ARRIVAL_WINDOW_DAYS)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        members = set()
+        # Recent players stay unless their next appearance is for another team
+        for pid in recent:
+            dates, teams, _ = apps.get(pid, ([], [], []))
+            i = bisect_left(dates, before_date)
+            if i == len(teams) or teams[i] == team_id:
+                members.add(pid)
+        # Arrivals: next appearance is for this team, previous one was not
+        team_apps = self._team_appearances.get(team_id, [])
+        start = bisect_left(team_apps, (before_date, 0))
+        end = bisect_left(team_apps, (window_end, 0))
+        for _, pid in team_apps[start:end]:
+            dates, teams, _ = apps[pid]
+            i = bisect_left(dates, before_date)
+            if teams[i] == team_id and (i == 0 or teams[i - 1] != team_id):
+                members.add(pid)
+        return members
 
     def _load_injuries(self, conn, game_date) -> dict[str, set[int]]:
         """
