@@ -81,6 +81,11 @@
     color: #cf222e !important;
 }
 
+.pred-backtest {
+    color: #8c959f !important;
+    font-style: italic;
+}
+
 /* Date navigation bar */
 .date-nav {
     display: flex;

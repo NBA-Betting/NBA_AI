@@ -122,6 +122,14 @@ def process_game_data(games, user_tz=None):
             {} if game.get("season_type") == "Pre Season" else game.get("predictions", {})
         )
         pre_game_predictions = predictions.get("pre_game", {}).get("prediction_set", {})
+        # Predictions saved at or after tip-off are backtests: show them, but
+        # don't grade them like real pre-game picks. prediction_datetime is
+        # "YYYY-MM-DD HH:MM:SS" (UTC); date_time_utc is "YYYY-MM-DDTHH:MM:SSZ".
+        pred_time = predictions.get("pre_game", {}).get("prediction_datetime")
+        is_backtest = bool(pred_time) and (
+            pred_time.replace(" ", "T") + "Z" >= game["date_time_utc"]
+        )
+        outbound_game_data["pred_is_backtest"] = is_backtest
 
         # Stored values can be null (e.g. recovered Phase5 rows); treat as missing
         pred_home_win_pct, pred_home_score, pred_away_score, pred_spread = (
@@ -206,6 +214,7 @@ def process_game_data(games, user_tz=None):
         # Determine if predicted winner was correct (for completed games)
         if (
             game["status"] == 3
+            and not is_backtest
             and pred_winner
             and outbound_game_data["home_score"] != ""
             and outbound_game_data["away_score"] != ""
@@ -224,6 +233,7 @@ def process_game_data(games, user_tz=None):
         # Determine if our predicted spread was closer to actual margin than Vegas
         if (
             game["status"] == 3
+            and not is_backtest
             and pred_spread != ""
             and opening_spread is not None
             and outbound_game_data["home_score"] != ""

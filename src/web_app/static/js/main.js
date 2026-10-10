@@ -79,6 +79,11 @@ function fetchAndUpdateGames() {
               : game.spread_closer_than_vegas === false
                 ? " pred-wrong"
                 : "";
+          // Backtests (made after tip-off) are shown muted and not graded
+          const backtestClass = game.pred_is_backtest ? " pred-backtest" : "";
+          const backtestTitle = game.pred_is_backtest
+            ? ' title="Backtest prediction, made after tip-off"'
+            : "";
 
           row.innerHTML = `
                         <td class="text-left custom-vertical-align-middle">${datetimeDisplay}</td>
@@ -105,8 +110,8 @@ function fetchAndUpdateGames() {
                         <td class="text-center custom-vertical-align-middle">${openSpread}</td>
                         <td class="text-center custom-vertical-align-middle">${homeScore}</td>
                         <td class="text-center custom-vertical-align-middle">${awayScore}</td>
-                        <td class="text-center custom-vertical-align-middle${spreadClass}">${predSpreadDisplay}</td>
-                        <td class="text-center custom-vertical-align-middle${winnerClass}">${predWinnerDisplay}</td>
+                        <td class="text-center custom-vertical-align-middle${spreadClass}${backtestClass}"${backtestTitle}>${predSpreadDisplay}</td>
+                        <td class="text-center custom-vertical-align-middle${winnerClass}${backtestClass}"${backtestTitle}>${predWinnerDisplay}</td>
                     `;
           tableBody.appendChild(row);
         });
