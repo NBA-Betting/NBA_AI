@@ -187,10 +187,14 @@ class Phase3CacheUpdater:
                 len(new_games),
                 self.cache_dir,
             )
+            # Keep the existing player mapping: the model's player embeddings
+            # are indexed by it, so re-sorting all player IDs would scramble them
+            mapping_path = self.cache_dir / "player_mapping.json"
             result = build_cache(
                 seasons=self.seasons,
                 cache_dir=str(self.cache_dir),
                 db_path=self.db_path,
+                player_mapping_path=str(mapping_path) if mapping_path.exists() else None,
             )
 
         n_total = result["n_games"]

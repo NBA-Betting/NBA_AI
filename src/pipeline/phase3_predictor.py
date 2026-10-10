@@ -47,6 +47,14 @@ DEFAULT_CONFIG_PATHS = [
 
 DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "phase3_cache"
 
+# Projected players per team for upcoming games. Training rosters were the
+# players who logged minutes in the game itself (~10.9/team), and that count
+# tracks the final margin, so the model reads roster size as a margin signal.
+# Uncapped projected rosters (~13-15) score no better than predicting the mean
+# margin; 11 gave the best-calibrated spreads on 2024-26 games (MAE 11.7 vs
+# 12.9). Retraining on pre-game rosters is the real fix.
+ROSTER_CAP = 11
+
 
 class Phase3Predictor(BasePredictor):
     """Phase 3 transformer model predictor (Exp 5 / 5b roster-temporal)."""
@@ -175,6 +183,14 @@ class Phase3Predictor(BasePredictor):
             logger.warning("Missing keys in checkpoint: %s", missing[:5])
         if unexpected:
             logger.warning("Unexpected keys in checkpoint: %s", unexpected[:5])
+        # Training validated and selected the checkpoint on its EMA weights, so
+        # use those. Overlay by parameter so tied embeddings get the EMA values.
+        ema = ckpt.get("ema_state_dict") if isinstance(ckpt, dict) else None
+        if ema and "shadow" in ema:
+            with torch.no_grad():
+                for name, param in self._model.named_parameters():
+                    if name in ema["shadow"]:
+                        param.copy_(ema["shadow"][name])
 
         self._model.eval()
 
@@ -471,8 +487,8 @@ class Phase3Predictor(BasePredictor):
             away_days_before=away_days_before,
             home_team=home_team,
             away_team=away_team,
-            home_roster=home_roster,
-            away_roster=away_roster,
+            home_roster=home_roster[:ROSTER_CAP],
+            away_roster=away_roster[:ROSTER_CAP],
             home_rest_days=home_rest_days,
             away_rest_days=away_rest_days,
             target_home_score=0.0,  # Unknown for upcoming games

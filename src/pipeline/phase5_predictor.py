@@ -44,6 +44,15 @@ PHASE_B_CACHE = PROJECT_ROOT / "data" / "phase_b_cache"
 # Maximum players per team for L2 (must match training)
 MAX_PLAYERS = 13
 
+# Players actually fed to the model per team. Training rosters were the players
+# who logged minutes in the game itself (~10.7/team), and that count tracks the
+# final margin (benches empty in blowouts), so the model reads roster size as a
+# margin signal. Full projected rosters (~15) inflate spreads to +/-25; 10
+# collapses them to a constant. 11 gave the best-calibrated spreads on 2025-26
+# validation games (MAE 12.3 vs 13.9 uncapped). Retraining on pre-game rosters
+# is the real fix.
+ROSTER_CAP = 11
+
 
 class Phase5Predictor(BasePredictor):
     """Phase 5 Hierarchical model predictor."""
@@ -105,6 +114,15 @@ class Phase5Predictor(BasePredictor):
                 "player would map to the padding embedding. Re-run "
                 "scripts/build_phase_b_cache.py or restore the file."
             )
+
+        # Coach-to-index mapping for the L3 coach embedding. Training falls back
+        # to index 0 with 0 games when the coach cache is absent; do the same.
+        coach_path = PHASE_B_CACHE / "coach_mapping.json"
+        self._coach_to_idx = (
+            json.loads(coach_path.read_text())["coach_to_idx"]
+            if coach_path.exists()
+            else None
+        )
 
         # Ensure L2 has enough embedding slots
         if self._player_to_idx:
@@ -182,8 +200,7 @@ class Phase5Predictor(BasePredictor):
         the last update, ensuring fresh player ability estimates.
 
         Returns {game_id: {
-            pred_home_score, pred_away_score, pred_home_win_pct,
-            pred_spread, pred_spread_sigma, pred_total, pred_total_sigma,
+            pred_home_win_pct, pred_spread, pred_spread_sigma,
             pred_ats_prob, roster_confidence
         }}
         """
@@ -242,6 +259,10 @@ class Phase5Predictor(BasePredictor):
         home_cont = features["home_team_features"][32]
         away_cont = features["away_team_features"][32]
 
+        # Coach embedding inputs: training index and career games coached
+        home_coach_idx, home_coach_games = self._coach_inputs(features, "home")
+        away_coach_idx, away_coach_games = self._coach_inputs(features, "away")
+
         # Convert to tensors
         with torch.no_grad():
             # L2 forward
@@ -272,11 +293,13 @@ class Phase5Predictor(BasePredictor):
                 roster_summary=torch.tensor(home_rs_norm, dtype=torch.float32)
                 .unsqueeze(0)
                 .to(device),
-                coach_idx=torch.tensor([0], dtype=torch.long).to(device),
+                coach_idx=torch.tensor([home_coach_idx], dtype=torch.long).to(device),
                 roster_continuity=torch.tensor([[home_cont]], dtype=torch.float32).to(
                     device
                 ),
-                coach_games=torch.tensor([0.0], dtype=torch.float32).to(device),
+                coach_games=torch.tensor([home_coach_games], dtype=torch.float32).to(
+                    device
+                ),
             )
             away_repr = self._l3_model(
                 l2_team=away_l2,
@@ -286,11 +309,13 @@ class Phase5Predictor(BasePredictor):
                 roster_summary=torch.tensor(away_rs_norm, dtype=torch.float32)
                 .unsqueeze(0)
                 .to(device),
-                coach_idx=torch.tensor([0], dtype=torch.long).to(device),
+                coach_idx=torch.tensor([away_coach_idx], dtype=torch.long).to(device),
                 roster_continuity=torch.tensor([[away_cont]], dtype=torch.float32).to(
                     device
                 ),
-                coach_games=torch.tensor([0.0], dtype=torch.float32).to(device),
+                coach_games=torch.tensor([away_coach_games], dtype=torch.float32).to(
+                    device
+                ),
             )
 
             # L4 forward
@@ -314,12 +339,9 @@ class Phase5Predictor(BasePredictor):
         # on 2025-26 live games.
         sigma_for_prob = spread_sigma if spread_sigma and spread_sigma > 1.0 else 20.0
         win_prob = 0.5 * (1.0 + math.erf(spread_mu / (sigma_for_prob * math.sqrt(2))))
-        total_mu = preds["total_mu"].item()
-        total_sigma = preds["total_sigma"].item()
-
-        # Convert spread/total to home/away scores
-        home_score = (total_mu + spread_mu) / 2.0
-        away_score = (total_mu - spread_mu) / 2.0
+        # No total or team scores: the total head is untrained (w_total=0 in
+        # L4Config; val total MAE ~123), so total_mu and any scores derived
+        # from it are meaningless.
 
         # Determine if this is a live prediction (before game) or backtest
         from src.database import get_db
@@ -333,19 +355,24 @@ class Phase5Predictor(BasePredictor):
         is_live = game_status == 1  # status=1 means scheduled (not yet played)
 
         return {
-            "pred_home_score": round(home_score, 1),
-            "pred_away_score": round(away_score, 1),
             "pred_home_win_pct": round(win_prob, 4),
             "pred_spread": round(spread_mu, 2),
             "pred_spread_sigma": round(spread_sigma, 2),
-            "pred_total": round(total_mu, 1),
-            "pred_total_sigma": round(total_sigma, 2),
             "prediction_type": "live" if is_live else "backtest",
             "roster_confidence": min(
                 roster.get("home_confidence", 1.0),
                 roster.get("away_confidence", 1.0),
             ),
         }
+
+    def _coach_inputs(self, features: dict, side: str) -> tuple[int, float]:
+        """(coach_idx, coach_games) for the L3 coach embedding."""
+        coach_id, games = features.get(f"{side}_coach", (None, 0))
+        if self._coach_to_idx is None or coach_id is None:
+            return 0, 0.0
+        idx = self._coach_to_idx.get(str(coach_id), 0)
+        # Coaches unseen in training have no learned embedding (index 0)
+        return idx, float(games) if idx else 0.0
 
     def _load_player_data(self, player_ids: list[int]) -> dict:
         """
@@ -360,20 +387,24 @@ class Phase5Predictor(BasePredictor):
         mask = np.zeros(MAX_PLAYERS, dtype=bool)
         player_idx = np.zeros(MAX_PLAYERS, dtype=np.int64)
 
-        for j, pid in enumerate(player_ids[:MAX_PLAYERS]):
+        # Top ROSTER_CAP players (sorted by projected minutes) that have L1
+        # vectors; players without them would only be masked out anyway
+        j = 0
+        for pid in player_ids:
+            if j == ROSTER_CAP:
+                break
             npz_path = L1_VECTORS_DIR / f"{pid}.npz"
-            if npz_path.exists():
-                data = np.load(str(npz_path), allow_pickle=True)
-                # Use the most recent ability vector
-                abilities[j] = data["ability"][-1]
-                uncertainties[j] = data["uncertainty"][-1]
-                # Archetype weights are produced by the L1 model (static per player)
-                archetypes[j] = data["archetype_weights"]
-                mask[j] = True
-                player_idx[j] = self._player_to_idx.get(pid, 0)
-            else:
-                # Player has no L1 vectors — use zero (masked out)
-                mask[j] = False
+            if not npz_path.exists():
+                continue
+            data = np.load(str(npz_path), allow_pickle=True)
+            # Use the most recent ability vector
+            abilities[j] = data["ability"][-1]
+            uncertainties[j] = data["uncertainty"][-1]
+            # Archetype weights are produced by the L1 model (static per player)
+            archetypes[j] = data["archetype_weights"]
+            mask[j] = True
+            player_idx[j] = self._player_to_idx.get(pid, 0)
+            j += 1
 
         return {
             "abilities": torch.tensor(abilities, dtype=torch.float32),

@@ -37,6 +37,7 @@ from src.config import config
 from src.database import get_db
 from src.database_updater.betting import update_betting_data
 from src.database_updater.boxscores import get_boxscores, save_boxscores
+from src.database_updater.coaches import update_coaches
 from src.database_updater.game_states import create_game_states, save_game_states
 from src.database_updater.nba_official_injuries import update_nba_official_injuries
 from src.database_updater.pbp import get_pbp, save_pbp
@@ -162,6 +163,9 @@ def update_database(
 
     # STEP 2: Update Players List
     update_players(db_path)
+
+    # STEP 2b: Fill missing head coaches (Phase5 coach features)
+    update_coaches(season, db_path)
 
     # STEP 3: Update Injury Data
     update_injury_data(season, db_path)
