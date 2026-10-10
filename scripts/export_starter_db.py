@@ -85,6 +85,7 @@ def export_starter_db(
     # --- Copy schema for ALL tables (keeps structure even for empty ones) ---
     tables = src.execute(
         "SELECT name, sql FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence'"
+        " AND name NOT LIKE '%backup%'"  # internal backup copies
     ).fetchall()
     for name, sql in tables:
         if sql:
@@ -180,6 +181,7 @@ def export_starter_db(
         r[0]
         for r in src.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence'"
+            " AND name NOT LIKE '%backup%'"
         ).fetchall()
     }
     accounted = set(season_filtered) | set(reference_tables) | set(skip_tables)
