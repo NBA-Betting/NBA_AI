@@ -18,8 +18,9 @@ from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
 
+# Built by scripts/build_phase5_cache.py
 PHASE_B_CACHE_DIR = (
-    Path(__file__).resolve().parent.parent.parent / "data" / "phase_b_cache"
+    Path(__file__).resolve().parent.parent.parent / "data" / "phase5_games"
 )
 
 
@@ -166,9 +167,10 @@ class PhaseBDataset(Dataset):
 def load_phase_b_data(
     cache_dir: Path | None = None,
 ) -> dict:
-    """Load all Phase B cache data.
+    """Load the Phase5 game cache.
 
     Returns dict with all numpy arrays + metadata needed for PhaseBDataset.
+    Normalization stats come from the training split (make_train_val_datasets).
     """
     if cache_dir is None:
         cache_dir = PHASE_B_CACHE_DIR
@@ -201,8 +203,6 @@ def load_phase_b_data(
     with open(str(cache_dir / "metadata.json")) as f:
         metadata = json.load(f)
 
-    norm = metadata["normalization"]
-
     data = {
         "l2_vectors": l2_data["vectors"],
         "roster_summaries": rs_data["summaries"],
@@ -216,13 +216,6 @@ def load_phase_b_data(
         "metadata": metadata,
         "coach_indices": coach_indices,
         "coach_games": coach_games,
-        # Normalization arrays
-        "l3_mean": np.array(norm["l3_mean"], dtype=np.float32),
-        "l3_std": np.array(norm["l3_std"], dtype=np.float32),
-        "l4_mean": np.array(norm["l4_mean"], dtype=np.float32),
-        "l4_std": np.array(norm["l4_std"], dtype=np.float32),
-        "rs_mean": np.array(norm["roster_summary_mean"], dtype=np.float32),
-        "rs_std": np.array(norm["roster_summary_std"], dtype=np.float32),
     }
 
     logger.info(

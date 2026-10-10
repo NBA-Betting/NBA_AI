@@ -24,7 +24,6 @@ Usage:
 import argparse
 import json
 import logging
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -37,6 +36,9 @@ from torch.utils.data import DataLoader, Dataset
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.database import DB_PATH, get_db
+from src.phase5.game_dataset import load_phase_b_data
+from src.phase5.l1_store import L1Store, load_game_dates
 from src.phase5.l2_config import L2Config
 from src.phase5.l2_model import (
     PlayerSynergyNetwork,
@@ -51,11 +53,8 @@ from src.phase5.l4_losses import game_prediction_loss
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints" / "phase5"
 RESULTS_DIR = PROJECT_ROOT / "results" / "phase5"
 
-# Data paths
-PHASE_B_CACHE = PROJECT_ROOT / "data" / "phase_b_cache"
-L1_VECTORS_DIR = PROJECT_ROOT / "data" / "l2_cache" / "l1_vectors"
-WOWY_DB_PATH = PROJECT_ROOT / "data" / "l2_cache" / "wowy.sqlite"
-DB_PATH = PROJECT_ROOT / "data" / "NBA_AI_full.sqlite"
+# Built by scripts/build_phase5_cache.py
+GAMES_CACHE = PROJECT_ROOT / "data" / "phase5_games"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,86 +62,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Edge feature lookups for L2 GATv2
-# ---------------------------------------------------------------------------
-
-
-def load_wowy_lookup() -> dict[tuple[int, int, str], dict]:
-    """Load WOWY pair data into a dict keyed by (min_pid, max_pid, season).
-
-    Returns dict with keys: shared_minutes, net_rtg_together,
-    minutes_a_only, minutes_b_only.
-    """
-    if not WOWY_DB_PATH.exists():
-        logger.warning(
-            f"WOWY DB not found at {WOWY_DB_PATH}; edge features will be zeros"
-        )
-        return {}
-
-    conn = sqlite3.connect(str(WOWY_DB_PATH))
-    rows = conn.execute("""
-        SELECT player_a, player_b, season,
-               minutes_together, net_rtg_together,
-               minutes_a_only, minutes_b_only
-        FROM PairwiseWOWY
-        WHERE minutes_together > 0
-    """).fetchall()
-    conn.close()
-
-    lookup = {}
-    for pa, pb, season, min_tog, net_rtg, min_a, min_b in rows:
-        key = (min(pa, pb), max(pa, pb), season)
-        lookup[key] = {
-            "shared_minutes": min_tog or 0.0,
-            "net_rtg_together": net_rtg or 0.0,
-            "minutes_a_only": min_a or 0.0,
-            "minutes_b_only": min_b or 0.0,
-        }
-
-    logger.info(f"Loaded WOWY lookup: {len(lookup)} pair-season entries")
-    return lookup
-
-
-def build_years_together_lookup(
-    wowy_lookup: dict[tuple[int, int, str], dict],
-) -> dict[tuple[int, int], dict[str, int]]:
-    """Build {(min_pid, max_pid): {season: count_up_to_season}} from WOWY data.
-
-    For each pair, count how many distinct seasons they have shared court time
-    up to (but not including) each season they appear in.  This prevents leakage.
-    """
-    # Gather all seasons per pair
-    pair_seasons: dict[tuple[int, int], list[str]] = {}
-    for pa, pb, season in wowy_lookup:
-        pair_key = (pa, pb)
-        if pair_key not in pair_seasons:
-            pair_seasons[pair_key] = []
-        pair_seasons[pair_key].append(season)
-
-    # Sort and build cumulative counts
-    years_lookup: dict[tuple[int, int], dict[str, int]] = {}
-    for pair_key, seasons in pair_seasons.items():
-        seasons_sorted = sorted(set(seasons))
-        years_lookup[pair_key] = {}
-        for i, s in enumerate(seasons_sorted):
-            # Number of prior seasons together (excluding current)
-            years_lookup[pair_key][s] = i
-    return years_lookup
-
-
-def load_birth_years() -> dict[int, int]:
-    """Load birth years from PlayerAttributes table."""
-    conn = sqlite3.connect(str(DB_PATH))
-    rows = conn.execute(
-        "SELECT person_id, birth_year FROM PlayerAttributes WHERE birth_year IS NOT NULL"
-    ).fetchall()
-    conn.close()
-    birth_years = {int(pid): int(by) for pid, by in rows}
-    logger.info(f"Loaded birth years for {len(birth_years)} players")
-    return birth_years
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +77,6 @@ class PhaseCDataset(Dataset):
     L1 vectors are frozen: loaded from pre-computed cache, no gradient.
     L2 runs live on these vectors each forward pass.
     """
-
-    N_EDGE_FEATURES = 9  # must match L2Config.n_edge_features
 
     def __init__(
         self,
@@ -180,12 +97,6 @@ class PhaseCDataset(Dataset):
         # Coach data
         coach_indices: np.ndarray | None = None,  # (N, 2) int64
         coach_games: np.ndarray | None = None,  # (N, 2) float32
-        # Edge feature data (for L2 GATv2)
-        player_ids: np.ndarray | None = None,  # (N, 2, A) int64 — actual player IDs
-        seasons: np.ndarray | None = None,  # (N,) str — season per game
-        wowy_lookup: dict | None = None,
-        years_together_lookup: dict | None = None,
-        birth_years: dict | None = None,
         # Normalization (from training set)
         l3_mean: np.ndarray | None = None,
         l3_std: np.ndarray | None = None,
@@ -208,13 +119,6 @@ class PhaseCDataset(Dataset):
         self.targets_total = targets_total
         self.coach_indices = coach_indices
         self.coach_games = coach_games
-        # Edge feature data
-        self.player_ids = player_ids
-        self.seasons = seasons
-        self.wowy_lookup = wowy_lookup or {}
-        self.years_together_lookup = years_together_lookup or {}
-        self.birth_years = birth_years or {}
-        self.has_edge_features = player_ids is not None and seasons is not None
         # Normalization
         self.l3_mean = l3_mean
         self.l3_std = l3_std
@@ -232,96 +136,6 @@ class PhaseCDataset(Dataset):
         if mean is not None and std is not None:
             return (x - mean) / std
         return x
-
-    def _build_edge_features(
-        self,
-        pids: np.ndarray,
-        mask: np.ndarray,
-        abilities: np.ndarray,
-        archetypes: np.ndarray,
-        season: str,
-    ) -> np.ndarray:
-        """Build (A, A, 9) edge feature tensor for one team.
-
-        Features [0] and [1] (archetype_syn, fm_syn) are left as zeros —
-        the L2 model fills them in during forward pass.
-
-        Args:
-            pids: (A,) actual player IDs
-            mask: (A,) bool, True = valid player
-            abilities: (A, 32) L1 ability vectors
-            archetypes: (A, 10) archetype weights
-            season: e.g. "2022-2023"
-        """
-        A = len(pids)
-        edge_feat = np.zeros((A, A, self.N_EDGE_FEATURES), dtype=np.float32)
-
-        valid_indices = np.where(mask)[0]
-        n_valid = len(valid_indices)
-        if n_valid < 2:
-            return edge_feat
-
-        for ii in range(n_valid):
-            for jj in range(n_valid):
-                if ii == jj:
-                    continue
-                vi = valid_indices[ii]
-                vj = valid_indices[jj]
-                pid_i = int(pids[vi])
-                pid_j = int(pids[vj])
-                ab_i = abilities[vi]
-                ab_j = abilities[vj]
-                arch_i = archetypes[vi]
-                arch_j = archetypes[vj]
-
-                # Canonical pair key (smaller ID first)
-                pair_key = (min(pid_i, pid_j), max(pid_i, pid_j))
-                wowy_key = (pair_key[0], pair_key[1], season)
-                pf = self.wowy_lookup.get(wowy_key, {})
-
-                # [2] shared_minutes: log1p scaled
-                edge_feat[vi, vj, 2] = np.log1p(pf.get("shared_minutes", 0.0))
-
-                # [3] years_together: capped at 5, normalized
-                yt_data = self.years_together_lookup.get(pair_key, {})
-                years = yt_data.get(season, 0)
-                edge_feat[vi, vj, 3] = min(years, 5) / 5.0
-
-                # [4] wowy_net_rtg: scaled by 10
-                edge_feat[vi, vj, 4] = pf.get("net_rtg_together", 0.0) / 10.0
-
-                # [5] positional_overlap: cosine sim of archetype weights
-                norm_ai = np.linalg.norm(arch_i)
-                norm_aj = np.linalg.norm(arch_j)
-                if norm_ai > 1e-8 and norm_aj > 1e-8:
-                    edge_feat[vi, vj, 5] = float(
-                        np.dot(arch_i, arch_j) / (norm_ai * norm_aj)
-                    )
-
-                # [6] minutes_overlap_pct: fraction of player_i minutes with player_j
-                min_tog = pf.get("shared_minutes", 0.0)
-                # Determine which direction: if pid_i < pid_j, pid_i is player_a
-                if pid_i < pid_j:
-                    min_solo = pf.get("minutes_a_only", 0.0)
-                else:
-                    min_solo = pf.get("minutes_b_only", 0.0)
-                total_min_i = min_tog + min_solo
-                if total_min_i > 0:
-                    edge_feat[vi, vj, 6] = min_tog / total_min_i
-
-                # [7] ability_cosine: cosine sim of L1 ability vectors
-                norm_i = np.linalg.norm(ab_i)
-                norm_j = np.linalg.norm(ab_j)
-                if norm_i > 1e-8 and norm_j > 1e-8:
-                    edge_feat[vi, vj, 7] = float(np.dot(ab_i, ab_j) / (norm_i * norm_j))
-
-                # [8] age_gap: |age_i - age_j| / 10
-                by_i = self.birth_years.get(pid_i)
-                by_j = self.birth_years.get(pid_j)
-                if by_i is not None and by_j is not None:
-                    edge_feat[vi, vj, 8] = abs(by_i - by_j) / 10.0
-
-        return edge_feat
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         i = self.indices[idx]
@@ -372,30 +186,6 @@ class PhaseCDataset(Dataset):
         home_continuity = self.team_features[i, 0, 32]
         away_continuity = self.team_features[i, 1, 32]
 
-        # Edge features for L2 GATv2 (A, A, 9) per team
-        if self.has_edge_features:
-            season = str(self.seasons[i])
-            home_pids = self.player_ids[i, 0]  # (A,)
-            away_pids = self.player_ids[i, 1]
-            home_ef = self._build_edge_features(
-                home_pids,
-                home_mask,
-                home_abilities,
-                home_archetypes,
-                season,
-            )
-            away_ef = self._build_edge_features(
-                away_pids,
-                away_mask,
-                away_abilities,
-                away_archetypes,
-                season,
-            )
-        else:
-            A = home_abilities.shape[0]
-            home_ef = np.zeros((A, A, self.N_EDGE_FEATURES), dtype=np.float32)
-            away_ef = np.zeros((A, A, self.N_EDGE_FEATURES), dtype=np.float32)
-
         return {
             # L2 inputs (per-player L1 vectors)
             "home_abilities": torch.tensor(home_abilities, dtype=torch.float32),
@@ -408,8 +198,6 @@ class PhaseCDataset(Dataset):
             "away_player_mask": torch.tensor(away_mask, dtype=torch.bool),
             "home_player_idx": torch.tensor(home_pidx, dtype=torch.long),
             "away_player_idx": torch.tensor(away_pidx, dtype=torch.long),
-            "home_edge_features": torch.tensor(home_ef, dtype=torch.float32),
-            "away_edge_features": torch.tensor(away_ef, dtype=torch.float32),
             # L3 inputs
             "home_team_features": torch.tensor(home_tf, dtype=torch.float32),
             "away_team_features": torch.tensor(away_tf, dtype=torch.float32),
@@ -431,274 +219,44 @@ class PhaseCDataset(Dataset):
 
 
 # ---------------------------------------------------------------------------
-# Data loading: build per-player arrays from L1 cache + Phase B cache
+# Data loading: the Phase5 game cache plus per-player L1 states
 # ---------------------------------------------------------------------------
 
 
-def load_l1_vectors() -> dict[int, dict]:
-    """Load all L1 ability vectors from npz files."""
-    vectors = {}
-    npz_files = sorted(L1_VECTORS_DIR.glob("*.npz"))
-    logger.info(f"Loading L1 vectors from {len(npz_files)} files...")
-
-    for path in npz_files:
-        player_id = int(path.stem)
-        data = np.load(str(path), allow_pickle=True)
-        vectors[player_id] = {
-            "ability": data["ability"],
-            "uncertainty": data["uncertainty"],
-            "game_ids": list(data["game_ids"]),
-            "archetype_weights": data["archetype_weights"],
-        }
-
-    logger.info(f"Loaded L1 vectors for {len(vectors)} players")
-    return vectors
-
-
-def build_player_to_idx(l1_vectors: dict[int, dict]) -> dict[int, int]:
-    """Build player_id -> embedding index mapping. Index 0 = padding."""
-    player_ids = sorted(l1_vectors.keys())
-    return {pid: i + 1 for i, pid in enumerate(player_ids)}
-
-
-def get_l1_at_game(
-    l1_data: dict, game_id: str, use_latest: bool = False
-) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
-    """Get L1 vectors for a player at (or just before) a specific game.
-
-    Uses the state BEFORE this game (no leakage).
-    """
-    game_ids = l1_data["game_ids"]
-    archetype = l1_data["archetype_weights"]
-
-    if game_id in game_ids:
-        idx = game_ids.index(game_id)
-        if idx > 0:
-            idx = idx - 1
-        return l1_data["ability"][idx], l1_data["uncertainty"][idx], archetype
-
-    best_idx = -1
-    for i, gid in enumerate(game_ids):
-        if gid < game_id:
-            best_idx = i
-        else:
-            break
-
-    if best_idx >= 0:
-        return l1_data["ability"][best_idx], l1_data["uncertainty"][best_idx], archetype
-
-    if use_latest and len(game_ids) > 0:
-        return l1_data["ability"][0], l1_data["uncertainty"][0], archetype
-
-    return None, None, None
-
-
-def build_phase_c_data(max_roster: int = 15) -> dict:
-    """Build Phase C data by combining Phase B cache with per-player L1 vectors.
-
-    This creates per-game, per-player arrays suitable for live L2 forward passes.
-    """
-    # Load Phase B cache
-    logger.info("Loading Phase B cache...")
-    game_ids = np.load(str(PHASE_B_CACHE / "game_ids.npy"), allow_pickle=True)
-    seasons = np.load(str(PHASE_B_CACHE / "seasons.npy"), allow_pickle=True)
-    tf_data = np.load(str(PHASE_B_CACHE / "team_features.npz"))
-    gc_data = np.load(str(PHASE_B_CACHE / "game_context.npz"))
-    rs_data = np.load(str(PHASE_B_CACHE / "roster_summaries.npz"))
-    tgt_data = np.load(str(PHASE_B_CACHE / "targets.npz"))
-
-    # Coach data (optional — may not exist in older caches)
-    coach_indices_path = PHASE_B_CACHE / "coach_indices.npy"
-    coach_games_path = PHASE_B_CACHE / "coach_games.npy"
-    if coach_indices_path.exists() and coach_games_path.exists():
-        coach_indices_all = np.load(str(coach_indices_path))
-        coach_games_all = np.load(str(coach_games_path))
-        logger.info(
-            f"  Loaded coach data: {coach_indices_all.shape}, "
-            f"coverage={(coach_indices_all > 0).any(axis=1).mean():.1%}"
-        )
-    else:
-        coach_indices_all = None
-        coach_games_all = None
-        logger.info("  No coach data found (using placeholder 0s)")
-
-    with open(str(PHASE_B_CACHE / "metadata.json")) as f:
-        metadata = json.load(f)
-
-    n_games = len(game_ids)
-    logger.info(f"Phase B cache: {n_games} games")
-
-    # Load L1 vectors
-    l1_vectors = load_l1_vectors()
-    player_to_idx = build_player_to_idx(l1_vectors)
-
-    # Load rosters from database
-    logger.info("Loading rosters from database...")
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("PRAGMA journal_mode=WAL")
-
-    # Get game info for team resolution
-    games_info = {}
-    rows = conn.execute("""
-        SELECT g.game_id, g.home_team, g.away_team
-        FROM Games g
-        WHERE g.status = 3
-    """).fetchall()
-    for gid, home, away in rows:
-        games_info[gid] = {"home_team": home, "away_team": away}
-
-    # Get rosters
-    roster_query = conn.execute("""
-        SELECT pb.game_id, pb.player_id, pb.team_id, pb.min
-        FROM PlayerBox pb
-        WHERE pb.min > 0
-        ORDER BY pb.game_id, pb.team_id, pb.min DESC
-    """).fetchall()
-
-    game_rosters: dict[str, dict] = {}
-    for gid, pid, tid, minutes in roster_query:
-        if gid not in game_rosters:
-            game_rosters[gid] = {}
-        if tid not in game_rosters[gid]:
-            game_rosters[gid][tid] = []
-        game_rosters[gid][tid].append(pid)
-
-    # Team abbreviation -> team_id mapping
-    team_abbr_to_id = {}
-    for tid, abbr in conn.execute("SELECT team_id, abbreviation FROM Teams").fetchall():
-        team_abbr_to_id[abbr] = tid
-
-    conn.close()
-    logger.info(f"Loaded rosters for {len(game_rosters)} games")
-
-    # Pre-allocate per-player arrays
-    n_arch = 10
-    d_ability = 32
-
-    player_abilities = np.zeros((n_games, 2, max_roster, d_ability), dtype=np.float32)
-    player_uncertainties = np.zeros(
-        (n_games, 2, max_roster, d_ability), dtype=np.float32
-    )
-    player_archetypes = np.zeros((n_games, 2, max_roster, n_arch), dtype=np.float32)
-    player_masks = np.zeros((n_games, 2, max_roster), dtype=bool)
-    player_indices = np.zeros((n_games, 2, max_roster), dtype=np.int64)
-    player_id_arr = np.zeros((n_games, 2, max_roster), dtype=np.int64)
-    valid_mask = np.ones(n_games, dtype=bool)
-
-    logger.info("Building per-player arrays for Phase C...")
-    t0 = time.time()
-    skipped = 0
-
-    for gi in range(n_games):
-        if gi % 5000 == 0 and gi > 0:
-            elapsed = time.time() - t0
-            rate = gi / elapsed
-            eta = (n_games - gi) / max(rate, 1e-6)
-            logger.info(
-                f"  [{gi}/{n_games}] {rate:.0f} games/s, "
-                f"ETA {eta/60:.1f} min, skipped {skipped}"
-            )
-
-        game_id = game_ids[gi]
-
-        if game_id not in games_info:
-            valid_mask[gi] = False
-            skipped += 1
-            continue
-
-        info = games_info[game_id]
-        home_team = info["home_team"]
-        away_team = info["away_team"]
-
-        if game_id not in game_rosters:
-            valid_mask[gi] = False
-            skipped += 1
-            continue
-
-        roster = game_rosters[game_id]
-        home_tid = team_abbr_to_id.get(home_team)
-        away_tid = team_abbr_to_id.get(away_team)
-
-        if home_tid is None or away_tid is None:
-            valid_mask[gi] = False
-            skipped += 1
-            continue
-
-        teams = [(0, roster.get(home_tid, [])), (1, roster.get(away_tid, []))]
-        game_valid = True
-
-        for side, pids in teams:
-            pids = pids[:max_roster]
-            filled = 0
-            for pid in pids:
-                if pid not in l1_vectors:
-                    continue
-                ab, unc, arch = get_l1_at_game(l1_vectors[pid], game_id)
-                if ab is None:
-                    ab, unc, arch = get_l1_at_game(
-                        l1_vectors[pid], game_id, use_latest=True
-                    )
-                    if ab is None:
-                        continue
-
-                player_abilities[gi, side, filled] = ab
-                player_uncertainties[gi, side, filled] = unc
-                player_archetypes[gi, side, filled] = arch
-                player_masks[gi, side, filled] = True
-                player_indices[gi, side, filled] = player_to_idx.get(pid, 0)
-                player_id_arr[gi, side, filled] = pid
-                filled += 1
-
-            if filled == 0:
-                game_valid = False
-                break
-
-        if not game_valid:
-            valid_mask[gi] = False
-            skipped += 1
-
-    elapsed = time.time() - t0
-    n_valid = valid_mask.sum()
-    logger.info(
-        f"Built player arrays in {elapsed:.1f}s: "
-        f"{n_valid}/{n_games} valid, {skipped} skipped"
-    )
-
-    # Filter to valid games
-    valid_idx = np.where(valid_mask)[0]
-
-    norm = metadata["normalization"]
-
-    return {
-        "player_abilities": player_abilities[valid_idx],
-        "player_uncertainties": player_uncertainties[valid_idx],
-        "player_archetypes": player_archetypes[valid_idx],
-        "player_masks": player_masks[valid_idx],
-        "player_indices": player_indices[valid_idx],
-        "player_ids": player_id_arr[valid_idx],
-        "team_features": tf_data["features"][valid_idx],
-        "game_context": gc_data["features"][valid_idx],
-        "roster_summaries": rs_data["summaries"][valid_idx],
-        "targets_margin": tgt_data["margin"][valid_idx],
-        "targets_win": tgt_data["home_win"][valid_idx],
-        "targets_total": tgt_data["total"][valid_idx],
-        "coach_indices": (
-            coach_indices_all[valid_idx] if coach_indices_all is not None else None
-        ),
-        "coach_games": (
-            coach_games_all[valid_idx] if coach_games_all is not None else None
-        ),
-        "seasons": seasons[valid_idx],
-        "game_ids": game_ids[valid_idx],
-        "n_players_for_embed": len(player_to_idx) + 1,
-        # Normalization
-        "l3_mean": np.array(norm["l3_mean"], dtype=np.float32),
-        "l3_std": np.array(norm["l3_std"], dtype=np.float32),
-        "l4_mean": np.array(norm["l4_mean"], dtype=np.float32),
-        "l4_std": np.array(norm["l4_std"], dtype=np.float32),
-        "rs_mean": np.array(norm["roster_summary_mean"], dtype=np.float32),
-        "rs_std": np.array(norm["roster_summary_std"], dtype=np.float32),
+def build_phase_c_data(cache_dir: Path = GAMES_CACHE) -> dict:
+    """Phase C inputs: the game cache plus each roster player's L1 state before
+    the game (L2 runs live on these during training, as in predictions)."""
+    data = load_phase_b_data(cache_dir)
+    rosters = np.load(cache_dir / "rosters.npy")
+    dates = np.load(cache_dir / "dates.npy", allow_pickle=True)
+    player_to_idx = {
+        int(k): v
+        for k, v in json.loads((cache_dir / "player_to_idx.json").read_text()).items()
     }
+    with get_db(DB_PATH) as conn:
+        store = L1Store(load_game_dates(conn))
+    n, _, max_roster = rosters.shape
+    arrays = store.roster_arrays(
+        list(rosters.reshape(n * 2, max_roster)),
+        [d for d in dates for _ in (0, 1)],
+        player_to_idx,
+        max_roster,
+    )
+    for key, name in (
+        ("abilities", "player_abilities"),
+        ("uncertainties", "player_uncertainties"),
+        ("archetypes", "player_archetypes"),
+        ("mask", "player_masks"),
+        ("player_idx", "player_indices"),
+    ):
+        data[name] = arrays[key].reshape(n, 2, *arrays[key].shape[1:])
+    data["player_to_idx"] = player_to_idx
+    data["coach_to_idx"] = json.loads((cache_dir / "coach_mapping.json").read_text())[
+        "coach_to_idx"
+    ]
+    data["n_players_for_embed"] = len(player_to_idx) + 1
+    logger.info(f"Phase C data: {n} games, rosters up to {max_roster} players")
+    return data
 
 
 def season_start_year(season: str) -> int:
@@ -709,8 +267,11 @@ def make_train_val_datasets(
     data: dict,
     train_seasons: tuple[str, str] = ("2017-2018", "2022-2023"),
     val_season: str = "2023-2024",
-) -> tuple[PhaseCDataset, PhaseCDataset]:
-    """Split data by season and create train/val datasets."""
+) -> tuple[PhaseCDataset, PhaseCDataset, dict]:
+    """Split data by season and create train/val datasets.
+
+    Returns the datasets and the training-split normalization stats.
+    """
     seasons = data["seasons"]
     train_start = season_start_year(train_seasons[0])
     train_end = season_start_year(train_seasons[1])
@@ -759,16 +320,6 @@ def make_train_val_datasets(
     rs_std = rs_flat.std(axis=0).astype(np.float32)
     rs_std[rs_std < 1e-8] = 1e-8
 
-    # --- Load edge feature lookups (WOWY, years_together, birth_years) ---
-    logger.info("Loading edge feature lookups...")
-    wowy_lookup = load_wowy_lookup()
-    years_together_lookup = build_years_together_lookup(wowy_lookup)
-    birth_years = load_birth_years()
-    logger.info(
-        f"  years_together_lookup: {len(years_together_lookup)} pairs, "
-        f"birth_years: {len(birth_years)} players"
-    )
-
     common_kwargs = dict(
         player_abilities=data["player_abilities"],
         player_uncertainties=data["player_uncertainties"],
@@ -783,12 +334,6 @@ def make_train_val_datasets(
         targets_total=data["targets_total"],
         coach_indices=data.get("coach_indices"),
         coach_games=data.get("coach_games"),
-        # Edge feature data
-        player_ids=data.get("player_ids"),
-        seasons=data.get("seasons"),
-        wowy_lookup=wowy_lookup,
-        years_together_lookup=years_together_lookup,
-        birth_years=birth_years,
         # Normalization
         l3_mean=l3_mean,
         l3_std=l3_std,
@@ -800,8 +345,15 @@ def make_train_val_datasets(
 
     train_ds = PhaseCDataset(indices=train_indices, **common_kwargs)
     val_ds = PhaseCDataset(indices=val_indices, **common_kwargs)
-
-    return train_ds, val_ds
+    norm = {
+        "l3_mean": l3_mean.tolist(),
+        "l3_std": l3_std.tolist(),
+        "l4_mean": l4_mean.tolist(),
+        "l4_std": l4_std.tolist(),
+        "roster_summary_mean": rs_mean.tolist(),
+        "roster_summary_std": rs_std.tolist(),
+    }
+    return train_ds, val_ds, norm
 
 
 # ---------------------------------------------------------------------------
@@ -980,9 +532,6 @@ def forward_l2_l3_l4(
     home_pidx = batch["home_player_idx"].to(device)
     away_pidx = batch["away_player_idx"].to(device)
 
-    home_ef = batch["home_edge_features"].to(device)
-    away_ef = batch["away_edge_features"].to(device)
-
     home_tf = batch["home_team_features"].to(device)
     away_tf = batch["away_team_features"].to(device)
     home_rs = batch["home_roster_summary"].to(device)
@@ -1002,7 +551,6 @@ def forward_l2_l3_l4(
         archetypes=home_arch,
         mask=home_mask,
         player_idx=home_pidx,
-        edge_features=home_ef,
     )
     away_l2_out = l2_model(
         ability=away_ab,
@@ -1010,7 +558,6 @@ def forward_l2_l3_l4(
         archetypes=away_arch,
         mask=away_mask,
         player_idx=away_pidx,
-        edge_features=away_ef,
     )
 
     home_l2 = home_l2_out["team_vector"]  # (B, 134)
@@ -1222,7 +769,7 @@ def main():
     data = build_phase_c_data()
 
     train_start, train_end = args.train_seasons.split(",")
-    train_ds, val_ds = make_train_val_datasets(
+    train_ds, val_ds, norm = make_train_val_datasets(
         data,
         train_seasons=(train_start, train_end),
         val_season=args.val_season,
@@ -1230,6 +777,16 @@ def main():
 
     logger.info(f"Train dataset: {len(train_ds)} games")
     logger.info(f"Val dataset: {len(val_ds)} games")
+
+    # Everything the predictor needs besides the weights, saved with them
+    inference = {
+        "normalization": norm,
+        "coach_to_idx": data["coach_to_idx"],
+        "player_to_idx": data["player_to_idx"],
+        "max_roster": int(data["player_masks"].shape[2]),
+        "train_seasons": [train_start, train_end],
+        "val_season": args.val_season,
+    }
 
     if len(train_ds) == 0 or len(val_ds) == 0:
         logger.error("Empty dataset! Check season ranges.")
@@ -1467,6 +1024,7 @@ def main():
                     "val_losses": val_losses,
                     "l2_drift": drift["overall"],
                     "baseline_metrics": baseline_metrics,
+                    "inference": inference,
                 },
                 str(CHECKPOINT_DIR / "phase_c_best.pt"),
             )
@@ -1568,6 +1126,7 @@ def main():
             "l3_config": l3_cfg.__dict__,
             "l4_config": l4_cfg.__dict__,
             "val_metrics": final_metrics,
+            "inference": inference,
         },
         str(CHECKPOINT_DIR / "phase_c_final.pt"),
     )

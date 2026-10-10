@@ -3,7 +3,7 @@ Team Feature Computer: Phase5 L3 team features (34-d), L4 game context (14-d)
 and coach inputs for any games, computed as of each game's tip-off.
 
 This is the single implementation: the training cache builder
-(scripts/build_phase_b_cache.py) and live predictions both call it, so
+(scripts/build_phase5_cache.py) and live predictions both call it, so
 training and inference features cannot drift apart.
 
 Usage:
@@ -30,7 +30,7 @@ from src.phase5.travel import compute_travel_features
 logger = logging.getLogger(__name__)
 
 
-# Altitude map (must match build_l3l4_cache.py exactly)
+# Arena altitude (feet) by home team
 ALTITUDE_MAP = {
     "DEN": 5280,
     "UTA": 4226,
@@ -65,7 +65,7 @@ ALTITUDE_MAP = {
     "MIA": 6,
 }
 
-# Rolling feature defaults (league average, matching build_l3l4_cache.py)
+# Rolling feature defaults (league average) when a team has no games yet
 ROLLING_DEFAULTS = {
     "eFG_off": 0.50,
     "TOV_off": 0.13,
@@ -251,8 +251,7 @@ class TeamFeatureComputer:
                     dreb or 0,
                 )
 
-            # Per-game metrics (most recent first), same formulas as
-            # compute_per_game_raw_stats in build_l3l4_cache.py
+            # Per-game metrics (most recent first)
             for gid in game_ids:
                 if "team" not in box[gid] or "opp" not in box[gid]:
                     continue
@@ -381,11 +380,10 @@ class TeamFeatureComputer:
             except (ValueError, TypeError):
                 ctx[offset + 4] = 1.0
 
-        # [8-9] travel_dist (placeholder 0)
-        # [10-11] tz_crossings (placeholder 0)
+        # [8-11] travel distance / timezone crossings: set in compute_for_games
 
         # [12] season_progress: the home team's Nth game of the season,
-        # counting this one (matches season_game_num in build_l3l4_cache.py)
+        # counting this one
         row = conn.execute(
             """
             SELECT COUNT(*) FROM Games
@@ -484,8 +482,8 @@ def _projected_continuity(
 
 
 def _multi_year_trend(conn, team_abbr: str, team_id: str, season: str) -> float:
-    """Mean regular-season win% over the team's previous (up to) 3 seasons
-    (compute_multi_year_trend in build_l3l4_cache.py). 0.5 with no history."""
+    """Mean regular-season win% over the team's previous (up to) 3 seasons.
+    0.5 with no history."""
     rows = conn.execute(
         """
         SELECT g.season, AVG(CASE WHEN t.pts > t.pts_allowed THEN 1.0 ELSE 0.0 END)
@@ -500,7 +498,7 @@ def _multi_year_trend(conn, team_abbr: str, team_id: str, season: str) -> float:
     return float(np.mean([r[1] for r in rows])) if rows else 0.5
 
 
-# Coaching feature normalizers (must match scripts/fill_coaching_features.py)
+# Coaching feature normalizers
 COACH_TENURE_NORM = 500.0
 COACH_GAMES_SINCE_NORM = 200.0
 
@@ -513,9 +511,8 @@ def _compute_coaching_features(
     (indices 24-27), the head coach id, and that coach's career games before
     the date (the L3 coach-embedding inputs).
 
-    Replays every completed game since 2001-02 the same way
-    scripts/fill_coaching_features.py builds the training cache, and reads
-    each team's state just before the requested date. When the Coaches table
+    Replays every completed game since 2001-02 and reads each team's state
+    just before the requested date. When the Coaches table
     has no head coach for the team's season yet (e.g. a new season before the
     table is refreshed), the team's most recent head coach is carried forward.
     """
