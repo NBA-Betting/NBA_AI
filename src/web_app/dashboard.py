@@ -43,13 +43,19 @@ def _fetch_dashboard_data(predictor="Phase5", live_only=False):
     Args:
         predictor: Name of predictor to show results for.
         live_only: If True, only show predictions from April 1, 2026 onward
-                   (leakage-free live predictions).
+                   that were made before tip-off (leakage-free live predictions).
 
     Returns:
         dict with keys: summary, games, rolling, predictor, available_predictors, live_only
     """
+    # prediction_datetime is "YYYY-MM-DD HH:MM:SS" (UTC); date_time_utc is
+    # "YYYY-MM-DDTHH:MM:SSZ", so normalize before comparing
     date_filter = (
-        f"AND g.date_time_utc >= '{LIVE_PREDICTIONS_START}'" if live_only else ""
+        f"""AND g.date_time_utc >= '{LIVE_PREDICTIONS_START}'
+          AND p.prediction_datetime
+              < replace(replace(g.date_time_utc, 'T', ' '), 'Z', '')"""
+        if live_only
+        else ""
     )
 
     query = f"""
@@ -164,6 +170,8 @@ def _fetch_dashboard_data(predictor="Phase5", live_only=False):
                 ),
                 "closing_spread": round(closing_spread, 1),
                 "ats_result": ats_result,
+                "home_covered": margin_vs_line > 0 if ats_result != "P" else None,
+                "vegas_abs_error": abs(vegas_line - actual_margin),
                 "error": round(prediction_error, 1),
                 "abs_error": round(abs(prediction_error), 1),
             }
@@ -186,7 +194,17 @@ def _fetch_dashboard_data(predictor="Phase5", live_only=False):
     total_wagered = n_decided * 100
     roi = (total_profit / total_wagered * 100) if total_wagered > 0 else 0.0
 
+    # Baselines on the same games: always taking the home side, and Vegas's
+    # own closing-line error
+    home_covers = sum(1 for g in games if g["home_covered"])
+    always_home_pct = (home_covers / n_decided * 100) if n_decided > 0 else 0.0
+    vegas_mae = (
+        sum(g["vegas_abs_error"] for g in games) / len(games) if games else 0.0
+    )
+
     summary = {
+        "always_home_ats_pct": round(always_home_pct, 1),
+        "vegas_mae": round(vegas_mae, 2),
         "ats_wins": ats_wins,
         "ats_losses": ats_losses,
         "ats_pushes": ats_pushes,

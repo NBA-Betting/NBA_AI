@@ -123,13 +123,19 @@ def process_game_data(games, user_tz=None):
         )
         pre_game_predictions = predictions.get("pre_game", {}).get("prediction_set", {})
 
-        pred_home_win_pct = pre_game_predictions.get("pred_home_win_pct", "")
-        pred_home_score = pre_game_predictions.get("pred_home_score", "")
-        pred_away_score = pre_game_predictions.get("pred_away_score", "")
+        # Stored values can be null (e.g. recovered Phase5 rows); treat as missing
+        pred_home_win_pct, pred_home_score, pred_away_score, pred_spread = (
+            "" if pre_game_predictions.get(key) is None else pre_game_predictions[key]
+            for key in (
+                "pred_home_win_pct",
+                "pred_home_score",
+                "pred_away_score",
+                "pred_spread",
+            )
+        )
 
         # Predicted spread: use pred_spread if available (Phase5/Phase3),
         # otherwise derive from predicted scores (legacy models)
-        pred_spread = pre_game_predictions.get("pred_spread", "")
         if pred_spread == "" and pred_home_score != "" and pred_away_score != "":
             pred_spread = pred_home_score - pred_away_score
 

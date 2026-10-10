@@ -142,7 +142,7 @@
                     <div class="card summary-card h-100">
                         <div class="card-value" id="mae">--</div>
                         <div class="card-label">Spread MAE</div>
-                        <div class="card-detail">vs actual margin</div>
+                        <div class="card-detail" id="maeDetail">vs actual margin</div>
                     </div>
                 </div>
                 <div class="col-md-3 col-6">
@@ -270,7 +270,8 @@
                 summary.ats_wins + "-" + summary.ats_losses +
                 (summary.ats_pushes > 0 ? "-" + summary.ats_pushes : "");
 
-            document.getElementById("atsPct").textContent = summary.ats_pct + "% win rate";
+            document.getElementById("atsPct").textContent = summary.ats_pct + "% win rate" +
+                " (always home: " + summary.always_home_ats_pct + "%)";
 
             const roiEl = document.getElementById("roi");
             roiEl.textContent = (summary.roi >= 0 ? "+" : "") + summary.roi + "%";
@@ -282,6 +283,8 @@
                 (totalProfit >= 0 ? "+$" : "-$") + Math.abs(totalProfit).toFixed(0) + " profit";
 
             document.getElementById("mae").textContent = summary.mae.toFixed(2);
+            document.getElementById("maeDetail").textContent =
+                "vs actual margin (Vegas: " + summary.vegas_mae.toFixed(2) + ")";
             document.getElementById("nGames").textContent = summary.n_games;
 
             const decided = summary.ats_wins + summary.ats_losses;
