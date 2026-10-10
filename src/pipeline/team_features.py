@@ -1,11 +1,10 @@
 """
-Team Feature Computer: compute L3 team features (34-d) and L4 game context (14-d).
+Team Feature Computer: Phase5 L3 team features (34-d), L4 game context (14-d)
+and coach inputs for any games, computed as of each game's tip-off.
 
-For games already in the L3/L4 cache: look up directly.
-For new/upcoming games: compute on-the-fly using rolling stats from TeamBox.
-
-The features match exactly what build_l3l4_cache.py produces, using the same
-formulas and normalization stats.
+This is the single implementation: the training cache builder
+(scripts/build_phase_b_cache.py) and live predictions both call it, so
+training and inference features cannot drift apart.
 
 Usage:
     from src.pipeline.team_features import TeamFeatureComputer
@@ -15,7 +14,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import logging
 from collections import defaultdict
@@ -25,8 +23,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
 from src.database import DB_PATH, get_db
 from src.phase5.arena_data import HISTORICAL_TO_MODERN
 from src.phase5.travel import compute_travel_features
@@ -34,7 +30,6 @@ from src.utils import determine_current_season
 
 logger = logging.getLogger(__name__)
 
-L3L4_CACHE_DIR = PROJECT_ROOT / "data" / "l3l4_cache"
 
 # Altitude map (must match build_l3l4_cache.py exactly)
 ALTITUDE_MAP = {
@@ -95,149 +90,28 @@ DEFENSE_DEFAULTS = {
 
 
 class TeamFeatureComputer:
-    """Compute L3 team features and L4 game context for Phase 5 prediction."""
+    """Compute L3 team features, L4 game context and coach inputs for Phase5."""
 
-    def __init__(
-        self, db_path: str | Path = DB_PATH, cache_dir: str | Path = L3L4_CACHE_DIR
-    ):
+    def __init__(self, db_path: str | Path = DB_PATH):
         self.db_path = str(db_path)
-        self.cache_dir = Path(cache_dir)
-
-        # Load normalization stats from cache
-        meta_path = self.cache_dir / "metadata.json"
-        if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
-            norm = meta["normalization"]
-            self.l3_mean = np.array(norm["l3_mean"], dtype=np.float32)
-            self.l3_std = np.array(norm["l3_std"], dtype=np.float32)
-            self.l4_mean = np.array(norm["l4_mean"], dtype=np.float32)
-            self.l4_std = np.array(norm["l4_std"], dtype=np.float32)
-        else:
-            logger.warning(
-                "L3/L4 cache metadata not found, using identity normalization"
-            )
-            self.l3_mean = np.zeros(34, dtype=np.float32)
-            self.l3_std = np.ones(34, dtype=np.float32)
-            self.l4_mean = np.zeros(14, dtype=np.float32)
-            self.l4_std = np.ones(14, dtype=np.float32)
-
-        # Load cached features if available
-        self._cache_game_ids = None
-        self._cache_l3 = None
-        self._cache_l4 = None
-        self._cache_index = None
-        self._load_cache()
-
-    def _load_cache(self):
-        """Load the pre-built L3/L4 cache for fast historical lookups."""
-        l3_path = self.cache_dir / "team_features.npz"
-        l4_path = self.cache_dir / "game_context.npz"
-
-        if l3_path.exists() and l4_path.exists():
-            l3_data = np.load(str(l3_path), allow_pickle=True)
-            l4_data = np.load(str(l4_path), allow_pickle=True)
-            self._cache_game_ids = l3_data["game_ids"]
-            self._cache_l3 = l3_data["features"]
-            self._cache_l4 = l4_data["features"]
-            # Build index for O(1) lookup
-            self._cache_index = {gid: i for i, gid in enumerate(self._cache_game_ids)}
-            logger.debug(f"Loaded L3/L4 cache: {len(self._cache_index)} games")
 
     def compute_for_games(self, game_ids: list[str]) -> dict[str, dict]:
         """
-        Compute team features and game context for the given games.
+        Compute features for the given games from data before each tip-off.
 
         Returns {game_id: {
             "home_team_features": np.array(34,),  # raw, unnormalized
             "away_team_features": np.array(34,),
             "game_context": np.array(14,),         # raw, unnormalized
-            "l3_mean": np.array(34,),
-            "l3_std": np.array(34,),
-            "l4_mean": np.array(14,),
-            "l4_std": np.array(14,),
             "home_coach": (coach_id or None, career games coached before),
             "away_coach": (coach_id or None, career games coached before),
         }}
         """
         results = {}
-
-        # Split into cached vs needs-computation
-        cached_ids = []
-        compute_ids = []
-        for gid in game_ids:
-            if self._cache_index and gid in self._cache_index:
-                cached_ids.append(gid)
-            else:
-                compute_ids.append(gid)
-
-        # Look up cached games
-        for gid in cached_ids:
-            idx = self._cache_index[gid]
-            l3 = self._cache_l3[idx]  # (2, 34)
-            l4 = self._cache_l4[idx]  # (14,)
-            results[gid] = {
-                "home_team_features": l3[0],
-                "away_team_features": l3[1],
-                "game_context": l4,
-                "l3_mean": self.l3_mean,
-                "l3_std": self.l3_std,
-                "l4_mean": self.l4_mean,
-                "l4_std": self.l4_std,
-            }
-
-        # Compute features for new games
-        if compute_ids:
-            computed = self._compute_live(compute_ids)
-            results.update(computed)
-
-        # Travel dims [8-11] are filled by the Phase B builder at training time,
-        # not by the L3/L4 cache; fill them the same way here.
-        with get_db(self.db_path) as conn:
-            game_rows = {}
-            for gid, feats in results.items():
-                row = conn.execute(
-                    "SELECT home_team, away_team, date_time_utc, season FROM Games WHERE game_id = ?",
-                    (gid,),
-                ).fetchone()
-                if row is None:
-                    continue
-                game_rows[gid] = row
-                travel = compute_travel_features(conn, gid, row[0], row[1], row[2])
-                ctx = np.array(feats["game_context"], dtype=np.float32, copy=True)
-                ctx[8] = travel["travel_dist_home"]
-                ctx[9] = travel["travel_dist_away"]
-                ctx[10] = travel["tz_crossings_home"]
-                ctx[11] = travel["tz_crossings_away"]
-                feats["game_context"] = ctx
-
-            # Coaching: L3 features 24-27 for computed games (cached games
-            # already have them) and the coach identity for every game
-            coaching = _compute_coaching_features(
-                conn,
-                [
-                    (team, row[3], row[2])
-                    for row in game_rows.values()
-                    for team in row[:2]
-                ],
-            )
-            for gid, (home, away, date_utc, season) in game_rows.items():
-                feats = results[gid]
-                for side, team in (("home", home), ("away", away)):
-                    coach_feats, coach_id, coach_games = coaching[
-                        (team, season, date_utc)
-                    ]
-                    if gid in compute_ids:
-                        feats[f"{side}_team_features"][24:28] = coach_feats
-                    feats[f"{side}_coach"] = (coach_id, coach_games)
-
-        return results
-
-    def _compute_live(self, game_ids: list[str]) -> dict[str, dict]:
-        """Compute L3/L4 features on-the-fly for games not in cache."""
-        results = {}
+        if not game_ids:
+            return results
 
         with get_db(self.db_path) as conn:
-            # Load game info
             placeholders = ",".join("?" * len(game_ids))
             games = conn.execute(
                 f"""
@@ -246,42 +120,44 @@ class TeamFeatureComputer:
                 """,
                 game_ids,
             ).fetchall()
-
             team_id_map = {
                 str(r[0]): r[1]
                 for r in conn.execute(
                     "SELECT team_id, abbreviation FROM Teams"
                 ).fetchall()
             }
+            # One replay over all games covers every request in the batch
+            coaching = _compute_coaching_features(
+                conn,
+                [(team, g[4], g[3] or "") for g in games for team in g[1:3]],
+            )
 
-            for game in games:
+            for game_id, home, away, date_utc, season, season_type in games:
                 # Full tip time, so a team's earlier game on the same UTC date
-                # counts as prior (the builder compares calendar dates)
-                game_id, home, away, game_date, season, season_type = game
-                game_date = game_date or ""
-
-                # L3: Rolling team features for home and away
-                home_feats = self._compute_team_rolling(
-                    conn, home, game_date, season, team_id_map
-                )
-                away_feats = self._compute_team_rolling(
-                    conn, away, game_date, season, team_id_map
-                )
-
-                # L4: Game context
+                # counts as prior
+                date_utc = date_utc or ""
                 context = self._compute_game_context(
-                    conn, game_id, home, away, game_date, season, season_type
+                    conn, game_id, home, away, date_utc, season, season_type
                 )
-
-                results[game_id] = {
-                    "home_team_features": home_feats,
-                    "away_team_features": away_feats,
-                    "game_context": context,
-                    "l3_mean": self.l3_mean,
-                    "l3_std": self.l3_std,
-                    "l4_mean": self.l4_mean,
-                    "l4_std": self.l4_std,
-                }
+                travel = compute_travel_features(conn, game_id, home, away, date_utc)
+                context[8:12] = [
+                    travel["travel_dist_home"],
+                    travel["travel_dist_away"],
+                    travel["tz_crossings_home"],
+                    travel["tz_crossings_away"],
+                ]
+                entry = {"game_context": context}
+                for side, team in (("home", home), ("away", away)):
+                    feats = self._compute_team_rolling(
+                        conn, team, date_utc, season, team_id_map
+                    )
+                    coach_feats, coach_id, coach_games = coaching[
+                        (team, season, date_utc)
+                    ]
+                    feats[24:28] = coach_feats
+                    entry[f"{side}_team_features"] = feats
+                    entry[f"{side}_coach"] = (coach_id, coach_games)
+                results[game_id] = entry
 
         return results
 
