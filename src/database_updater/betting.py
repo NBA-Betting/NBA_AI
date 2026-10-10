@@ -528,9 +528,10 @@ def _extract_espn_lines(
     home_spread_data = point_spread.get("home", {}).get(line_type, {})
     away_spread_data = point_spread.get("away", {}).get(line_type, {})
 
-    if home_spread_data.get("line") is not None:
+    spread = _parse_line(home_spread_data.get("line"))
+    if spread is not None:
         # ESPN provides spread from home perspective (negative = favored)
-        lines["spread"] = float(home_spread_data["line"])
+        lines["spread"] = spread
         lines["spread_home_odds"] = _convert_odds(home_spread_data.get("odds"))
         lines["spread_away_odds"] = _convert_odds(away_spread_data.get("odds"))
 
@@ -540,8 +541,9 @@ def _extract_espn_lines(
     over_data = total_data.get("over", total_data.get("home", {})).get(line_type, {})
     under_data = total_data.get("under", total_data.get("away", {})).get(line_type, {})
 
-    if over_data.get("line") is not None:
-        lines["total"] = float(str(over_data["line"]).lstrip("ou"))
+    total = _parse_line(over_data.get("line"))
+    if total is not None:
+        lines["total"] = total
         lines["over_odds"] = _convert_odds(over_data.get("odds"))
         lines["under_odds"] = _convert_odds(under_data.get("odds"))
 
@@ -556,6 +558,15 @@ def _extract_espn_lines(
         lines["ml_away"] = _convert_odds(away_ml_data.get("odds"))
 
     return lines if lines else None
+
+
+def _parse_line(line) -> Optional[float]:
+    """ESPN line text as a number ("-5.5", totals as "o216.5"); None when
+    missing or "OFF" (no line posted)."""
+    try:
+        return float(str(line).lstrip("ou"))
+    except ValueError:
+        return None
 
 
 def _extract_espn_flat_lines(odds_data: dict) -> Optional[dict]:
