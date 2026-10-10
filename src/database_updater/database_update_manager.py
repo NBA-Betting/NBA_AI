@@ -41,6 +41,7 @@ from src.database_updater.coaches import update_coaches
 from src.database_updater.game_states import create_game_states, save_game_states
 from src.database_updater.nba_official_injuries import update_nba_official_injuries
 from src.database_updater.pbp import get_pbp, save_pbp
+from src.database_updater.player_attributes import update_player_attributes
 from src.database_updater.players import update_players
 from src.database_updater.prior_states import (
     determine_prior_states_needed,
@@ -158,36 +159,36 @@ def update_database(
     except Exception:
         pass  # Don't let the estimate check block the actual update
 
-    # STEP 1: Update Schedule
-    update_schedule(season)
-
-    # STEP 2: Update Players List
-    update_players(db_path)
-
-    # STEP 2b: Fill missing head coaches (Phase5 coach features)
-    update_coaches(season, db_path)
-
-    # STEP 3: Update Injury Data
-    update_injury_data(season, db_path)
-
-    # STEP 4: Update Betting Data
-    update_betting_lines(season, db_path)
-
-    # STEP 5: Update Play-by-Play Data
-    update_pbp_data(season, db_path)
-
-    # STEP 6: Update Game States (parsed from PbP)
-    update_game_state_data(season, db_path)
-
-    # STEP 7: Update Boxscore Data
-    update_boxscore_data(season, db_path)
-
-    # STEP 8: Update Pre Game Data (Prior States, Feature Sets)
-    update_pre_game_data(season, db_path)
-
-    # STEP 9: Update Predictions
+    # Steps run in order; a failing step is logged and the rest still run
+    # (later steps work from what is already in the DB), then the failure is raised.
+    steps = [
+        ("schedule", lambda: update_schedule(season)),
+        ("players", lambda: update_players(db_path)),
+        # Phase5 inputs: current-season head coaches, missing player attributes
+        ("coaches", lambda: update_coaches(season, db_path)),
+        ("player_attributes", lambda: update_player_attributes(db_path)),
+        ("injuries", lambda: update_injury_data(season, db_path)),
+        ("betting", lambda: update_betting_lines(season, db_path)),
+        ("pbp", lambda: update_pbp_data(season, db_path)),
+        ("game_states", lambda: update_game_state_data(season, db_path)),
+        ("boxscores", lambda: update_boxscore_data(season, db_path)),
+        # Prior states and feature sets
+        ("pre_game", lambda: update_pre_game_data(season, db_path)),
+    ]
     if predictor:
-        update_prediction_data(season, predictor, db_path)
+        steps.append(
+            ("predictions", lambda: update_prediction_data(season, predictor, db_path))
+        )
+
+    failed = []
+    for name, step in steps:
+        try:
+            step()
+        except Exception as e:
+            logging.error(f"Database update step '{name}' failed: {e}")
+            failed.append(name)
+    if failed:
+        raise RuntimeError(f"Database update steps failed: {', '.join(failed)}")
 
 
 @log_execution_time()

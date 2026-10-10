@@ -407,7 +407,7 @@ def fetch_schedule(season, stage_logger=None):
 
         return all_games
 
-    except (KeyError, TypeError) as e:
+    except (KeyError, TypeError, ValueError) as e:  # ValueError: non-JSON reply
         logging.error(f"Error processing schedule data for {season}: {e}")
         return []
 
