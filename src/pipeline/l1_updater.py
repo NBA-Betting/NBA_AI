@@ -22,7 +22,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -56,6 +56,18 @@ L1_CHECKPOINT = PROJECT_ROOT / "models" / "phase5" / "l1.pt"
 
 # Maximum sequence length for full-sequence fallback (new players)
 MAX_LEN = 300
+# A game without PBP stats is held back this long for enrichment to catch up,
+# then processed with PBP masked (as training does for games without PBP)
+PBP_WAIT_DAYS = 2
+
+
+def _load_regular_season_games(conn, player_id: int) -> list[dict]:
+    """Player's regular-season games, chronologically. l1.pt and the vectors
+    Phase B/C trained on were built from regular-season games only (postseason
+    was skipped before the season_type rename), so live vectors match that."""
+    return [
+        g for g in _load_player_games(conn, player_id) if g["game_id"][:3] == "002"
+    ]
 
 
 class L1IncrementalUpdater:
@@ -195,12 +207,28 @@ class L1IncrementalUpdater:
 
         # Find new games from DB
         with get_db(str(self.db_path)) as conn:
-            all_games = _load_player_games(conn, player_id)
+            all_games = _load_regular_season_games(conn, player_id)
             pbp_data = _load_pbp_stats(conn, player_id)
 
         new_games = [g for g in all_games if g["game_id"] not in existing_game_ids]
         if not new_games:
             return 0
+
+        # Kalman steps only move forward in time: never append a game that
+        # predates the player's last processed game
+        last_date = max(
+            (g["date_time_utc"] for g in all_games if g["game_id"] in existing_game_ids),
+            default="",
+        )
+        stale = [g for g in new_games if g["date_time_utc"] <= last_date]
+        if stale:
+            logger.warning(
+                f"  Player {player_id}: skipping {len(stale)} unprocessed game(s) "
+                f"dated before the last processed game ({last_date})"
+            )
+            new_games = [g for g in new_games if g["date_time_utc"] > last_date]
+            if not new_games:
+                return 0
 
         # Load profile
         profile_vec = self._get_profile_tensor(player_id)
@@ -230,12 +258,32 @@ class L1IncrementalUpdater:
         prev_game = last_existing_game
         career_count = n_existing
 
+        # Games into the season so far (season_progress context), as in training
+        season_game_count = {}
+        counts: dict[str, int] = {}
+        for g in all_games:
+            counts[g["season"]] = counts.get(g["season"], 0) + 1
+            season_game_count[g["game_id"]] = counts[g["season"]]
+
+        now = datetime.now(timezone.utc)
         for game in new_games:
+            has_pbp = game["game_id"] in pbp_data
+            if not has_pbp:
+                played = datetime.fromisoformat(
+                    game["date_time_utc"].replace("Z", "+00:00")
+                )
+                if now - played < timedelta(days=PBP_WAIT_DAYS):
+                    break  # wait for PBP enrichment; later games wait too
             career_count += 1
 
             # Build context for this game
             context = self._build_game_context(
-                game, prev_game, career_count, player_id, pbp_data
+                game,
+                prev_game,
+                career_count,
+                player_id,
+                pbp_data,
+                season_game_count=season_game_count[game["game_id"]],
             )
             box = self._build_box_stats(game)
             pbp = self._build_pbp_stats(game["game_id"], pbp_data)
@@ -247,6 +295,8 @@ class L1IncrementalUpdater:
             pbp_t = self.normalizer.normalize_pbp(
                 torch.tensor(pbp, dtype=torch.float32).unsqueeze(0)
             ).to(self.device)
+            if not has_pbp:
+                pbp_t = torch.zeros_like(pbp_t)
             ctx_t = self.normalizer.normalize_context(
                 torch.tensor(context, dtype=torch.float32).unsqueeze(0)
             ).to(self.device)
@@ -276,6 +326,9 @@ class L1IncrementalUpdater:
             new_Ps.append(P[0].cpu().numpy())
             new_game_ids.append(game["game_id"])
             prev_game = game
+
+        if not new_game_ids:
+            return 0
 
         # Append to existing data and save
         updated_game_ids = np.concatenate(
@@ -319,7 +372,7 @@ class L1IncrementalUpdater:
     def _full_extraction(self, player_id: int, npz_path: Path) -> int:
         """Full-sequence extraction for a new player."""
         with get_db(str(self.db_path)) as conn:
-            all_games = _load_player_games(conn, player_id)
+            all_games = _load_regular_season_games(conn, player_id)
             pbp_data = _load_pbp_stats(conn, player_id)
 
         if not all_games:
@@ -651,38 +704,40 @@ class L1IncrementalUpdater:
 
     def _find_players_with_new_games(self) -> dict[int, int]:
         """
-        Find players whose DB has games not yet in their L1 vectors.
+        Find players with games newer than the last game in their L1 vectors.
 
-        Uses a single DB query for efficiency, then compares against cached counts.
+        Compares dates rather than counts: a backfilled game older than a
+        player's last processed game can't be appended, so it isn't "new".
         Returns {player_id: n_new_games}.
         """
-        # Single query: count finalized games per player
         with get_db(str(self.db_path)) as conn:
             rows = conn.execute("""
-                SELECT pb.player_id, COUNT(*) as n_games
+                SELECT pb.player_id, COUNT(*), MAX(g.date_time_utc)
                 FROM PlayerBox pb
                 JOIN Games g ON pb.game_id = g.game_id
                 WHERE g.status = 3
                 AND pb.min > 0
-                AND g.season_type IN ('Regular Season', 'Post Season')
+                AND g.season_type = 'Regular Season'
                 GROUP BY pb.player_id
                 """).fetchall()
+            game_dates = dict(
+                conn.execute(
+                    "SELECT game_id, date_time_utc FROM Games "
+                    "WHERE status = 3 AND season_type = 'Regular Season'"
+                ).fetchall()
+            )
 
-        db_counts = {int(row[0]): row[1] for row in rows}
-
-        # Compare against existing .npz files
         results = {}
-        for pid, n_db in db_counts.items():
+        for pid, n_db, latest in rows:
             npz_path = self.vectors_dir / f"{pid}.npz"
             if npz_path.exists():
-                existing = np.load(str(npz_path), allow_pickle=True)
-                n_existing = len(existing["game_ids"])
+                game_ids = np.load(str(npz_path), allow_pickle=True)["game_ids"]
+                if latest <= game_dates.get(str(game_ids[-1]), ""):
+                    continue
+                n_new = max(n_db - len(game_ids), 1)
             else:
-                n_existing = 0
-
-            n_new = n_db - n_existing
-            if n_new > 0:
-                results[pid] = n_new
+                n_new = n_db
+            results[int(pid)] = n_new
 
         return results
 

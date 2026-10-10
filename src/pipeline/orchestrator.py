@@ -104,6 +104,8 @@ class PipelineOrchestrator:
             lambda: self._stage_pbp_enrichment(dry_run),
         )
         summary["stages"]["pbp_enrichment"] = stage_result
+        if stage_result.get("error"):
+            summary["warnings"].append(f"pbp_enrichment: {stage_result['error']}")
 
         # Stage 3: L1 incremental updates (requires Phase 5 checkpoint)
         l1_checkpoint = PROJECT_ROOT / "models" / "phase5" / "l1.pt"
@@ -313,9 +315,16 @@ class PipelineOrchestrator:
                     }
 
                 logger.info(f"Enriching PBP for {len(new_ids)} new games")
-                process_games(new_ids, conn)
+                n_done = process_games(new_ids, conn)
 
-            return {"status": "ok", "games_processed": len(new_ids)}
+            if n_done < len(new_ids):
+                # L1 holds games without PBP back for a while, then masks PBP
+                return {
+                    "status": "warning",
+                    "error": f"{len(new_ids) - n_done} of {len(new_ids)} games failed",
+                    "games_processed": n_done,
+                }
+            return {"status": "ok", "games_processed": n_done}
 
         except Exception as e:
             logger.warning(f"PBP enrichment failed (non-critical): {e}")

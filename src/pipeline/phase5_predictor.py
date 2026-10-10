@@ -47,11 +47,12 @@ MAX_PLAYERS = 13
 # Players actually fed to the model per team. Training rosters were the players
 # who logged minutes in the game itself (~10.7/team), and that count tracks the
 # final margin (benches empty in blowouts), so the model reads roster size as a
-# margin signal. Full projected rosters (~15) inflate spreads to +/-25; 10
-# collapses them to a constant. 11 gave the best-calibrated spreads on 2025-26
-# validation games (MAE 12.3 vs 13.9 uncapped). Retraining on pre-game rosters
-# is the real fix.
+# margin signal. On 2025-26 validation games with pre-game rosters, spread MAE
+# was 11.90 / 11.92 / 12.57 / 13.03 at caps 10 / 11 / 12 / 15 (Vegas 10.91).
+# Retraining on pre-game rosters is the real fix.
 ROSTER_CAP = 11
+# Spread uncertainty for win probability: residual RMSE of the 2025-26 backtest
+SPREAD_SIGMA = 15.0
 
 
 class Phase5Predictor(BasePredictor):
@@ -91,10 +92,18 @@ class Phase5Predictor(BasePredictor):
         l3_cfg = L3Config()
         l4_cfg = L4Config()
 
-        # Load Phase B metadata for normalization and player mapping
-        meta_path = PHASE_B_CACHE / "metadata.json"
-        meta = json.loads(meta_path.read_text())
-        norm = meta["normalization"]
+        # Normalization: Phase C (l3l4.pt) used training-split stats, not the
+        # all-data stats in the Phase B metadata (val spread MAE 10.37 vs 10.47)
+        norm_path = MODELS_DIR / "norm_stats.json"
+        if norm_path.exists():
+            norm = json.loads(norm_path.read_text())
+        else:
+            logger.warning(
+                f"{norm_path} missing; falling back to Phase B normalization stats"
+            )
+            norm = json.loads((PHASE_B_CACHE / "metadata.json").read_text())[
+                "normalization"
+            ]
         self._l3_mean = np.array(norm["l3_mean"], dtype=np.float32)
         self._l3_std = np.array(norm["l3_std"], dtype=np.float32)
         self._l4_mean = np.array(norm["l4_mean"], dtype=np.float32)
@@ -201,7 +210,7 @@ class Phase5Predictor(BasePredictor):
 
         Returns {game_id: {
             pred_home_win_pct, pred_spread, pred_spread_sigma,
-            pred_ats_prob, roster_confidence
+            prediction_type, roster_confidence
         }}
         """
         self._ensure_l1_fresh()
@@ -331,14 +340,12 @@ class Phase5Predictor(BasePredictor):
 
         # Extract predictions
         spread_mu = preds["spread_mu"].item()
-        spread_sigma = preds["spread_sigma"].item()
-        # The classifier head is badly mis-calibrated (mean 0.81 home win prob
-        # vs a 0.55 base rate over 2025-26). Derive win probability from the
-        # spread head and its own predicted uncertainty instead: P(margin > 0)
-        # under N(spread_mu, spread_sigma). Brier 0.232 vs 0.253 for the head
-        # on 2025-26 live games.
-        sigma_for_prob = spread_sigma if spread_sigma and spread_sigma > 1.0 else 20.0
-        win_prob = 0.5 * (1.0 + math.erf(spread_mu / (sigma_for_prob * math.sqrt(2))))
+        # Win probability is P(margin > 0) under N(spread_mu, SPREAD_SIGMA). The
+        # model's own spread_sigma is under-dispersed (mean ~10.7 vs a 15.0 RMSE;
+        # 52% of outcomes within 1 sigma), which made win % overconfident.
+        # 2025-26 pre-game-roster backtest Brier: 0.234 fixed sigma, 0.239 model
+        # sigma, 0.241 classifier head.
+        win_prob = 0.5 * (1.0 + math.erf(spread_mu / (SPREAD_SIGMA * math.sqrt(2))))
         # No total or team scores: the total head is untrained (w_total=0 in
         # L4Config; val total MAE ~123), so total_mu and any scores derived
         # from it are meaningless.
@@ -357,7 +364,7 @@ class Phase5Predictor(BasePredictor):
         return {
             "pred_home_win_pct": round(win_prob, 4),
             "pred_spread": round(spread_mu, 2),
-            "pred_spread_sigma": round(spread_sigma, 2),
+            "pred_spread_sigma": SPREAD_SIGMA,
             "prediction_type": "live" if is_live else "backtest",
             "roster_confidence": min(
                 roster.get("home_confidence", 1.0),
