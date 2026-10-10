@@ -2,11 +2,14 @@
 """
 Export a compressed starter database for GitHub release.
 
-Creates a single-season database with everything needed to run the web app
-and daily pipeline, then compresses it with gzip.
+Creates a database of the current and previous seasons with everything needed
+to run the web app and daily pipeline, then compresses it with gzip. Two
+seasons, so a new install always has a full past season (dashboard record,
+prior-season features for opening games) and its first pipeline run only
+fetches games played since the export.
 
 Included:
-- Current season games, box scores, PBP, GameStates, betting, features
+- Both seasons' games, box scores, PBP, GameStates, betting, features
 - All predictions (every predictor)
 - Injury reports and cache
 - Reference data (players, teams, attributes, coaches, schedule)
@@ -16,10 +19,10 @@ Excluded:
 - Historical seasons (only needed for model training)
 - Training-only tables (RAPM, Darkball, lineups, etc.)
 
-Output: data/NBA_AI_starter.sqlite.gz (~100 MB compressed)
+Output: data/NBA_AI_starter.sqlite.gz (~100-200 MB compressed)
 
 Usage:
-    python scripts/export_starter_db.py
+    python scripts/export_starter_db.py                  # current + previous season
     python scripts/export_starter_db.py --season 2025-2026 --no-compress
 """
 
@@ -36,6 +39,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import DB_PATH
+from src.utils import determine_current_season
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,27 +56,29 @@ def _season_start_date(season: str) -> str:
 
 
 def export_starter_db(
-    source_path: str, output_path: str, season: str, compress: bool = True
+    source_path: str, output_path: str, seasons: list[str], compress: bool = True
 ):
-    """Export a starter database with one season of data."""
+    """Export a starter database with the given seasons of data."""
     t0 = time.time()
-    season_start = _season_start_date(season)
+    season_start = _season_start_date(min(seasons))
+    season_list = ", ".join(f"'{s}'" for s in seasons)
 
     logger.info(f"Source: {source_path}")
-    logger.info(f"Season: {season}")
+    logger.info(f"Seasons: {', '.join(seasons)}")
 
     src = sqlite3.connect(source_path)
     src.execute("PRAGMA journal_mode=WAL")
 
     # Verify source has data for this season
-    n_games = src.execute(
-        "SELECT COUNT(*) FROM Games WHERE season=?", (season,)
-    ).fetchone()[0]
-    if n_games == 0:
-        logger.error(f"No games found for season {season} in source database")
-        src.close()
-        sys.exit(1)
-    logger.info(f"Found {n_games:,} games for {season}")
+    for season in seasons:
+        n_games = src.execute(
+            "SELECT COUNT(*) FROM Games WHERE season=?", (season,)
+        ).fetchone()[0]
+        if n_games == 0:
+            logger.error(f"No games found for season {season} in source database")
+            src.close()
+            sys.exit(1)
+        logger.info(f"Found {n_games:,} games for {season}")
 
     # Create fresh output
     out_path = Path(output_path)
@@ -93,10 +99,12 @@ def export_starter_db(
     dst.commit()
 
     # --- Define what to export ---
-    game_id_filter = f"game_id IN (SELECT game_id FROM Games WHERE season='{season}')"
+    game_id_filter = (
+        f"game_id IN (SELECT game_id FROM Games WHERE season IN ({season_list}))"
+    )
 
     season_filtered = {
-        "Games": f"SELECT * FROM Games WHERE season='{season}'",
+        "Games": f"SELECT * FROM Games WHERE season IN ({season_list})",
         "PlayerBox": f"SELECT * FROM PlayerBox WHERE {game_id_filter}",
         "TeamBox": f"SELECT * FROM TeamBox WHERE {game_id_filter}",
         "GameStates": f"SELECT * FROM GameStates WHERE {game_id_filter}",
@@ -104,7 +112,7 @@ def export_starter_db(
         "Betting": f"SELECT * FROM Betting WHERE {game_id_filter}",
         "Features": f"SELECT * FROM Features WHERE {game_id_filter}",
         "Predictions": f"SELECT * FROM Predictions WHERE {game_id_filter}",
-        "InjuryReports": f"SELECT * FROM InjuryReports WHERE season='{season}'",
+        "InjuryReports": f"SELECT * FROM InjuryReports WHERE season IN ({season_list})",
         "InjuryCache": f"SELECT * FROM InjuryCache WHERE report_date >= '{season_start}'",
     }
 
@@ -223,7 +231,7 @@ def export_starter_db(
 
     # --- Verify ---
     logger.info("\nVerifying export...")
-    verify_starter_db(output_path, season)
+    verify_starter_db(output_path)
 
     # --- Compress ---
     final_path = output_path
@@ -245,7 +253,7 @@ def export_starter_db(
     logger.info(f"Total rows exported: {total_rows:,}")
 
 
-def verify_starter_db(db_path: str, season: str):
+def verify_starter_db(db_path: str):
     """Verify the exported database has the essential data."""
     conn = sqlite3.connect(db_path)
     errors = []
@@ -304,7 +312,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Export a compressed starter database for GitHub release"
     )
-    parser.add_argument("--season", default="2025-2026", help="Season to export")
+    parser.add_argument(
+        "--season",
+        nargs="+",
+        help="Seasons to export, e.g. 2025-2026 (default: current and previous)",
+    )
     parser.add_argument(
         "--output",
         default="data/NBA_AI_starter.sqlite",
@@ -317,9 +329,12 @@ def main():
     )
     args = parser.parse_args()
 
-    export_starter_db(
-        str(DB_PATH), args.output, args.season, compress=not args.no_compress
-    )
+    seasons = args.season
+    if not seasons:
+        current = determine_current_season()
+        start = int(current[:4])
+        seasons = [f"{start - 1}-{start}", current]
+    export_starter_db(str(DB_PATH), args.output, seasons, compress=not args.no_compress)
 
 
 if __name__ == "__main__":

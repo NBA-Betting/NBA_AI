@@ -103,7 +103,7 @@ Download `NBA_AI_starter.sqlite.gz` from [GitHub Releases](https://github.com/NB
 python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('NBA_AI_starter.sqlite.gz','rb'), open('data/NBA_AI_starter.sqlite','wb'))"
 ```
 
-The starter database contains the current season's games, box scores, play-by-play, betting lines, injury reports, and predictions from all models. The `.env` file is already configured to use it.
+The starter database contains the current and previous seasons' games, box scores, play-by-play, betting lines, injury reports, and predictions from all models. The `.env` file is already configured to use it.
 
 ### 3. Run the Web App
 
