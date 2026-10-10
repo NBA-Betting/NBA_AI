@@ -19,11 +19,14 @@ Usage:
 """
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytz
 from tzlocal import get_localzone
 
 from src.utils import NBATeamConverter, get_player_image, log_execution_time
+
+TEAM_LOGOS_DIR = Path(__file__).parent / "static" / "img" / "team_logos"
 
 
 def get_user_datetime(as_eastern_tz=False):
@@ -119,7 +122,9 @@ def process_game_data(games, user_tz=None):
         # Preseason games are listed, but the prediction pipeline covers only
         # regular-season and postseason games. Hide any older preseason forecasts.
         predictions = (
-            {} if game.get("season_type") == "Pre Season" else game.get("predictions", {})
+            {}
+            if game.get("season_type") == "Pre Season"
+            else game.get("predictions", {})
         )
         pre_game_predictions = predictions.get("pre_game", {}).get("prediction_set", {})
         # Predictions saved at or after tip-off are backtests: show them, but
@@ -276,18 +281,24 @@ def _process_team_names(game):
     Returns:
         dict: A dictionary containing the full and formatted team names.
     """
-    # Retrieve full team names
-    home_full_name = NBATeamConverter.get_full_name(game["home"])
-    away_full_name = NBATeamConverter.get_full_name(game["away"])
 
-    def format_team_name(full_name):
-        # Special formatting for Trail Blazers
-        if "Trail Blazers" in full_name:
-            city, team = full_name.split(" Trail ")
-            return f"{city}<br>Trail {team}"
-        else:
-            city, team = full_name.rsplit(" ", 1)
-            return f"{city}<br>{team}"
+    def full_name(abbreviation):
+        # Non-NBA preseason opponents (e.g. international clubs) aren't in
+        # Teams; show their abbreviation
+        try:
+            return NBATeamConverter.get_full_name(abbreviation)
+        except ValueError:
+            return abbreviation
+
+    home_full_name = full_name(game["home"])
+    away_full_name = full_name(game["away"])
+
+    def format_team_name(name):
+        # City over nickname; Trail Blazers keep both words together
+        if "Trail Blazers" in name:
+            city, team = name.split(" Trail ")
+            return f"{city}\nTrail {team}"
+        return "\n".join(name.rsplit(" ", 1))
 
     # Format team names for display
     home_team_display = format_team_name(home_full_name)
@@ -311,10 +322,10 @@ def _generate_logo_url(team_name):
     Returns:
         str: The URL for the team's logo.
     """
-    # Format the team name for URL
-    formatted_team_name = team_name.lower().replace(" ", "-")
-    logo_url = f"static/img/team_logos/nba-{formatted_team_name}-logo.png"
-    return logo_url
+    filename = f"nba-{team_name.lower().replace(' ', '-')}-logo.png"
+    if not (TEAM_LOGOS_DIR / filename).exists():
+        return "/static/img/basketball.png"
+    return f"/static/img/team_logos/{filename}"
 
 
 def _format_date_time_display(game, user_tz=None):
@@ -343,19 +354,13 @@ def _format_date_time_display(game, user_tz=None):
         minutes = int(minutes)
         seconds = int(seconds.split(".")[0])
         time_remaining = f"{minutes}:{seconds:02}"
-        period_display_dict = {
-            1: "1st Quarter",
-            2: "2nd Quarter",
-            3: "3rd Quarter",
-            4: "4th Quarter",
-            5: "Overtime",
-            6: "2nd Overtime",
-            7: "3rd Overtime",
-            8: "4th Overtime",
-            9: "5th Overtime",
-            10: "Crazy Overtime",
-        }
-        period_display = period_display_dict[period]
+        ordinal = {1: "1st", 2: "2nd", 3: "3rd"}
+        if period <= 4:
+            period_display = f"{ordinal.get(period, f'{period}th')} Quarter"
+        elif period == 5:
+            period_display = "Overtime"
+        else:
+            period_display = f"{ordinal.get(period - 4, f'{period - 4}th')} Overtime"
         datetime_display = f"{time_remaining} - {period_display}"
         return {"datetime_display": datetime_display}
 

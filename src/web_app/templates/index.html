@@ -1,82 +1,67 @@
-<!DOCTYPE html>
-<html lang="en">
+{% extends "base.html" %}
 
-<head>
-    <!-- Meta tags -->
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NBA AI</title>
+{% block body_attrs %}data-query-date="{{ query_date_str }}"{% endblock %}
 
-    <!-- CSS links -->
-    <!-- Bootstrap 5 CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+{% block content %}
+<!-- Date Navigation -->
+<nav aria-label="Date navigation" class="mt-4">
+    <div class="date-nav">
+        <a class="date-nav-arrow" href="{{ url_for('home', date=prev_date) }}" aria-label="Previous day">&lt;&lt;</a>
 
-    <!-- Custom CSS -->
-    <link href="{{ url_for('static', filename='css/custom.css') }}" rel="stylesheet">
+        <!-- Current Date / Calendar Toggle -->
+        <div class="date-picker">
+            <button type="button" id="datePickerToggle" class="date-nav-current" aria-haspopup="dialog"
+                aria-expanded="false">
+                <i class="bi bi-calendar3 me-2"></i>{{ query_date_display_str }}
+            </button>
 
-    <!-- Favicon -->
-    <link rel="icon" href="{{ url_for('static', filename='img/basketball.png') }}">
-</head>
-
-<body data-query-date="{{ query_date_str }}">
-
-    <!-- Header and Navbar -->
-    <nav class="navbar navbar-expand-lg navbar-light bg-light">
-        <div class="container">
-            <a class="navbar-brand d-flex align-items-center" href="{{ url_for('home') }}">
-                <img src="{{ url_for('static', filename='img/nba_ai_logo.png') }}" alt="NBA AI Logo" width="36"
-                    height="36">
-                <span class="navbar-text">NBA AI</span>
-            </a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link active" href="{{ url_for('home') }}">Games</a>
-                <a class="nav-link" href="{{ url_for('dashboard.dashboard_page') }}">Dashboard</a>
+            <!-- Calendar Panel -->
+            <div id="datePickerPanel" class="date-picker-panel" role="dialog" aria-label="Choose a date" hidden>
+                <div class="date-picker-header">
+                    <button type="button" class="date-picker-nav" id="calPrevMonth" aria-label="Previous month">
+                        <i class="bi bi-chevron-left"></i>
+                    </button>
+                    <span class="date-picker-month" id="calMonthLabel" aria-live="polite"></span>
+                    <button type="button" class="date-picker-nav" id="calNextMonth" aria-label="Next month">
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                </div>
+                <div class="date-picker-weekdays" aria-hidden="true">
+                    <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+                </div>
+                <div class="date-picker-grid" id="calGrid"></div>
+                <div class="date-picker-footer">
+                    <span class="date-picker-legend"><span class="date-picker-dot"></span>has games</span>
+                    <button type="button" class="date-picker-today" id="calToday">Today</button>
+                </div>
             </div>
         </div>
-    </nav>
 
-    <!-- Flash Messages -->
-    {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-    <div class="container">
-        {% for category, message in messages %}
-        <div class="alert alert-{{ category }}">{{ message }}</div>
-        {% endfor %}
+        <a class="date-nav-arrow" href="{{ url_for('home', date=next_date) }}" aria-label="Next day">&gt;&gt;</a>
     </div>
-    {% endif %}
-    {% endwith %}
+</nav>
 
-
-
-    <!-- Start of Main Games Table -->
-    <div class="container mt-4">
-        <!-- Alert for No Games -->
-        <div id="noGamesAlert" class="alert alert-info" style="display: none;">No Games for this date.</div>
-
-        <!-- Games Table -->
-        <table class="table custom-table">
+<!-- Games Table -->
+<div class="container mt-4">
+    <div class="table-responsive">
+        <table class="table games-table">
             <thead>
                 <tr>
-                    <!-- Table Headers -->
-                    <th rowspan="2"></th> <!-- Placeholder for Time Display -->
+                    <th rowspan="2"></th> <!-- Time / status -->
                     <th rowspan="2">Home</th>
                     <th rowspan="2">Away</th>
-                    <th rowspan="2" class="text-center">Open</th>
+                    <th rowspan="2" class="text-center d-none d-sm-table-cell">Open</th>
                     <th colspan="2" class="text-center">Score</th>
                     <th colspan="2" class="text-center">Predictions ({{ predictor }})</th>
                 </tr>
                 <tr>
-                    <!-- Subheaders for Score -->
                     <th class="text-center">Home</th>
                     <th class="text-center">Away</th>
-                    <!-- Subheaders for Predictions -->
                     <th class="text-center">Spread</th>
                     <th class="text-center">Winner</th>
                 </tr>
             </thead>
             <tbody id="gamesTableBody">
-                <!-- Placeholder for Games Data. Games will be loaded here dynamically -->
                 <tr>
                     <td colspan="8" class="text-center">
                         <div class="spinner-border text-primary" role="status">
@@ -87,153 +72,97 @@
             </tbody>
         </table>
     </div>
-    <!-- End of Main Games Table -->
+</div>
 
-    <!-- Start of Date Navigation -->
-    <nav aria-label="Date navigation" class="mt-4">
-        <div class="date-nav">
-            <!-- Previous Day -->
-            <a class="date-nav-arrow" href="/?date={{ prev_date }}" aria-label="Previous day">&lt;&lt;</a>
-
-            <!-- Current Date / Calendar Toggle -->
-            <div class="date-picker">
-                <button type="button" id="datePickerToggle" class="date-nav-current" aria-haspopup="dialog"
-                    aria-expanded="false">
-                    <i class="bi bi-calendar3 me-2"></i>{{ query_date_display_str }}
-                </button>
-
-                <!-- Calendar Panel -->
-                <div id="datePickerPanel" class="date-picker-panel" role="dialog" aria-label="Choose a date" hidden>
-                    <div class="date-picker-header">
-                        <button type="button" class="date-picker-nav" id="calPrevMonth" aria-label="Previous month">
-                            <i class="bi bi-chevron-left"></i>
-                        </button>
-                        <span class="date-picker-month" id="calMonthLabel" aria-live="polite"></span>
-                        <button type="button" class="date-picker-nav" id="calNextMonth" aria-label="Next month">
-                            <i class="bi bi-chevron-right"></i>
-                        </button>
-                    </div>
-                    <div class="date-picker-weekdays" aria-hidden="true">
-                        <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
-                    </div>
-                    <div class="date-picker-grid" id="calGrid"></div>
-                    <div class="date-picker-footer">
-                        <span class="date-picker-legend"><span class="date-picker-dot"></span>has games</span>
-                        <button type="button" class="date-picker-today" id="calToday">Today</button>
-                    </div>
-                </div>
+<!-- Game Details Modal -->
+<div class="modal fade" id="gameDetailsModal" tabindex="-1" aria-labelledby="gameDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header border-bottom">
+                <h5 class="modal-title text-center flex-grow-1" id="gameDetailsModalLabel">Game Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-
-            <!-- Next Day -->
-            <a class="date-nav-arrow" href="/?date={{ next_date }}" aria-label="Next day">&gt;&gt;</a>
+            <div class="modal-body"></div>
         </div>
-    </nav>
-    <!-- End of Date Navigation -->
+    </div>
+</div>
 
+<!-- Game Details Template -->
+<template id="gameDetailsTemplate">
+    <!-- Teams and spreads -->
+    <div class="row mb-3 pb-3 border-bottom">
+        <div class="col text-center">
+            <img id="templateHomeLogo" src="" alt="" class="modal-team-logo mb-2">
+            <h4 id="templateHomeTeam" class="mb-0"></h4>
+        </div>
+        <div class="col text-center d-flex flex-column justify-content-center">
+            <div class="mb-2">
+                <span class="stat-label">OPEN</span>
+                <h4 class="mb-0" id="templateOpenSpread"></h4>
+            </div>
+            <div class="mb-2">
+                <span class="stat-label">PREDICTED</span>
+                <h4 class="mb-0" id="templatePredictedSpread"></h4>
+            </div>
+            <div id="templateResultSection" hidden>
+                <span class="stat-label">ACTUAL</span>
+                <h4 class="mb-0" id="templateActualMargin"></h4>
+            </div>
+        </div>
+        <div class="col text-center">
+            <img id="templateAwayLogo" src="" alt="" class="modal-team-logo mb-2">
+            <h4 id="templateAwayTeam" class="mb-0"></h4>
+        </div>
+    </div>
 
-    <!-- Start of Game Details Modal -->
-    <div class="modal fade" id="gameDetailsModal" tabindex="-1" aria-labelledby="gameDetailsModalLabel"
-        aria-hidden="true">
-        <!-- Modal Dialog Container -->
-        <div class="modal-dialog modal-lg">
-            <!-- Modal Content Container -->
-            <div class="modal-content">
-                <!-- Modal Header -->
-                <div class="modal-header justify-content-center border-bottom">
-                    <h5 class="modal-title text-center" id="gameDetailsModalLabel">Game Details</h5>
-                </div>
-                <!-- Modal Body - This is where the game details will be dynamically loaded -->
-                <div class="modal-body">
-                </div>
+    <!-- Predicted winner: the arrow points at the team -->
+    <div class="row mb-3 pb-3 border-bottom">
+        <div class="col text-center d-flex justify-content-center align-items-center">
+            <i class="bi bi-caret-left-fill winner-arrow me-1" id="winnerLeftIcon"></i>
+            <div>
+                <span class="stat-label">PREDICTED WINNER</span>
+                <h4 id="templatePredictedWinPct" class="mb-0"></h4>
+            </div>
+            <i class="bi bi-caret-right-fill winner-arrow ms-1" id="winnerRightIcon"></i>
+        </div>
+    </div>
+
+    <!-- Top players, under each team's column -->
+    <div class="row mb-3 pb-3 border-bottom">
+        <div class="col d-flex justify-content-center">
+            <div id="homeTeamPlayers"></div>
+        </div>
+        <div class="col-2 d-none d-sm-block"></div>
+        <div class="col d-flex justify-content-center">
+            <div id="awayTeamPlayers"></div>
+        </div>
+    </div>
+
+    <!-- Play By Play (collapsible) -->
+    <div class="row">
+        <div class="col">
+            <button class="btn btn-outline-secondary btn-sm w-100 mb-2" type="button" data-bs-toggle="collapse"
+                data-bs-target="#pbpCollapse" aria-expanded="false" aria-controls="pbpCollapse">
+                Play By Play
+            </button>
+            <div class="collapse" id="pbpCollapse">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Play</th>
+                            <th id="homeTeamHeader">Home</th>
+                            <th id="awayTeamHeader">Away</th>
+                        </tr>
+                    </thead>
+                    <tbody id="playByPlayBody"></tbody>
+                </table>
             </div>
         </div>
     </div>
-    <!-- End of Game Details Modal -->
+</template>
+{% endblock %}
 
-    <!-- Start of Game Details Template -->
-    <template id="gameDetailsTemplate">
-        <!-- Prediction Section -->
-        <div class="row mb-3 pb-3 border-bottom">
-            <!-- Home Team -->
-            <div class="col text-center">
-                <img id="templateHomeLogo" src="" alt="Team Logo" class="img-fluid-custom mb-2">
-                <h4 id="templateHomeTeam" class="mb-0"></h4>
-            </div>
-            <!-- Spread + Winner -->
-            <div class="col text-center d-flex flex-column justify-content-center">
-                <div class="mb-2">
-                    <span class="text-muted" style="font-size: 0.8rem;">OPEN</span>
-                    <h4 class="mb-0" id="templateOpenSpread"></h4>
-                </div>
-                <div class="mb-2">
-                    <span class="text-muted" style="font-size: 0.8rem;">PREDICTED</span>
-                    <h4 class="mb-0" id="templatePredictedSpread"></h4>
-                </div>
-                <div id="templateResultSection" style="display: none;">
-                    <span class="text-muted" style="font-size: 0.8rem;">ACTUAL</span>
-                    <h4 class="mb-0" id="templateActualMargin"></h4>
-                </div>
-            </div>
-            <!-- Away Team -->
-            <div class="col text-center">
-                <img id="templateAwayLogo" src="" alt="Team Logo" class="img-fluid-custom mb-2">
-                <h4 id="templateAwayTeam" class="mb-0"></h4>
-            </div>
-        </div>
-
-        <!-- Winner Row -->
-        <div class="row mb-3 pb-3 border-bottom">
-            <div class="col text-center d-flex justify-content-center align-items-center">
-                <i class="bi bi-caret-left-fill bi-caret-left-fill-custom me-1" id="winnerLeftIcon"></i>
-                <div>
-                    <span class="text-muted" style="font-size: 0.8rem;">PREDICTED WINNER</span>
-                    <h4 id="templatePredictedWinPct" class="mb-0"></h4>
-                </div>
-                <i class="bi bi-caret-right-fill bi-caret-right-fill-custom ms-1" id="winnerRightIcon"></i>
-            </div>
-        </div>
-
-        <!-- Player Information Container (matches team logo columns above) -->
-        <div class="row mb-3 pb-3 border-bottom">
-            <div class="col d-flex justify-content-center">
-                <div id="homeTeamPlayers"></div>
-            </div>
-            <div class="col-2"></div>
-            <div class="col d-flex justify-content-center">
-                <div id="awayTeamPlayers"></div>
-            </div>
-        </div>
-
-        <!-- Play By Play Section (collapsible) -->
-        <div class="row">
-            <div class="col">
-                <button class="btn btn-outline-secondary btn-sm w-100 mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#pbpCollapse">
-                    Play By Play
-                </button>
-                <div class="collapse" id="pbpCollapse">
-                    <table class="table table-sm">
-                        <thead>
-                            <tr>
-                                <th>Time</th>
-                                <th>Play</th>
-                                <th id="homeTeamHeader">Home</th>
-                                <th id="awayTeamHeader">Away</th>
-                            </tr>
-                        </thead>
-                        <tbody id="playByPlayBody"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </template>
-    <!-- End of Game Details Template -->
-
-    <!-- Bootstrap 5 JS bundle -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-
-    <!-- Custom JavaScript -->
-    <script src="static/js/main.js"></script>
-
-</body>
-
-</html>
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% endblock %}

@@ -3,7 +3,7 @@ dashboard.py
 
 Flask blueprint for the prediction results dashboard.
 Provides routes to display ATS performance, P&L, rolling metrics,
-and per-game results for Phase5 predictions.
+and per-game results for any predictor with stored predictions.
 
 Routes:
 - /dashboard: Renders the dashboard HTML page
@@ -13,7 +13,7 @@ Routes:
 import json
 import logging
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template, request
 
 from src.database import get_db
 from src.utils import get_eastern_tz, parse_utc_datetime
@@ -29,9 +29,16 @@ def _get_available_predictors():
         ).fetchall()
     return [row[0] for row in rows]
 
-    # First live prediction date — predictions from here onward are leakage-free
+
+def _requested_filters():
+    """(predictor, live_only) from the query string. The predictor defaults to
+    the one the app was started with, as on the games page."""
+    predictor = request.args.get("predictor") or current_app.config["PREDICTOR"]
+    live_only = request.args.get("live_only", "true").lower() == "true"
+    return predictor, live_only
 
 
+# First live prediction date — predictions from here onward are leakage-free
 LIVE_PREDICTIONS_START = "2026-04-01"
 
 
@@ -217,7 +224,6 @@ def _fetch_dashboard_data(predictor="Phase5", live_only=False):
     # Compute rolling metrics
     window = 20
     rolling_ats = []
-    rolling_mae = []
     cumulative_pl = []
     running_pl = 0.0
 
@@ -247,9 +253,6 @@ def _fetch_dashboard_data(predictor="Phase5", live_only=False):
                 (window_wins / len(window_decided) * 100) if window_decided else 0
             )
 
-            window_errors = [wg["abs_error"] for wg in window_games]
-            window_mae = sum(window_errors) / len(window_errors)
-
             rolling_ats.append(
                 {
                     "date": g["date"],
@@ -257,17 +260,9 @@ def _fetch_dashboard_data(predictor="Phase5", live_only=False):
                     "game_index": i,
                 }
             )
-            rolling_mae.append(
-                {
-                    "date": g["date"],
-                    "mae": round(window_mae, 2),
-                    "game_index": i,
-                }
-            )
 
     rolling = {
         "ats": rolling_ats,
-        "mae": rolling_mae,
         "cumulative_pl": cumulative_pl,
     }
 
@@ -284,8 +279,7 @@ def _fetch_dashboard_data(predictor="Phase5", live_only=False):
 @dashboard.route("/dashboard")
 def dashboard_page():
     """Render the dashboard HTML page."""
-    predictor = request.args.get("predictor", "Phase5")
-    live_only = request.args.get("live_only", "true").lower() == "true"
+    predictor, live_only = _requested_filters()
     available = _get_available_predictors()
     return render_template(
         "dashboard.html",
@@ -299,8 +293,7 @@ def dashboard_page():
 def dashboard_data():
     """Return dashboard data as JSON. Accepts ?predictor= and ?live_only= params."""
     try:
-        predictor = request.args.get("predictor", "Phase5")
-        live_only = request.args.get("live_only", "true").lower() == "true"
+        predictor, live_only = _requested_filters()
         data = _fetch_dashboard_data(predictor=predictor, live_only=live_only)
         return jsonify(data)
     except Exception:

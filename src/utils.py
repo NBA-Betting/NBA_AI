@@ -842,7 +842,7 @@ class NBATeamConverter:
             cursor.execute("SELECT short_name FROM Teams WHERE team_id = ?", (team_id,))
 
             # Return the short name of the team
-            return cursor.fetchone()[0].title()
+            return cursor.fetchone()[0]
 
     @staticmethod
     def get_full_name(identifier):
@@ -866,4 +866,4 @@ class NBATeamConverter:
             cursor.execute("SELECT full_name FROM Teams WHERE team_id = ?", (team_id,))
 
             # Return the full name of the team
-            return cursor.fetchone()[0].title()
+            return cursor.fetchone()[0]
