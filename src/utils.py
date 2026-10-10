@@ -600,6 +600,8 @@ def validate_game_ids(game_ids):
             game_id
             and isinstance(game_id, str)
             and len(game_id) == 10
+            and game_id.isascii()
+            and game_id.isdigit()
             and game_id.startswith("00")
         ):
             invalid_game_ids.append(game_id)
@@ -608,8 +610,11 @@ def validate_game_ids(game_ids):
             )
 
     if invalid_game_ids:
+        # Echo a few, shortened: the message can go back to API callers
+        shown = ", ".join(repr(str(g)[:20]) for g in invalid_game_ids[:5])
+        more = f" (+{len(invalid_game_ids) - 5} more)" if len(invalid_game_ids) > 5 else ""
         raise ValueError(
-            f"Invalid game IDs: {invalid_game_ids}. Each game ID must be a 10-digit string starting with '00'. Example: '0022100001'."
+            f"Invalid game IDs: {shown}{more}. Each game ID must be a 10-digit string starting with '00'. Example: '0022100001'."
         )
 
 
@@ -654,6 +659,11 @@ def validate_date_format(date):
         raise ValueError(
             "Invalid day. Please use DD format with a value between 01 and 31."
         )
+    # Feb 29 in a non-leap year
+    try:
+        datetime(year, month, day)
+    except ValueError:
+        raise ValueError(f"Invalid day. {date} is not a calendar date.") from None
 
 
 def validate_season_format(season, abbreviated=False):

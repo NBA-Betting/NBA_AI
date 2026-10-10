@@ -124,7 +124,7 @@ function fetchAndUpdateGames() {
             isPostponed ? "-" : game.vegas_line || "-",
             "text-center d-none d-sm-table-cell",
           );
-          if (game.vegas_line_kind) {
+          if (game.vegas_line_kind && !isPostponed) {
             lineCell.title = `${game.vegas_line_kind} line`;
           }
           if (unavailable) {
