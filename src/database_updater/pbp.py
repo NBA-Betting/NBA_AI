@@ -93,7 +93,7 @@ def fetch_game_data(
     try:
         # Attempt to fetch data from the primary endpoint
         response = session.get(
-            primary_base_url.format(game_id), headers=primary_headers, timeout=10
+            primary_base_url.format(game_id), headers=primary_headers, timeout=(10, 30)
         )
         response.raise_for_status()
         data = response.json()
@@ -102,14 +102,16 @@ def fetch_game_data(
         )
         return game_id, actions_sorted
 
-    except (requests.exceptions.HTTPError, KeyError):
+    # Any failure (HTTP error, timeout, bad JSON, missing keys) falls back; one
+    # escaping here would abort every other game in the batch
+    except (requests.exceptions.RequestException, ValueError, KeyError):
         if fallback_base_url:
             try:
                 # Fallback to the secondary endpoint if the primary endpoint fails
                 response = session.get(
                     fallback_base_url.format(game_id),
                     headers=fallback_headers,
-                    timeout=10,
+                    timeout=(10, 30),
                 )
                 response.raise_for_status()
                 data = response.json()

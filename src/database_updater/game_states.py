@@ -74,10 +74,10 @@ def create_game_states(games_info):
 
     game_states = {}
 
-    try:
-        for game_id, game_info in tqdm(
-            games_info.items(), desc="Creating game states", unit="game", leave=False
-        ):
+    for game_id, game_info in tqdm(
+        games_info.items(), desc="Creating game states", unit="game", leave=False
+    ):
+        try:
             home = game_info["home"]
             away = game_info["away"]
             # Eastern date, as in history; features compute rest days from it
@@ -249,9 +249,10 @@ def create_game_states(games_info):
 
                     game_states[game_id].append(current_game_state)
 
-    except Exception as e:
-        logging.error(f"An error occurred while creating game states: {e}")
-        return {}
+        except Exception as e:
+            # One malformed feed must not discard every other game
+            logging.error(f"Game {game_id}: could not create game states: {e}")
+            game_states.pop(game_id, None)
 
     # Aggregate warning for games that produced 0 states
     empty_count = sum(1 for game_id, states in game_states.items() if not states)
