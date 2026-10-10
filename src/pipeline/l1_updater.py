@@ -33,14 +33,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import DB_PATH, get_db
 from src.phase5.cache_builder import (
-    DEFAULT_PROFILE,
     L1_SEASON_TYPES,
     PROFILE_COLUMNS,
-    _debut_year,
-    _load_player_profile,
     _load_team_id_to_abbr,
     _load_team_rolling_stats,
     build_player_cache,
+    player_profile,
 )
 from src.phase5.config import NKEHConfig
 from src.phase5.dataset import Normalizer, load_metadata, load_profiles
@@ -250,8 +248,7 @@ class L1IncrementalUpdater:
         return end
 
     def _get_profile_tensor(self, player_id: int) -> torch.Tensor:
-        """Profile vector: the training cache's, else PlayerAttributes, else
-        DEFAULT_PROFILE."""
+        """Profile vector: the training cache's, else from the database."""
         if player_id in self._profile_idx:
             idx = self._profile_idx[player_id]
             profile_cols = self.metadata["profile_columns"]
@@ -259,10 +256,7 @@ class L1IncrementalUpdater:
             return torch.tensor(vals, dtype=torch.float32)
 
         with get_db(str(self.db_path)) as conn:
-            profile_dict = _load_player_profile(conn, player_id) or {
-                **DEFAULT_PROFILE,
-                "birth_year": _debut_year(conn, player_id) or 2000,
-            }
+            profile_dict = player_profile(conn, player_id)
         return torch.tensor(
             [profile_dict.get(col, 0) for col in PROFILE_COLUMNS], dtype=torch.float32
         )
