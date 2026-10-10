@@ -200,31 +200,17 @@ class EnsemblePredictor(BasePredictor):
 
         ensemble_win_pct = _logodds_average(win_probs) if win_probs else 0.5
 
-        # --- Scores: average only from score-based models ---
-        home_scores = []
-        away_scores = []
-        for model in SCORE_MODELS:
-            if model in available:
-                pred = available[model]
-                home = pred.get("pred_home_score")
-                away = pred.get("pred_away_score")
-                if home is not None and away is not None:
-                    home_scores.append(home)
-                    away_scores.append(away)
-
-        if home_scores:
-            ensemble_home_score = sum(home_scores) / len(home_scores)
-            ensemble_away_score = sum(away_scores) / len(away_scores)
-        else:
-            # No score-based models available — derive from spread + reasonable total
-            # Use average total from spread models if available, else default ~220
-            totals = []
-            for model in SPREAD_MODELS:
-                if model in available and "pred_total" in available[model]:
-                    totals.append(available[model]["pred_total"])
-            avg_total = sum(totals) / len(totals) if totals else 220.0
-            ensemble_home_score = (avg_total + ensemble_spread) / 2.0
-            ensemble_away_score = (avg_total - ensemble_spread) / 2.0
+        # --- Scores: split an averaged total by the ensemble spread, so the
+        # scores always agree with ensemble_spread ---
+        totals = []
+        for model, pred in available.items():
+            home = pred.get("pred_home_score")
+            away = pred.get("pred_away_score")
+            if home is not None and away is not None:
+                totals.append(home + away)
+        avg_total = sum(totals) / len(totals) if totals else 220.0
+        ensemble_home_score = (avg_total + ensemble_spread) / 2.0
+        ensemble_away_score = (avg_total - ensemble_spread) / 2.0
 
         # --- Prediction type ---
         game_status = game_statuses.get(game_id)

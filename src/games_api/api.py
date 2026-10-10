@@ -91,7 +91,7 @@ def games():
     try:
         game_ids = request.args.get("game_ids")
         date = request.args.get("date")
-        predictor = request.args.get("predictor")
+        predictor = request.args.get("predictor") or config.get("default_predictor")
 
         # Validate that only one of game_ids or date is provided
         if game_ids and date:
