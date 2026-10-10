@@ -35,6 +35,7 @@ from src.utils import (
     StageLogger,
     log_execution_time,
     lookup_basic_game_info,
+    to_eastern_date,
     validate_date_format,
     validate_game_ids,
 )
@@ -79,7 +80,8 @@ def create_game_states(games_info):
         ):
             home = game_info["home"]
             away = game_info["away"]
-            game_date = game_info["date_time_utc"].split("T")[0]
+            # Eastern date, as in history; features compute rest days from it
+            game_date = to_eastern_date(game_info["date_time_utc"])
             logs = game_info["pbp_logs"]
             # Games.status == 3 means the game is over. The stats endpoint's
             # feed can end at a period-end action with no game-end action

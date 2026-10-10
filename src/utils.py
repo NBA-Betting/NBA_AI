@@ -200,6 +200,15 @@ def parse_utc_datetime(utc_string: str) -> datetime:
     return dt.replace(tzinfo=timezone.utc)
 
 
+def to_eastern_date(utc_string: str) -> str:
+    """US/Eastern calendar date (YYYY-MM-DD) of a UTC datetime string.
+
+    NBA dates (schedules, rest days, injury reports) are Eastern; most evening
+    tip-offs fall on the following day in UTC.
+    """
+    return parse_utc_datetime(utc_string).astimezone(get_eastern_tz()).date().isoformat()
+
+
 def lookup_basic_game_info(game_ids, db_path=DB_PATH):
     """
     Looks up basic game information given a game_id or a list of game_ids from the Games table in the SQLite database.

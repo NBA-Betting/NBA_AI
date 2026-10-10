@@ -41,7 +41,7 @@ from src.database_updater.prior_states import (
     load_prior_states,
 )
 from src.logging_config import setup_logging
-from src.utils import log_execution_time, lookup_basic_game_info
+from src.utils import log_execution_time, lookup_basic_game_info, to_eastern_date
 
 # Configuration
 DB_PATH = config["database"]["path"]
@@ -99,7 +99,8 @@ def create_feature_sets(prior_states_dict, db_path=DB_PATH):
     for game_id, game_info in game_info.items():
         home_team = game_info["home"]
         away_team = game_info["away"]
-        game_date = game_info["date_time_utc"][:10]
+        # Eastern date, matching GameStates.game_date of the prior games
+        game_date = to_eastern_date(game_info["date_time_utc"])
 
         # Get the prior states for the home and away teams
         home_prior_states = prior_states_dict[game_id]["home_prior_states"]

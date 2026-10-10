@@ -70,8 +70,8 @@ from src.database import create_connection, get_db
 from src.utils import (
     NBATeamConverter,
     StageLogger,
-    get_eastern_tz,
     log_execution_time,
+    to_eastern_date,
 )
 
 logger = logging.getLogger(__name__)
@@ -186,13 +186,9 @@ def _record_covers_attempt(date_str: str, match_count: int, conn: sqlite3.Connec
 def _eastern_date(date_time_utc: str) -> str:
     """Return the US/Eastern calendar date (YYYY-MM-DD) of a Games.date_time_utc value.
 
-    Covers matchups pages are keyed by Eastern date; most games tip off on the
-    following day in UTC.
+    Covers matchups pages are keyed by Eastern date.
     """
-    utc_dt = datetime.strptime(date_time_utc, "%Y-%m-%dT%H:%M:%SZ").replace(
-        tzinfo=timezone.utc
-    )
-    return utc_dt.astimezone(get_eastern_tz()).date().isoformat()
+    return to_eastern_date(date_time_utc)
 
 
 def _get_current_season(now: datetime) -> str:
