@@ -2,7 +2,7 @@
 """
 Phase B Training: L3 (Team Model) + L4 (Game Predictor) on frozen L1+L2 outputs.
 
-Trains L3 and L4 jointly end-to-end against game-level spread/win/total targets.
+Trains L3 and L4 jointly end-to-end against game-level spread/win targets.
 L1 and L2 are frozen — their outputs are pre-computed in the Phase B cache.
 
 Usage:
@@ -32,7 +32,12 @@ from src.phase5.l3_model import TeamModel, count_parameters as l3_count_params
 from src.phase5.l4_config import L4Config
 from src.phase5.l4_model import GamePredictor, count_parameters as l4_count_params
 from src.phase5.l4_losses import game_prediction_loss, prediction_metrics
-from src.phase5.game_dataset import load_phase_b_data, make_train_val_datasets
+from src.phase5.game_dataset import (
+    TRAIN_SEASONS,
+    VAL_SEASON,
+    load_phase_b_data,
+    make_train_val_datasets,
+)
 
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints" / "phase5"
 RESULTS_DIR = PROJECT_ROOT / "results" / "phase5"
@@ -44,10 +49,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Training loop
@@ -254,14 +255,18 @@ def main():
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--patience", type=int, default=15)
-    parser.add_argument("--test", action="store_true", help="Quick test (few batches)")
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Quick test (3 epochs); checkpoints go to checkpoints/phase5/test",
+    )
     parser.add_argument(
         "--train-seasons",
         type=str,
-        default="2008-2009,2023-2024",
+        default=",".join(TRAIN_SEASONS),
         help="Start,end seasons for training (inclusive)",
     )
-    parser.add_argument("--val-season", type=str, default="2024-2025")
+    parser.add_argument("--val-season", type=str, default=VAL_SEASON)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -335,7 +340,8 @@ def main():
     )
 
     # --- Training loop ---
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = CHECKPOINT_DIR / "test" if args.test else CHECKPOINT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     best_val_loss = float("inf")
@@ -423,7 +429,7 @@ def main():
                     "val_metrics": val_metrics,
                     "val_losses": val_losses,
                 },
-                str(CHECKPOINT_DIR / "phase_b_best.pt"),
+                str(out_dir / "phase_b_best.pt"),
             )
             logger.info(f"  ** New best: MAE={best_val_mae:.3f} at epoch {epoch}")
         else:
@@ -448,7 +454,7 @@ def main():
 
     # Load best and evaluate one more time for full metrics
     best_ckpt = torch.load(
-        str(CHECKPOINT_DIR / "phase_b_best.pt"),
+        str(out_dir / "phase_b_best.pt"),
         map_location=device,
         weights_only=False,
     )
@@ -499,9 +505,9 @@ def main():
             "l4_config": l4_cfg.__dict__,
             "val_metrics": final_metrics,
         },
-        str(CHECKPOINT_DIR / "phase_b_final.pt"),
+        str(out_dir / "phase_b_final.pt"),
     )
-    logger.info(f"Final checkpoint saved to {CHECKPOINT_DIR / 'phase_b_final.pt'}")
+    logger.info(f"Final checkpoint saved to {out_dir / 'phase_b_final.pt'}")
 
 
 if __name__ == "__main__":

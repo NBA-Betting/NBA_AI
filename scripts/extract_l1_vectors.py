@@ -9,7 +9,8 @@ Runs the Kalman filter over each player's full career to produce:
 
 Output: data/l2_cache/l1_vectors/{person_id}.npz
 
-Resume-capable: skips players whose output file already exists.
+Resume-capable: skips players whose output file is newer than the L1
+checkpoint (an older file came from a previous L1 model).
 
 Usage:
     python scripts/extract_l1_vectors.py [--force]
@@ -137,8 +138,12 @@ def main():
     for i, (pid, cache_path) in enumerate(valid_players):
         out_path = OUTPUT_DIR / f"{pid}.npz"
 
-        # Resume: skip if already processed
-        if out_path.exists() and not args.force:
+        # Resume: skip if already processed with this checkpoint
+        if (
+            out_path.exists()
+            and not args.force
+            and out_path.stat().st_mtime > CKPT_PATH.stat().st_mtime
+        ):
             skipped += 1
             continue
 
