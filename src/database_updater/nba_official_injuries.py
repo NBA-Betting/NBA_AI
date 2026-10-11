@@ -469,6 +469,9 @@ def fetch_injury_report(date: datetime) -> tuple[pd.DataFrame, str]:
     # If we exhausted all times and last status was 403/404, check if it's truly not found
     if last_status_code in (403, 404):
         return pd.DataFrame(), "not_found"
+    # No response at all (network down): an error, so the day is retried
+    if last_status_code is None:
+        return pd.DataFrame(), "error"
 
     # If we got NOTYETSUBMITTED from all times, report that
     return pd.DataFrame(), "not_yet_submitted"
@@ -647,7 +650,7 @@ def _should_fetch_injury_date(report_date: datetime, db_path: str = DB_PATH) -> 
         day_end = get_eastern_tz().localize(
             datetime(report_date.year, report_date.month, report_date.day) + timedelta(days=1)
         )
-        if cached_status in ("success", "not_yet_submitted") and last_fetch < day_end:
+        if cached_status in ("success", "empty", "not_yet_submitted") and last_fetch < day_end:
             return True
         # Not found on a day with games: keep retrying (once a day); off-days
         # legitimately have no report and are left alone
@@ -1052,8 +1055,9 @@ def update_nba_official_injuries(
             if isinstance(iterator, tqdm):
                 iterator.set_postfix({"status": "saved", "records": counts["total"]})
 
-            # Cache successful fetches with data
-            _update_injury_cache(date_str, db_path, status="success")
+            # A report can list no injuries at all; "empty" keeps such a day
+            # from being retried as a failed fetch (_find_dates_missing_data)
+            _update_injury_cache(date_str, db_path, status="success" if len(df) else "empty")
 
         elif status == "not_found":
             logging.debug(
@@ -1186,7 +1190,9 @@ def backfill_injury_reports(
             df, status = fetch_injury_report(dt)
             if status == "success":
                 total += save_injury_records(df, db_path)["total"]
-            if status in ("success", "not_found", "not_yet_submitted"):
+            if status == "success" and not len(df):
+                status = "empty"
+            if status in ("success", "empty", "not_found", "not_yet_submitted"):
                 _update_injury_cache(date_str, db_path, status=status)
             pbar.set_postfix({"saved": total, "last": status})
             time.sleep(0.1)  # Be nice to NBA servers
