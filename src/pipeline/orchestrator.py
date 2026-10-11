@@ -339,8 +339,15 @@ class PipelineOrchestrator:
         updater = L1IncrementalUpdater(db_path=str(self.db_path))
         results = updater.update_all_new(dry_run=dry_run)
         total_games = sum(results.values())
+        failed = updater.failed
         return {
-            "status": "ok",
+            "status": "warning" if failed else "ok",
+            "error": (
+                f"{len(failed)} player(s) failed to update: "
+                + ", ".join(map(str, failed[:10]))
+                if failed
+                else None
+            ),
             "players_updated": len(results),
             "games_processed": total_games,
         }

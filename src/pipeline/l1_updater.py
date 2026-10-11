@@ -121,6 +121,7 @@ class L1IncrementalUpdater:
             dict mapping player_id → number of new games processed
         """
         results = {}
+        self.failed = []  # players whose update raised
         players_with_new = self._find_players_with_new_games()
 
         if not players_with_new:
@@ -135,7 +136,6 @@ class L1IncrementalUpdater:
             return {pid: 0 for pid in players_with_new}
 
         t0 = time.time()
-        n_errors = 0
         for pid in players_with_new:
             try:
                 n_processed = self.update_player(pid)
@@ -143,11 +143,11 @@ class L1IncrementalUpdater:
                     results[pid] = n_processed
             except Exception as e:
                 logger.warning(f"  Error updating player {pid}: {e}")
-                n_errors += 1
+                self.failed.append(pid)
 
         logger.info(
             f"L1 update complete: {len(results)} players, {sum(results.values())} "
-            f"games in {time.time() - t0:.1f}s ({n_errors} errors)"
+            f"games in {time.time() - t0:.1f}s ({len(self.failed)} errors)"
         )
         return results
 
@@ -183,8 +183,10 @@ class L1IncrementalUpdater:
         existing = np.load(str(npz_path), allow_pickle=True)
         last_id = str(existing["game_ids"][-1])
         if last_id not in seq["game_ids"]:
-            logger.warning(f"  Player {player_id}: last stored game {last_id} not in DB")
-            return 0
+            # The stored history no longer matches the DB (e.g. repaired box
+            # scores dropped that game): refilter the whole career
+            logger.info(f"  Player {player_id}: last stored game {last_id} gone; re-extracting")
+            return self._full_extraction(player_id, seq, npz_path)
         last_date = seq["dates"][seq["game_ids"].index(last_id)]
         start = bisect_right(seq["dates"], last_date)
         end = self._ready_end(seq, start)
