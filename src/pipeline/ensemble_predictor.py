@@ -46,11 +46,12 @@ class EnsemblePredictor(BasePredictor):
         """
         Generate ensemble predictions by combining individual model predictions.
 
-        Reads predictions from the Predictions table for each component model,
-        then combines them using:
+        Reads each component model's stored prediction (in historical mode,
+        runs the components), then combines them using:
           - Spread: average of all available spreads (direct or derived from scores)
           - Win prob: log-odds (logit) averaging
-          - Scores: average of score-based models only (Linear, Tree, MLP)
+          - Scores: the average total of every model that predicts scores
+            (Linear, Tree, MLP, Phase3), split by the ensemble spread
 
         Args:
             game_ids: List of game IDs to generate ensemble predictions for.
@@ -152,13 +153,19 @@ class EnsemblePredictor(BasePredictor):
     def _run_components(self, game_ids: list[str]) -> dict[str, dict[str, dict]]:
         """Run each component as of tip-off (no stored rows are used).
         Returns {game_id: {predictor_name: prediction_dict}}."""
-        from src.predictions.prediction_manager import create_predictor
+        from src.predictions.prediction_manager import (
+            _drop_implausible_predictions,
+            create_predictor,
+        )
 
         result: dict[str, dict[str, dict]] = {}
         for name in self.COMPONENT_MODELS:
             try:
-                preds = create_predictor(name, historical=True).make_pre_game_predictions(
-                    game_ids
+                preds = _drop_implausible_predictions(
+                    create_predictor(name, historical=True).make_pre_game_predictions(
+                        game_ids
+                    ),
+                    name,
                 )
             except Exception as e:
                 logger.warning(f"Ensemble component {name} failed: {e}")
@@ -216,14 +223,15 @@ class EnsemblePredictor(BasePredictor):
         win_sources = []
         for model, pred in available.items():
             wp = pred.get("pred_home_win_pct")
-            if wp is not None:
+            if wp is not None and not math.isnan(wp):
                 win_probs.append(wp)
                 win_sources.append(model)
 
         ensemble_win_pct = _logodds_average(win_probs) if win_probs else 0.5
 
-        # --- Scores: split the score models' average total by the ensemble
-        # spread, so the scores agree with it; none without a score model ---
+        # --- Scores: split the average total of the models that predict
+        # scores (Phase3 included) by the ensemble spread, so the scores agree
+        # with it; none if no model predicts scores ---
         totals = []
         for model, pred in available.items():
             home = pred.get("pred_home_score")

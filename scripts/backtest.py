@@ -38,7 +38,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import DB_PATH, get_db  # noqa: E402
 from src.database_updater.betting import CLOSING_SPREAD_SQL  # noqa: E402
-from src.predictions.prediction_manager import create_predictor  # noqa: E402
+from src.predictions.prediction_manager import (  # noqa: E402
+    _drop_implausible_predictions,
+    create_predictor,
+)
 from src.utils import to_eastern_date  # noqa: E402
 
 
@@ -107,7 +110,9 @@ def load_games(args) -> list[dict]:
 
 def predict(name: str, game_ids: list[str]) -> dict[str, tuple[float, float | None]]:
     """{game_id: (spread, home win prob)} from the predictor's own code."""
-    preds = create_predictor(name, historical=True).make_pre_game_predictions(game_ids)
+    preds = _drop_implausible_predictions(
+        create_predictor(name, historical=True).make_pre_game_predictions(game_ids), name
+    )
     out = {}
     for gid, p in preds.items():
         spread = p.get("pred_spread")
