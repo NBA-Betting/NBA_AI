@@ -52,6 +52,7 @@ def backup(db_path: str, outdir: Path) -> Path:
 
     # A run that died midway leaves its uncompressed file; start clean
     raw_path.unlink(missing_ok=True)
+    tmp_path = gz_path.with_name(gz_path.name + ".tmp")
     conn = sqlite3.connect(raw_path)
     try:
         conn.execute("ATTACH DATABASE ? AS src", (f"file:{db_path}?mode=ro",))
@@ -64,8 +65,10 @@ def backup(db_path: str, outdir: Path) -> Path:
     finally:
         conn.close()
 
-    with open(raw_path, "rb") as fin, gzip.open(gz_path, "wb", compresslevel=6) as fout:
+    # Compress to a temporary name: a partial .gz would count as the day's backup
+    with open(raw_path, "rb") as fin, gzip.open(tmp_path, "wb", compresslevel=6) as fout:
         shutil.copyfileobj(fin, fout)
+    tmp_path.replace(gz_path)
     raw_path.unlink()
     logger.info("Backup written: %s (%.1f MB)", gz_path, gz_path.stat().st_size / 1e6)
     return gz_path
