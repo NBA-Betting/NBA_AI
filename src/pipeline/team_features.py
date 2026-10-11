@@ -477,8 +477,9 @@ def _compute_coaching_features(
 
     Replays every completed game since 2001-02 and reads each team's state
     just before the requested date. When the Coaches table
-    has no head coach for the team's season yet (e.g. a new season before the
-    table is refreshed), the team's most recent head coach is carried forward.
+    has no head coach for the team's season (e.g. a new season before the
+    table is refreshed, or a failed fetch for one team), the team's most recent
+    earlier head coach is carried forward.
     """
     team_abbr = {
         str(r[0]): r[1] for r in conn.execute("SELECT team_id, abbreviation FROM Teams")
@@ -513,15 +514,11 @@ def _compute_coaching_features(
             if modern == abbr:
                 coach_map[(hist, season)] = coach_id
 
-    # Seasons after the newest Coaches season (table not yet refreshed) carry
-    # the team's latest head coach forward so state keeps advancing; gaps in
-    # covered seasons stay coachless, as they were in training.
-    latest_coach_season = max((s for _, s in coach_map), default="")
-
     def coach_for(abbr: str, team: str, season: str) -> str | None:
         coach = coach_map.get((abbr, season)) or coach_map.get((team, season))
-        if coach is None and season > latest_coach_season:
-            earlier = [s for (t, s) in coach_map if t == team]
+        if coach is None:
+            # Training had no coachless team-seasons, so never leave one coachless
+            earlier = [s for (t, s) in coach_map if t == team and s < season]
             if earlier:
                 coach = coach_map[(team, max(earlier))]
         return coach
