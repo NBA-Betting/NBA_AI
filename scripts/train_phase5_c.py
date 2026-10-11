@@ -822,10 +822,33 @@ def main():
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    best_val_mae = float("inf")
-    best_val_loss = float("inf")
+    def save_best(epoch, val_metrics, val_losses, l2_drift):
+        torch.save(
+            {
+                "epoch": epoch,
+                "l2_state_dict": l2_model.state_dict(),
+                "l3_state_dict": l3_model.state_dict(),
+                "l4_state_dict": l4_model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "l2_config": l2_cfg.__dict__,
+                "l3_config": l3_cfg.__dict__,
+                "l4_config": l4_cfg.__dict__,
+                "val_metrics": val_metrics,
+                "val_losses": val_losses,
+                "l2_drift": l2_drift,
+                "baseline_metrics": baseline_metrics,
+                "inference": inference,
+            },
+            str(CHECKPOINT_DIR / "phase_c_best.pt"),
+        )
+
+    # The Phase B starting point is epoch 0: fine-tuning must beat it on val,
+    # or the Phase B weights are what gets promoted
+    best_val_mae = baseline_metrics["spread_mae"]
+    best_val_loss = baseline_losses["total_loss"]
     best_epoch = 0
     patience_counter = 0
+    save_best(0, baseline_metrics, baseline_losses, 0.0)
     history = []
 
     logger.info(f"\nStarting Phase C training for {args.epochs} epochs...")
@@ -937,24 +960,7 @@ def main():
             best_epoch = epoch
             patience_counter = 0
 
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "l2_state_dict": l2_model.state_dict(),
-                    "l3_state_dict": l3_model.state_dict(),
-                    "l4_state_dict": l4_model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "l2_config": l2_cfg.__dict__,
-                    "l3_config": l3_cfg.__dict__,
-                    "l4_config": l4_cfg.__dict__,
-                    "val_metrics": val_metrics,
-                    "val_losses": val_losses,
-                    "l2_drift": drift["overall"],
-                    "baseline_metrics": baseline_metrics,
-                    "inference": inference,
-                },
-                str(CHECKPOINT_DIR / "phase_c_best.pt"),
-            )
+            save_best(epoch, val_metrics, val_losses, drift["overall"])
             logger.info(f"  ** New best: MAE={best_val_mae:.3f} at epoch {epoch}")
         else:
             patience_counter += 1
