@@ -84,8 +84,10 @@ def process_game(
     player_stats: dict[int, dict[str, float]] = defaultdict(_new_player_stats)
     player_teams: dict[int, int] = {}  # player_id → team_id
 
-    # Track offense team for possession logic
+    # Track offense team for possession logic. The live feed states it on each
+    # event; the stats feed doesn't, so each event's own facts decide it there
     offense_team_id = 0
+    states_possession = any(evt.possession_team_id for evt in events)
 
     # Build action_number → event index for linking (rebounds → shots, etc.)
     action_num_to_idx: dict[int, int] = {}
@@ -106,7 +108,10 @@ def process_game(
         period_events = [e for e in events if e.period == period]
         prev_clock = period_start_seconds
         pending_seconds: list[tuple[dict[int, set[int]], float]] = []
-        prev_offense_team = 0
+        # Stats feed: team with the ball after the last event (0 = not known
+        # yet, e.g. after the tip) and whether its possession has had an event
+        ball = 0
+        possession_open = False
 
         for evt_i, evt in enumerate(period_events):
             # --- Record player team ---
@@ -114,17 +119,14 @@ def process_game(
                 player_teams[evt.player_id] = evt.team_id
 
             # --- Update offense team (possession tracking) ---
-            if evt.possession_team_id:
-                # V3 format: direct from event
-                offense_team_id = evt.possession_team_id
-            elif _is_possession_changing_event(evt, tracker, offense_team_id):
-                # Older format: infer from event flow
-                if offense_team_id:
-                    offense_team_id = tracker._opposite_team(offense_team_id)
-                elif evt.team_id:
-                    # First possession: the team with the ball
-                    if evt.is_field_goal or evt.is_free_throw or evt.is_turnover:
-                        offense_team_id = evt.team_id
+            if states_possession:
+                if evt.possession_team_id:
+                    offense_team_id = evt.possession_team_id
+                ends_possession = None  # decided by _is_possession_ending_event
+            else:
+                # Who had the ball up to this event, and who has it after
+                offense_team_id, ball = _older_possession(evt, events, tracker, ball)
+                ends_possession = bool(offense_team_id) and ball != offense_team_id
 
             # --- Seconds attribution ---
             # Before the first possession is known (older format learns it at
@@ -151,17 +153,24 @@ def process_game(
             if evt.is_period_start or evt.is_period_end:
                 if evt.is_period_start:
                     prev_clock = period_start_seconds
+                elif ends_possession is not None and possession_open:
+                    # Stats feed: the period ends the possession in progress
+                    # (the live feed credits it at its last event)
+                    _credit_possession(tracker, offense_team_id, player_stats)
+                    possession_open = False
                 continue
+
+            if ends_possession is not None:
+                possession_open = (possession_open or bool(offense_team_id)) and not ends_possession
 
             # Team events (team rebounds, team turnovers) have no player but
             # can still end a possession
             if not evt.player_id:
-                if _is_possession_ending_event(evt, events, offense_team_id, tracker):
+                if _ends(evt, events, offense_team_id, tracker, ends_possession):
                     _credit_possession(tracker, offense_team_id, player_stats)
                 continue
 
             pid = evt.player_id
-            tid = evt.team_id
             stats = player_stats[pid]
 
             # --- Field goal ---
@@ -187,7 +196,7 @@ def process_game(
                 _process_free_throw(evt, stats, player_stats, tracker, offense_team_id)
 
             # --- Possession end check ---
-            if _is_possession_ending_event(evt, events, offense_team_id, tracker):
+            if _ends(evt, events, offense_team_id, tracker, ends_possession):
                 _credit_possession(tracker, offense_team_id, player_stats)
 
         # Offense never known this period: still count the playing time
@@ -515,57 +524,32 @@ def _process_free_throw(
 # ---------------------------------------------------------------------------
 
 
+def _ends(evt, events, offense_team_id, tracker, ends_possession) -> bool:
+    """Whether the event ends the possession: stated for the stats feed
+    (ends_possession), looked up for the live feed."""
+    if ends_possession is not None:
+        return ends_possession
+    return _is_possession_ending_event(evt, events, offense_team_id, tracker)
+
+
 def _is_possession_ending_event(
     evt: Event,
     events: list[Event],
     offense_team_id: int,
     tracker: LineupTracker,
 ) -> bool:
-    """Determine if this event ends a possession."""
-    # V3 format: check if possession team changes at next event
-    if evt.possession_team_id:
-        # Look ahead for next event with a possession field
-        for i in range(evt.idx + 1, min(evt.idx + 10, len(events))):
-            nxt = events[i]
-            if nxt.is_period_end:
-                return True
-            if (
-                nxt.possession_team_id
-                and nxt.possession_team_id != evt.possession_team_id
-            ):
-                return True
-            if nxt.possession_team_id:
-                return False  # same team still has it
+    """Live feed: the event ends a possession if the next event with a
+    possession field names the other team (or the period ends)."""
+    if not evt.possession_team_id:
         return False
-
-    # Older format: infer from event type
-    # Defensive rebound (player or team) ends possession
-    if evt.is_rebound and not evt.reb_is_offensive:
-        return True
-
-    # Made final free throw ends possession
-    if evt.is_free_throw and evt.is_ft_made and _is_last_free_throw(evt):
-        return True
-
-    # Turnover ends possession
-    if evt.is_turnover:
-        return True
-
-    # Made field goal ends possession (unless and-1)
-    if evt.is_field_goal and evt.is_made:
-        # Check for and-1: next events at same time include a foul
-        for i in range(evt.idx + 1, min(evt.idx + 5, len(events))):
-            nxt = events[i]
-            if abs(nxt.clock_seconds - evt.clock_seconds) > 0.1:
-                break
-            if nxt.is_foul and not nxt.is_technical:
-                return False  # and-1, possession continues to FTs
-        return True
-
-    # End-of-period ends possession
-    if evt.is_period_end:
-        return True
-
+    for i in range(evt.idx + 1, min(evt.idx + 10, len(events))):
+        nxt = events[i]
+        if nxt.is_period_end:
+            return True
+        if nxt.possession_team_id and nxt.possession_team_id != evt.possession_team_id:
+            return True
+        if nxt.possession_team_id:
+            return False  # same team still has it
     return False
 
 
@@ -578,21 +562,43 @@ def _is_last_free_throw(evt: Event) -> bool:
     return bool(m) and m.group(1) == m.group(2)
 
 
-def _is_possession_changing_event(
-    evt: Event,
-    tracker: LineupTracker,
-    current_offense: int,
-) -> bool:
-    """For older format: does this event indicate the offense team changed?"""
-    if evt.is_rebound and not evt.reb_is_offensive:
-        return True
-    if evt.is_free_throw and evt.is_ft_made and _is_last_free_throw(evt):
-        return True
-    if evt.is_turnover:
-        return True
-    if evt.is_field_goal and evt.is_made:
-        return True
+def _is_and_one(evt: Event, events: list[Event]) -> bool:
+    """A made shot followed, at the same clock, by a (non-technical) foul."""
+    for nxt in events[evt.idx + 1 : evt.idx + 5]:
+        if abs(nxt.clock_seconds - evt.clock_seconds) > 0.1:
+            break
+        if nxt.is_foul and not nxt.is_technical:
+            return True
     return False
+
+
+def _older_possession(
+    evt: Event, events: list[Event], tracker: LineupTracker, ball: int
+) -> tuple[int, int]:
+    """Stats feed: (team with the ball up to this event, team with it after).
+
+    Shots, free throws and turnovers belong to the team with the ball and
+    rebounds show which side had it, so every such event re-anchors the
+    offense (an inference error can't carry on). Other events keep `ball`.
+    """
+    team = evt.team_id
+    if not team:
+        return ball, ball
+    other = tracker._opposite_team(team)
+    if evt.is_rebound:
+        return (team if evt.reb_is_offensive else other), team
+    if evt.is_field_goal:
+        keeps = not evt.is_made or _is_and_one(evt, events)
+        return team, team if keeps else other
+    if evt.is_free_throw and not evt.is_technical_ft:
+        # Flagrant and clear-path free throws are followed by the same team's ball
+        keeps_ball = "Flagrant" in evt.description or "Clear Path" in evt.description
+        if evt.is_ft_made and _is_last_free_throw(evt) and not keeps_ball:
+            return team, other
+        return team, team
+    if evt.is_turnover:
+        return team, other
+    return ball, ball
 
 
 def _credit_possession(
