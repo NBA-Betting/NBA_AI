@@ -371,7 +371,8 @@ class Phase5Predictor(BasePredictor):
         if coach_id is None:
             return 0, 0.0
         idx = self._coach_to_idx.get(str(coach_id), 0)
-        # Coaches unseen in training have no learned embedding (index 0)
+        # Coaches missing from the mapping get index 0. Neither it nor the rows
+        # of coaches first seen after the training seasons were ever trained.
         return idx, float(games) if idx else 0.0
 
     def _load_player_data(self, player_ids: list[int], before_date: str) -> dict:

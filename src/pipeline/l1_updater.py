@@ -157,6 +157,10 @@ class L1IncrementalUpdater:
 
         Returns the number of games processed.
         """
+        # Any player with a game gets vectors. Training extraction also needs 5
+        # career games and a PlayerAttributes row, which a newcomer can't be
+        # checked for in advance, so a few fringe players appear on live
+        # rosters who never did in training.
         with get_db(str(self.db_path)) as conn:
             seq = build_player_cache(
                 conn,
