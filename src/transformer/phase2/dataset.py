@@ -481,6 +481,7 @@ class Phase2Dataset(Dataset):
         n_efficiency_features: int = 0,
         player_experience: Optional[dict] = None,
         aux_features: Optional[dict[str, list[float]]] = None,
+        projected_rosters: Optional[dict[str, tuple[list[int], list[int]]]] = None,
     ):
         self.game_features = game_features
         self.gs_cache = gs_cache
@@ -509,12 +510,16 @@ class Phase2Dataset(Dataset):
             season_index=season_index,
             n_recent_games=n_recent_games,
             max_context_games=max_context_games,
+            projected_rosters=projected_rosters,
         )
 
         self.game_ids = self.builder.get_training_game_ids(
             seasons=seasons,
             min_history=min_history_games,
         )
+        if projected_rosters is not None:
+            # Games the live path couldn't project a roster for aren't trained on
+            self.game_ids = [g for g in self.game_ids if g in projected_rosters]
 
         logger.info(f"Phase2Dataset: {len(self.game_ids)} games for seasons {seasons}")
 
