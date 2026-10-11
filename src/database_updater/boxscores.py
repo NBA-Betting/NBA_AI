@@ -366,6 +366,7 @@ def get_boxscores(
             f"Catch-up mode: {n} games, fetching {burst_size} at a time "
             f"with {cooldown}s cooldown"
         )
+        failures = 0
         with tqdm(
             total=n, desc="Fetching boxscores", unit="game", leave=False
         ) as pbar:
@@ -377,6 +378,16 @@ def get_boxscores(
                 if stage_logger:
                     stage_logger.log_api_call()
                 pbar.update(1)
+                # Consecutive failures mean the API has started throttling, which
+                # lasts 30-60+ minutes; stop instead of hanging on timeouts. Games
+                # left out of the results are fetched on the next run.
+                failures = 0 if (player_records or team_records) else failures + 1
+                if failures == 3:
+                    logging.warning(
+                        "Boxscore catch-up stopped after 3 consecutive failures "
+                        "(likely NBA API throttling)"
+                    )
+                    break
                 # Cooldown between bursts to stay under rate limits
                 if (i + 1) % burst_size == 0 and i + 1 < n:
                     time.sleep(cooldown)

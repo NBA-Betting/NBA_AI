@@ -252,6 +252,9 @@ def update_pbp_data(season, db_path=DB_PATH, chunk_size=100):
 
             if pbar:
                 pbar.update(1)
+            # get_pbp stops early once the API throttles; the rest wait for the next run
+            if len(pbp_data) < len(chunk_game_ids):
+                break
         except Exception as e:
             logging.error(f"Error processing PBP chunk starting at index {i}: {str(e)}")
             if pbar:
@@ -465,6 +468,9 @@ def update_boxscore_data(season, db_path=DB_PATH, chunk_size=30):
 
             if pbar:
                 pbar.update(1)
+            # get_boxscores stops early once the API throttles; the rest wait for the next run
+            if len(boxscore_data) < len(chunk_game_ids):
+                break
         except Exception as e:
             logging.error(
                 f"Error processing boxscore chunk starting at index {i}: {str(e)}"

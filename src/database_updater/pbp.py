@@ -215,6 +215,7 @@ def get_pbp(game_ids, pbp_endpoint="both", stage_logger=None):
             f"PBP catch-up mode: {n} games, fetching {burst_size} at a time "
             f"with {cooldown}s cooldown"
         )
+        failures = 0
         with requests_retry_session() as session:
             with tqdm(total=n, desc="Fetching PBP", unit="game", leave=False) as pbar:
                 for i, game_id in enumerate(game_ids):
@@ -223,6 +224,16 @@ def get_pbp(game_ids, pbp_endpoint="both", stage_logger=None):
                     if stage_logger:
                         stage_logger.log_api_call()
                     pbar.update(1)
+                    # Consecutive failures mean the API has started throttling, which
+                    # lasts 30-60+ minutes; stop instead of hanging on timeouts. Games
+                    # left out of the results are fetched on the next run.
+                    failures = 0 if actions_sorted else failures + 1
+                    if failures == 3:
+                        logging.warning(
+                            "PBP catch-up stopped after 3 consecutive failures "
+                            "(likely NBA API throttling)"
+                        )
+                        break
                     # Cooldown between bursts
                     if (i + 1) % burst_size == 0 and i + 1 < n:
                         time.sleep(cooldown)
