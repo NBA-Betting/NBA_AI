@@ -1007,15 +1007,9 @@ def main():
         b_val = baseline_metrics[key]
         c_val = final_metrics[key]
         delta = c_val - b_val
-        direction = (
-            "better"
-            if (
-                (key == "spread_mae" and delta < 0)
-                or (key in ("win_auc", "win_acc") and delta > 0)
-                or (key == "ece" and delta < 0)
-            )
-            else "worse"
-        )
+        # Lower is better for MAE and ECE; unchanged when Phase B was kept
+        gain = -delta if key in ("spread_mae", "ece") else delta
+        direction = "better" if gain > 0 else "worse" if gain < 0 else "unchanged"
         logger.info(f"  {key}: {b_val:.4f} -> {c_val:.4f} ({delta:+.4f}, {direction})")
 
     logger.info(f"  L2 drift at best: {best_ckpt.get('l2_drift', 'N/A')}")
