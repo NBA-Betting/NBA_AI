@@ -29,15 +29,20 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
+# Phase3 trains and predicts on 2008-09 onward; older seasons in the DB (added
+# for Phase5's L1) would only make the cache slower to update and load
+FIRST_SEASON = "2008-2009"
+
 
 def _get_available_seasons() -> list[str]:
-    """Get all seasons with finalized games from the database."""
+    """Get the seasons from FIRST_SEASON on with finalized games in the database."""
     with get_db() as conn:
         rows = conn.execute("""
             SELECT DISTINCT season FROM Games
             WHERE status = 3 AND season_type IN ('Regular Season', 'Post Season')
+            AND season >= ?
             ORDER BY season
-        """).fetchall()
+        """, (FIRST_SEASON,)).fetchall()
     return [row[0] for row in rows if row[0]]
 
 
