@@ -10,10 +10,13 @@ Strategy: "injury subtraction"
 
 Team membership (step 2) comes from the current Players table for upcoming
 games. For past games (historical=True: training data and backtests) it is
-inferred from appearances, using only roster facts public before tip-off:
-a player whose next appearance is for another team has left; one whose next
-appearance (within ARRIVAL_WINDOW_DAYS) is for this team after playing
-elsewhere, or nowhere, has arrived. Both modes share every other step.
+inferred from appearances: a player whose next appearance is for another team
+has left; one whose next appearance (within ARRIVAL_WINDOW_DAYS) is for this
+team after playing elsewhere, or nowhere, has arrived. (Appearances can date
+a move a few days early; a strictly before-tip variant without arrivals
+backtests no worse: 2025-26 Phase5 -0.04 MAE, Phase3 +0.01, so this does not
+flatter backtests.) Either way only arrivals are added, never rostered players
+outside the recent rotation. Both modes share every other step.
 
 Usage:
     from src.pipeline.roster_assembler import RosterAssembler
@@ -236,12 +239,18 @@ class RosterAssembler:
         if self.historical:
             current = self._historical_members(conn, int(team_id), before_date, roster)
         else:
+            # Like historical mode, add only arrivals (last game not for this team)
             current = {
                 int(row[0])
                 for row in conn.execute(
                     "SELECT person_id FROM Players WHERE team = ? AND roster_status = 1",
                     (team_abbr,),
                 )
+            }
+            current = {
+                pid
+                for pid in current
+                if pid in roster or self._last_team(conn, pid, before_date) != int(team_id)
             }
         if current:
             roster = {pid: m for pid, m in roster.items() if pid in current}
@@ -253,6 +262,21 @@ class RosterAssembler:
             {"player_id": pid, "avg_minutes": m}
             for pid, m in sorted(roster.items(), key=lambda x: (-x[1], x[0]))
         ]
+
+    def _last_team(self, conn, pid: int, before_date: str) -> int | None:
+        """Team of a player's last appearance before the date (live mode)."""
+        row = conn.execute(
+            """
+            SELECT pb.team_id FROM PlayerBox pb
+            JOIN Games g ON g.game_id = pb.game_id
+            WHERE pb.player_id = ? AND pb.min > 0
+            AND g.date_time_utc < ? AND g.status = 3
+            AND g.season_type IN ('Regular Season', 'Post Season')
+            ORDER BY g.date_time_utc DESC LIMIT 1
+            """,
+            (pid, before_date),
+        ).fetchone()
+        return int(row[0]) if row else None
 
     def _recent_minutes(self, conn, pid: int, before_date: str) -> float:
         """Average minutes over a player's last 3 games before the date."""

@@ -31,7 +31,7 @@ import logging
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -1331,10 +1331,12 @@ class SeasonHealthChecker:
             )
 
             # Game days marked fetched in InjuryCache but with no report that
-            # day point to failed fetches (off-days legitimately have none)
+            # day point to failed fetches (off-days legitimately have none, and
+            # "empty" reports listed no injuries)
             result, qtime = self._timed_query(
                 cursor,
-                "SELECT report_date FROM InjuryCache WHERE report_date BETWEEN ? AND ?",
+                "SELECT report_date FROM InjuryCache WHERE report_date BETWEEN ? AND ?"
+                " AND COALESCE(status, '') != 'empty'",
                 (game_days[0], game_days[-1]),
             )
             empty = sorted(

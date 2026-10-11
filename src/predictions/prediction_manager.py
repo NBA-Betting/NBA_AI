@@ -8,7 +8,8 @@ It consists of functions to:
 
 Functions:
 - determine_predictor_class(predictor_name): Determines the predictor class based on the provided predictor name.
-- make_pre_game_predictions(game_ids, predictor_name=None, save=True): Generates pre-game predictions for the given game IDs using the specified predictor.
+- create_predictor(predictor_name, historical=False): Instantiates a predictor with its configured model paths.
+- make_pre_game_predictions(game_ids, predictor_name=None, save=True, skipped=None): Generates pre-game predictions for the given game IDs using the specified predictor.
 - main(): Main function to handle command-line arguments and orchestrate the prediction process.
 
 Usage:
@@ -113,7 +114,6 @@ def determine_predictor_class(predictor_name):
     return _get_predictor_class(predictor_name), predictor_name
 
 
-@log_execution_time(average_over="game_ids")
 def create_predictor(predictor_name, historical=False):
     """
     Instantiate a predictor with its configured model paths.
@@ -131,12 +131,13 @@ def create_predictor(predictor_name, historical=False):
     return predictor_class(**kwargs)
 
 
+@log_execution_time(average_over="game_ids")
 def make_pre_game_predictions(game_ids, predictor_name=None, save=True, skipped=None):
     """Predict the games with the named predictor (optionally saving them).
     If a dict is passed as `skipped`, it receives the games the predictor
     deliberately didn't predict, {game_id: reason}."""
-    # Determine the predictor class based on the provided name
-    predictor_class, predictor_name = determine_predictor_class(predictor_name)
+    # Resolve the predictor name (None -> default)
+    _, predictor_name = determine_predictor_class(predictor_name)
 
     logging.debug(
         f"Generating pre-game predictions for {len(game_ids)} games using predictor '{predictor_name}'."

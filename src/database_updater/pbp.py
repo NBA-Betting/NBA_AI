@@ -293,10 +293,20 @@ def save_pbp(pbp_data, db_path=DB_PATH):
                     )
                     existing_count = cursor.fetchone()[0]
 
-                    # Never replace a game's PBP with a shorter copy: a feed
-                    # only grows during a game, so fewer actions means a
-                    # truncated fetch (or a terser format than the stored one)
-                    if existing_count > len(pbp_logs_sorted):
+                    # Never replace a game's PBP with a shorter copy of the same
+                    # feed: it only grows during a game, so fewer actions means a
+                    # truncated fetch. Counts across feeds don't compare (the
+                    # stats feed is terser), so a newer fetch from the other
+                    # feed (e.g. the final stats copy after a mid-game live
+                    # one) replaces it.
+                    stored = cursor.execute(
+                        "SELECT log_data FROM PbP_Logs WHERE game_id = ? LIMIT 1",
+                        (game_id,),
+                    ).fetchone()
+                    same_feed = stored is None or (
+                        "timeActual" in json.loads(stored[0])
+                    ) == ("timeActual" in pbp_logs_sorted[0])
+                    if same_feed and existing_count > len(pbp_logs_sorted):
                         conn.execute("ROLLBACK")
                         logging.warning(
                             f"Game ID {game_id} - refetch has {len(pbp_logs_sorted)} "

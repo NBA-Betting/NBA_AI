@@ -1233,7 +1233,7 @@ def _should_use_cache(
 
     Caching rules:
     1. Finalized games (closing lines exist + lines_finalized=1): Cache forever
-    2. Games with no ESPN ID after previous attempt: Cache for 24 hours (fall through to Covers)
+    2. Games with no ESPN ID after previous attempt: Cache for 6 hours (fall through to Covers)
     3. Completed games with current_spread: Re-fetch once to get closing (then finalize)
     4. Future games >24h away: Cache for 6 hours
     5. Future games <24h away: Cache for 1 hour (lines move more)
@@ -1271,16 +1271,17 @@ def _should_use_cache(
 
     hours_since_update = (now - updated_at).total_seconds() / 3600
 
-    # Rule 2: Games without ESPN ID or lines = cache for ~a day (ESPN won't
-    # have it, use Covers). Under 24h so the next daily run still re-checks:
-    # a game with no line yet the day before must get one on game day.
+    # Rule 2: Games without ESPN ID or lines = cache for a few hours (ESPN
+    # won't have it, use Covers). Shorter than the 8h between the 10am and 6pm
+    # ET runs so every run re-checks: a game with no line yet the day before
+    # must get one on game day.
     # Only applies if we've tried before (has updated_at) but no ESPN ID or lines
     if (
         existing.get("espn_event_id") is None
         and existing.get("espn_current_spread") is None
         and existing.get("espn_closing_spread") is None
     ):
-        return hours_since_update < 20.0
+        return hours_since_update < 6.0
 
     # Rule 3: Completed games - need one re-fetch to get closing lines
     if game_status == 3:  # Final

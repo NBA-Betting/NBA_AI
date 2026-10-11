@@ -1,8 +1,9 @@
 import numpy as np
 
 # Pre-game logistic constants: P(home win) = 1 / (1 + exp(-(A + B * margin))).
-# Refit Oct 2026 on the shipped v0.5 models' predictions for 2025-26 (held out
-# of their training): Baseline/Linear/Tree/MLP pooled, n=4,856. 6-fold CV Brier
+# Refit Oct 2026 on the shipped v0.5 models' predictions for 2025-26 (their
+# validation season: not trained on, but used to select them): Baseline/
+# Linear/Tree/MLP pooled, n=4,856. 6-fold CV Brier
 # 0.2096 vs 0.2118 for the July 2026 constants (0.0278, 0.0984), which were fit
 # on an older model generation's predictions and were underconfident.
 PREGAME_A = 0.0769

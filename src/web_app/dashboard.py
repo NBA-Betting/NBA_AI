@@ -44,15 +44,27 @@ def _season_label(season):
     return f"{season[:4]}-{season[7:]}"
 
 
+# Finished games with a closing line and a prediction made before tip-off.
+# prediction_datetime is "YYYY-MM-DD HH:MM:SS" (UTC); date_time_utc is
+# "YYYY-MM-DDTHH:MM:SSZ", so normalize before comparing
+LIVE_GAMES_SQL = f"""
+    FROM Games g
+    JOIN Predictions p ON g.game_id = p.game_id
+    JOIN Betting b ON g.game_id = b.game_id
+    JOIN GameStates gs ON g.game_id = gs.game_id AND gs.is_final_state = 1
+    WHERE g.status = 3
+      AND g.date_time_utc >= ?
+      AND p.prediction_datetime
+          < replace(replace(g.date_time_utc, 'T', ' '), 'Z', '')
+      AND {CLOSING_SPREAD_SQL} IS NOT NULL
+"""
+
+
 def _live_seasons():
+    """Seasons with a graded live game, newest first."""
     with get_db() as conn:
         rows = conn.execute(
-            """
-            SELECT DISTINCT g.season FROM Predictions p
-            JOIN Games g ON g.game_id = p.game_id
-            WHERE g.status = 3 AND g.date_time_utc >= ?
-            ORDER BY g.season DESC
-            """,
+            f"SELECT DISTINCT g.season {LIVE_GAMES_SQL} ORDER BY g.season DESC",
             (LIVE_PREDICTIONS_START,),
         ).fetchall()
     return [row[0] for row in rows]
@@ -86,21 +98,11 @@ def load_live_record(season=None):
     home_score, away_score, closing_spread}}; predictions is
     {predictor: {game_id: pred_spread}} (positive = home favored).
     """
-    # prediction_datetime is "YYYY-MM-DD HH:MM:SS" (UTC); date_time_utc is
-    # "YYYY-MM-DDTHH:MM:SSZ", so normalize before comparing
     query = f"""
         SELECT g.game_id, g.date_time_utc, g.home_team, g.away_team,
                gs.home_score, gs.away_score, {CLOSING_SPREAD_SQL},
                p.predictor, p.prediction_set
-        FROM Games g
-        JOIN Predictions p ON g.game_id = p.game_id
-        JOIN Betting b ON g.game_id = b.game_id
-        JOIN GameStates gs ON g.game_id = gs.game_id AND gs.is_final_state = 1
-        WHERE g.status = 3
-          AND g.date_time_utc >= ?
-          AND p.prediction_datetime
-              < replace(replace(g.date_time_utc, 'T', ' '), 'Z', '')
-          AND {CLOSING_SPREAD_SQL} IS NOT NULL
+        {LIVE_GAMES_SQL}
           {"AND g.season = ?" if season else ""}
         ORDER BY g.date_time_utc
     """
@@ -151,10 +153,11 @@ def ats_result(pred_spread, closing_spread, margin):
     "W", "L" or "P" for a predicted home margin against the closing line
     (Vegas convention, negative = home favored) given the final home margin.
     The pick is home when the prediction beats the line; a final margin
-    within 0.25 of the line is a push.
+    within 0.25 of the line is a push, and so is a prediction equal to the
+    line (no pick, so no bet).
     """
     margin_vs_line = margin + closing_spread  # > 0 means home covered
-    if abs(margin_vs_line) < 0.25:
+    if abs(margin_vs_line) < 0.25 or pred_spread == -closing_spread:
         return "P"
     return "W" if (pred_spread > -closing_spread) == (margin_vs_line > 0) else "L"
 

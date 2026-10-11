@@ -93,8 +93,9 @@ class BasePredictor(ABC):
             cleaned = {}
             for name in self.required_features:
                 value = row[name]
-                # Existing models impute unavailable contextual stats as zero,
-                # but scores must have actual data and infinities are invalid.
+                # Unavailable contextual stats are imputed later (training mean,
+                # see _standardize), but scores must have actual data and
+                # infinities are invalid.
                 if value is None or (isinstance(value, Real) and math.isnan(value)):
                     if name in SCORE_FEATURES:
                         break

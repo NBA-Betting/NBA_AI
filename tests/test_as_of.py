@@ -4,8 +4,9 @@ game itself or anything after its tip-off.
 
 Features, rosters and L1 states are built for past games by the same code as
 live predictions (backtests, Phase5 training cache), so a leak here would make
-backtests look better than live results. Each test changes everything at or
-after a game's tip-off and checks the inputs for that game don't move.
+backtests look better than live results. Each test changes results at or
+after a game's tip-off (L1 vectors; TeamBox and PlayerBox, not InjuryReports
+or Coaches) and checks the inputs for that game don't move.
 """
 
 import sqlite3

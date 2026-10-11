@@ -3,7 +3,7 @@ Phase 5 Hierarchical Predictor: L1→L2→L3→L4 inference pipeline.
 
 Implements the BasePredictor interface for integration with the existing
 prediction system. For each game: assembles roster, loads L1 vectors,
-runs L2→L3→L4 forward pass, returns spread/win/total predictions.
+runs L2→L3→L4 forward pass, returns spread and home win probability.
 
 Usage:
     from src.pipeline.phase5_predictor import Phase5Predictor
@@ -346,8 +346,6 @@ class Phase5Predictor(BasePredictor):
         # from it are meaningless.
 
         # Determine if this is a live prediction (before game) or backtest
-        from src.database import get_db
-
         with get_db(str(DB_PATH)) as conn:
             row = conn.execute(
                 "SELECT status FROM Games WHERE game_id = ?",
@@ -373,7 +371,8 @@ class Phase5Predictor(BasePredictor):
         if coach_id is None:
             return 0, 0.0
         idx = self._coach_to_idx.get(str(coach_id), 0)
-        # Coaches unseen in training have no learned embedding (index 0)
+        # Coaches missing from the mapping get index 0. Neither it nor the rows
+        # of coaches first seen after the training seasons were ever trained.
         return idx, float(games) if idx else 0.0
 
     def _load_player_data(self, player_ids: list[int], before_date: str) -> dict:
