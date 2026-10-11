@@ -12,9 +12,11 @@ Team membership (step 2) comes from the current Players table for upcoming
 games. For past games (historical=True: training data and backtests) it is
 inferred from appearances: a player whose next appearance is for another team
 has left; one whose next appearance (within ARRIVAL_WINDOW_DAYS) is for this
-team after playing elsewhere, or nowhere, has arrived. Either way only
-arrivals are added, never rostered players outside the recent rotation.
-Both modes share every other step.
+team after playing elsewhere, or nowhere, has arrived. (Appearances can date
+a move a few days early; a strictly before-tip variant without arrivals
+backtests no worse: 2025-26 Phase5 -0.04 MAE, Phase3 +0.01, so this does not
+flatter backtests.) Either way only arrivals are added, never rostered players
+outside the recent rotation. Both modes share every other step.
 
 Usage:
     from src.pipeline.roster_assembler import RosterAssembler
