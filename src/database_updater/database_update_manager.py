@@ -580,7 +580,7 @@ def get_games_needing_pbp_update(season, db_path):
                  AND game_data_finalized = 0
                  AND NOT EXISTS (SELECT 1 FROM PbP_Logs WHERE PbP_Logs.game_id = Games.game_id))
             )
-            ORDER BY date_time_utc
+            ORDER BY date_time_utc DESC  -- newest first: old failures can't block recent games
             """,
             (season,),
         )
@@ -1109,7 +1109,7 @@ def get_games_needing_boxscores(season, db_path):
                      AND boxscore_data_finalized = 0
                      AND NOT EXISTS (SELECT 1 FROM PlayerBox WHERE PlayerBox.game_id = Games.game_id))
                 )
-                ORDER BY date_time_utc
+                ORDER BY date_time_utc DESC  -- newest first, as for PBP
                 """,
                 (season,),
             )
@@ -1123,7 +1123,7 @@ def get_games_needing_boxscores(season, db_path):
                 AND status IN (2, 3)  -- In Progress or Final
                 AND boxscore_data_finalized = 0
                 AND NOT EXISTS (SELECT 1 FROM PlayerBox WHERE PlayerBox.game_id = Games.game_id)
-                ORDER BY date_time_utc
+                ORDER BY date_time_utc DESC
                 """,
                 (season,),
             )
