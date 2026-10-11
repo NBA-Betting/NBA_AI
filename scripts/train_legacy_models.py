@@ -235,7 +235,7 @@ def train_ridge(X_train, y_train, X_val, y_val, meta):
     log.info("TRAINING: Ridge Regression (RidgeCV)")
     log.info("=" * 60)
 
-    alphas = [0.1, 1.0, 10.0, 50.0, 100.0]
+    alphas = [0.1, 1.0, 10.0, 50.0, 100.0, 300.0, 1000.0, 3000.0]
     log.info(f"  Alpha candidates: {alphas}")
 
     model = RidgeCV(alphas=alphas, store_cv_results=True)
