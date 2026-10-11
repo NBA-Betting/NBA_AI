@@ -258,10 +258,10 @@ def main():
     parser.add_argument(
         "--train-seasons",
         type=str,
-        default="2017-2018,2022-2023",
+        default="2008-2009,2023-2024",
         help="Start,end seasons for training (inclusive)",
     )
-    parser.add_argument("--val-season", type=str, default="2023-2024")
+    parser.add_argument("--val-season", type=str, default="2024-2025")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
