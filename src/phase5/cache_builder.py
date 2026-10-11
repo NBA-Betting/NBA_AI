@@ -840,7 +840,7 @@ def build_cache(min_games: int = 5):
             "data_splits": {
                 "l1_pretrain": {"min_year": 2001, "max_year": 2016},
                 "l1_pretrain_val": {"min_year": 2017, "max_year": 2017},
-                "main_train": {"min_year": 2018, "max_year": 2023},
+                "main_train": {"min_year": 2008, "max_year": 2023},
                 "val": {"min_year": 2024, "max_year": 2024},
                 # 2025-26 onward: held out for the Phase5 evaluation
                 "test": {"min_year": 2025, "max_year": 2030},

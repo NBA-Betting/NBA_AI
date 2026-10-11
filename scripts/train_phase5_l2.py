@@ -580,8 +580,10 @@ def save_checkpoint(
     epoch: int,
     val_metrics: dict,
     path: Path,
+    player_to_idx: dict[int, int],
 ):
-    """Save model checkpoint."""
+    """Save model checkpoint, with the player -> embedding row mapping (the
+    game cache must index players the same way)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -589,6 +591,7 @@ def save_checkpoint(
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "val_metrics": val_metrics,
+            "player_to_idx": {str(k): v for k, v in player_to_idx.items()},
         },
         path,
     )
@@ -801,6 +804,7 @@ def train(
                 epoch,
                 val_metrics,
                 CHECKPOINT_DIR / "l2_best.pt",
+                player_to_idx,
             )
         else:
             patience_counter += 1
@@ -817,6 +821,7 @@ def train(
         epoch,
         val_metrics,
         CHECKPOINT_DIR / "l2_final.pt",
+        player_to_idx,
     )
 
     logging.info("-" * 80)

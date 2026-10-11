@@ -16,18 +16,20 @@ Output (data/phase5_games/):
   targets.npz            margin, home_win
   team_features.npz      features (N, 2, 34), raw
   game_context.npz       features (N, 14), raw
-  rosters.npy            (N, 2, R) player ids by projected minutes, 0 = none
+  rosters.npy            (N, 2, R) ids of the players with an L1 state, by
+                         projected minutes, 0 = none
   coach_indices.npy      (N, 2) into coach_mapping.json, 0 = unknown
   coach_games.npy        (N, 2) career games coached before the game
   coach_mapping.json     {"coach_to_idx": {coach_id: idx}}
   l2_vectors.npz         vectors (N, 2, d_l2), frozen L2 output (Phase B)
   roster_summaries.npz   summaries (N, 2, 12)
-  player_to_idx.json     L2 embedding index for each player with L1 vectors
+  player_to_idx.json     L2 embedding index per player (the L2 checkpoint's)
   metadata.json
 
 Usage:
     python scripts/build_phase5_cache.py
-    python scripts/build_phase5_cache.py --test 300   # most recent 300 games
+    python scripts/build_phase5_cache.py --test 300   # most recent 300 games,
+                                                      # to data/phase5_games_test
 """
 
 import argparse
@@ -130,6 +132,8 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
     parser.add_argument("--test", type=int, help="Only the most recent N games")
     args = parser.parse_args()
+    if args.test and args.output_dir == OUTPUT_DIR:
+        args.output_dir = OUTPUT_DIR.with_name(OUTPUT_DIR.name + "_test")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     max_roster = L2Config().max_roster
@@ -152,7 +156,16 @@ def main():
         logger.info(f"Features: {s + len(chunk)}/{len(game_ids)}")
 
     store = L1Store(game_dates)
-    player_to_idx = {pid: i + 1 for i, pid in enumerate(store.player_ids())}
+    # L2's embedding rows follow the mapping it trained with (older
+    # checkpoints didn't save it: the sorted vector files, as in L2 training)
+    saved = torch.load(args.l2_checkpoint, map_location="cpu", weights_only=False).get(
+        "player_to_idx"
+    )
+    player_to_idx = (
+        {int(k): v for k, v in saved.items()}
+        if saved
+        else {pid: i + 1 for i, pid in enumerate(store.player_ids())}
+    )
     team_rosters = [
         rosters.get(gid, {}).get(f"{side}_players", [])
         for gid in game_ids
@@ -185,12 +198,6 @@ def main():
     )
     kept = [g for g, k in zip(games, keep) if k]
     kept_ids = [g[0] for g in kept]
-
-    roster_ids = np.zeros((len(kept_ids), 2, max_roster), dtype=np.int64)
-    for i, gid in enumerate(kept_ids):
-        for side, key in enumerate(("home_players", "away_players")):
-            pids = rosters[gid][key][:max_roster]
-            roster_ids[i, side, : len(pids)] = pids
 
     coaches = [
         [features[gid][f"{side}_coach"] for side in ("home", "away")]
@@ -227,7 +234,8 @@ def main():
             [features[g]["game_context"] for g in kept_ids], dtype=np.float32
         ),
     )
-    np.save(out / "rosters.npy", roster_ids)
+    # The players L2 and the roster summaries saw (first max_roster with an L1 state)
+    np.save(out / "rosters.npy", per_game(arrays["player_ids"]))
     np.save(
         out / "coach_indices.npy",
         np.array(

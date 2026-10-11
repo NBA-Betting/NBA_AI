@@ -37,7 +37,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import DB_PATH, get_db
-from src.phase5.game_dataset import load_phase_b_data
+from src.phase5.game_dataset import (
+    TRAIN_SEASONS,
+    VAL_SEASON,
+    load_phase_b_data,
+    split_and_normalize,
+)
 from src.phase5.l1_store import L1Store, load_game_dates
 from src.phase5.l2_config import L2Config
 from src.phase5.l2_model import (
@@ -256,67 +261,17 @@ def build_phase_c_data(cache_dir: Path = GAMES_CACHE) -> dict:
     return data
 
 
-def season_start_year(season: str) -> int:
-    return int(season.split("-")[0])
-
-
 def make_train_val_datasets(
     data: dict,
-    train_seasons: tuple[str, str] = ("2017-2018", "2022-2023"),
-    val_season: str = "2023-2024",
+    train_seasons: tuple[str, str] = TRAIN_SEASONS,
+    val_season: str = VAL_SEASON,
 ) -> tuple[PhaseCDataset, PhaseCDataset, dict]:
-    """Split data by season and create train/val datasets.
-
-    Returns the datasets and the training-split normalization stats.
-    """
-    seasons = data["seasons"]
-    train_start = season_start_year(train_seasons[0])
-    train_end = season_start_year(train_seasons[1])
-    val_year = season_start_year(val_season)
-
-    train_indices = []
-    val_indices = []
-
-    for i, s in enumerate(seasons):
-        if not s:
-            continue
-        try:
-            year = season_start_year(s)
-        except (ValueError, IndexError):
-            continue
-        if train_start <= year <= train_end:
-            train_indices.append(i)
-        elif year == val_year:
-            val_indices.append(i)
-
-    train_indices = np.array(train_indices, dtype=np.int64)
-    val_indices = np.array(val_indices, dtype=np.int64)
-
-    logger.info(
-        f"Train: {len(train_indices)} games "
-        f"({train_seasons[0]} - {train_seasons[1]})"
+    """Phase C train/val datasets on Phase B's split and normalization
+    (split_and_normalize). Returns the datasets and the stats as saved in the
+    checkpoint."""
+    train_indices, val_indices, stats = split_and_normalize(
+        data, train_seasons, val_season
     )
-    logger.info(f"Val: {len(val_indices)} games ({val_season})")
-
-    # Compute normalization from training set only
-    train_tf = data["team_features"][train_indices]
-    train_gc = data["game_context"][train_indices]
-    train_rs = data["roster_summaries"][train_indices]
-
-    tf_flat = train_tf.reshape(-1, 34)
-    l3_mean = tf_flat.mean(axis=0).astype(np.float32)
-    l3_std = tf_flat.std(axis=0).astype(np.float32)
-    l3_std[l3_std < 1e-8] = 1e-8
-
-    l4_mean = train_gc.mean(axis=0).astype(np.float32)
-    l4_std = train_gc.std(axis=0).astype(np.float32)
-    l4_std[l4_std < 1e-8] = 1e-8
-
-    rs_flat = train_rs.reshape(-1, 12)
-    rs_mean = rs_flat.mean(axis=0).astype(np.float32)
-    rs_std = rs_flat.std(axis=0).astype(np.float32)
-    rs_std[rs_std < 1e-8] = 1e-8
-
     common_kwargs = dict(
         player_abilities=data["player_abilities"],
         player_uncertainties=data["player_uncertainties"],
@@ -330,31 +285,21 @@ def make_train_val_datasets(
         targets_win=data["targets_win"],
         coach_indices=data.get("coach_indices"),
         coach_games=data.get("coach_games"),
-        # Normalization
-        l3_mean=l3_mean,
-        l3_std=l3_std,
-        l4_mean=l4_mean,
-        l4_std=l4_std,
-        rs_mean=rs_mean,
-        rs_std=rs_std,
+        **stats,
     )
 
     train_ds = PhaseCDataset(indices=train_indices, **common_kwargs)
     val_ds = PhaseCDataset(indices=val_indices, **common_kwargs)
     norm = {
-        "l3_mean": l3_mean.tolist(),
-        "l3_std": l3_std.tolist(),
-        "l4_mean": l4_mean.tolist(),
-        "l4_std": l4_std.tolist(),
-        "roster_summary_mean": rs_mean.tolist(),
-        "roster_summary_std": rs_std.tolist(),
+        "l3_mean": stats["l3_mean"].tolist(),
+        "l3_std": stats["l3_std"].tolist(),
+        "l4_mean": stats["l4_mean"].tolist(),
+        "l4_std": stats["l4_std"].tolist(),
+        "roster_summary_mean": stats["rs_mean"].tolist(),
+        "roster_summary_std": stats["rs_std"].tolist(),
     }
     return train_ds, val_ds, norm
 
-
-# ---------------------------------------------------------------------------
-# Metrics (same as Phase B)
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Gradual unfreezing
@@ -667,14 +612,18 @@ def main():
         default=6,
         help="Epochs with L3+L4 trainable (after this, L2+L3+L4)",
     )
-    parser.add_argument("--test", action="store_true", help="Quick test (few epochs)")
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Quick test (5 epochs); checkpoints go to checkpoints/phase5/test",
+    )
     parser.add_argument(
         "--train-seasons",
         type=str,
-        default="2008-2009,2023-2024",
+        default=",".join(TRAIN_SEASONS),
         help="Start,end seasons for training (inclusive)",
     )
-    parser.add_argument("--val-season", type=str, default="2024-2025")
+    parser.add_argument("--val-season", type=str, default=VAL_SEASON)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--drift-threshold",
@@ -746,16 +695,11 @@ def main():
     l4_model = GamePredictor(l4_cfg).to(device)
 
     # --- Load pretrained weights ---
-    # L2: from L2 standalone training
-    l2_ckpt = torch.load(
-        str(CHECKPOINT_DIR / "l2_best.pt"),
-        map_location=device,
-        weights_only=False,
-    )
+    # L2: the checkpoint that made the cache's L2 vectors (Phase B's inputs)
+    l2_path = Path(data["metadata"].get("l2_checkpoint", CHECKPOINT_DIR / "l2_best.pt"))
+    l2_ckpt = torch.load(str(l2_path), map_location=device, weights_only=False)
     l2_model.load_state_dict(l2_ckpt["model_state_dict"])
-    logger.info(
-        f"Loaded L2 weights from l2_best.pt (epoch {l2_ckpt.get('epoch', '?')})"
-    )
+    logger.info(f"Loaded L2 weights from {l2_path} (epoch {l2_ckpt.get('epoch', '?')})")
 
     # L3 + L4: from Phase B joint training
     b_ckpt = torch.load(
@@ -764,11 +708,7 @@ def main():
         weights_only=False,
     )
     l3_model.load_state_dict(b_ckpt["l3_state_dict"])
-    missing_l4, unexpected_l4 = l4_model.load_state_dict(
-        b_ckpt["l4_state_dict"], strict=False
-    )
-    if missing_l4:
-        logger.info(f"L4 newly initialized keys (not in Phase B): {missing_l4}")
+    l4_model.load_state_dict(b_ckpt["l4_state_dict"])
     logger.info(
         f"Loaded L3+L4 weights from phase_b_best.pt "
         f"(epoch {b_ckpt.get('epoch', '?')}, "
@@ -819,7 +759,8 @@ def main():
     )
 
     # --- Training loop ---
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = CHECKPOINT_DIR / "test" if args.test else CHECKPOINT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     def save_best(epoch, val_metrics, val_losses, l2_drift):
@@ -839,7 +780,7 @@ def main():
                 "baseline_metrics": baseline_metrics,
                 "inference": inference,
             },
-            str(CHECKPOINT_DIR / "phase_c_best.pt"),
+            str(out_dir / "phase_c_best.pt"),
         )
 
     # The Phase B starting point is epoch 0: fine-tuning must beat it on val,
@@ -983,7 +924,7 @@ def main():
 
     # Load best checkpoint and evaluate
     best_ckpt = torch.load(
-        str(CHECKPOINT_DIR / "phase_c_best.pt"),
+        str(out_dir / "phase_c_best.pt"),
         map_location=device,
         weights_only=False,
     )
@@ -1055,9 +996,9 @@ def main():
             "val_metrics": final_metrics,
             "inference": inference,
         },
-        str(CHECKPOINT_DIR / "phase_c_final.pt"),
+        str(out_dir / "phase_c_final.pt"),
     )
-    logger.info(f"Final checkpoint saved to {CHECKPOINT_DIR / 'phase_c_final.pt'}")
+    logger.info(f"Final checkpoint saved to {out_dir / 'phase_c_final.pt'}")
 
 
 if __name__ == "__main__":
