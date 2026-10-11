@@ -48,7 +48,7 @@ from src.phase5.l3_config import L3Config
 from src.phase5.l3_model import TeamModel, count_parameters as l3_count_params
 from src.phase5.l4_config import L4Config
 from src.phase5.l4_model import GamePredictor, count_parameters as l4_count_params
-from src.phase5.l4_losses import game_prediction_loss
+from src.phase5.l4_losses import game_prediction_loss, prediction_metrics
 
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints" / "phase5"
 RESULTS_DIR = PROJECT_ROOT / "results" / "phase5"
@@ -93,7 +93,6 @@ class PhaseCDataset(Dataset):
         roster_summaries: np.ndarray,  # (N, 2, 12)
         targets_margin: np.ndarray,  # (N,)
         targets_win: np.ndarray,  # (N,)
-        targets_total: np.ndarray,  # (N,)
         # Coach data
         coach_indices: np.ndarray | None = None,  # (N, 2) int64
         coach_games: np.ndarray | None = None,  # (N, 2) float32
@@ -116,7 +115,6 @@ class PhaseCDataset(Dataset):
         self.roster_summaries = roster_summaries
         self.targets_margin = targets_margin
         self.targets_win = targets_win
-        self.targets_total = targets_total
         self.coach_indices = coach_indices
         self.coach_games = coach_games
         # Normalization
@@ -214,7 +212,6 @@ class PhaseCDataset(Dataset):
             # Targets
             "actual_margin": torch.tensor(self.targets_margin[i], dtype=torch.float32),
             "actual_home_win": torch.tensor(self.targets_win[i], dtype=torch.float32),
-            "actual_total": torch.tensor(self.targets_total[i], dtype=torch.float32),
         }
 
 
@@ -331,7 +328,6 @@ def make_train_val_datasets(
         roster_summaries=data["roster_summaries"],
         targets_margin=data["targets_margin"],
         targets_win=data["targets_win"],
-        targets_total=data["targets_total"],
         coach_indices=data.get("coach_indices"),
         coach_games=data.get("coach_games"),
         # Normalization
@@ -360,69 +356,22 @@ def make_train_val_datasets(
 # Metrics (same as Phase B)
 # ---------------------------------------------------------------------------
 
-
-def compute_metrics(
-    all_preds: dict[str, list],
-    all_targets: dict[str, list],
-) -> dict[str, float]:
-    """Compute evaluation metrics from accumulated predictions/targets."""
-    spread_mu = np.concatenate(all_preds["spread_mu"])
-    spread_sigma = np.concatenate(all_preds["spread_sigma"])
-    win_prob = np.concatenate(all_preds["win_prob"])
-    total_mu = np.concatenate(all_preds["total_mu"])
-
-    actual_margin = np.concatenate(all_targets["margin"])
-    actual_win = np.concatenate(all_targets["win"])
-    actual_total = np.concatenate(all_targets["total"])
-
-    n = len(actual_margin)
-
-    spread_mae = np.abs(spread_mu - actual_margin).mean()
-    total_mae = np.abs(total_mu - actual_total).mean()
-
-    win_pred = (win_prob > 0.5).astype(float)
-    win_acc = (win_pred == actual_win).mean()
-
-    # AUC
-    order = np.argsort(win_prob)
-    sorted_labels = actual_win[order]
-    n_pos = int(actual_win.sum())
-    n_neg = n - n_pos
-    if n_pos > 0 and n_neg > 0:
-        cum_pos = np.cumsum(sorted_labels)
-        auc = 1.0 - cum_pos[sorted_labels == 0].sum() / (n_pos * n_neg)
-    else:
-        auc = 0.5
-
-    # ECE
-    n_bins = 10
-    bin_boundaries = np.linspace(0, 1, n_bins + 1)
-    ece = 0.0
-    for j in range(n_bins):
-        mask = (win_prob >= bin_boundaries[j]) & (win_prob < bin_boundaries[j + 1])
-        if j == n_bins - 1:
-            mask = mask | (win_prob == bin_boundaries[j + 1])
-        if mask.sum() > 0:
-            avg_confidence = win_prob[mask].mean()
-            avg_accuracy = actual_win[mask].mean()
-            ece += mask.sum() / n * abs(avg_confidence - avg_accuracy)
-
-    mean_sigma = spread_sigma.mean()
-
-    return {
-        "spread_mae": float(spread_mae),
-        "total_mae": float(total_mae),
-        "win_acc": float(win_acc),
-        "win_auc": float(auc),
-        "ece": float(ece),
-        "mean_sigma": float(mean_sigma),
-        "n_games": n,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Gradual unfreezing
 # ---------------------------------------------------------------------------
+
+
+# L2 layers that build the team vector. L2 pretraining fits pairwise synergies
+# and never trains these, so they are tuned with L3 (same schedule and LR).
+L2_TEAM_LAYERS = ("gat", "player_pool", "synergy_agg")
+
+
+def l2_param_groups(l2_model: PlayerSynergyNetwork) -> tuple[list, list]:
+    """(pretrained L2 params, team-vector layer params)."""
+    pretrained, team = [], []
+    for name, p in l2_model.named_parameters():
+        (team if name.split(".")[0] in L2_TEAM_LAYERS else pretrained).append(p)
+    return pretrained, team
 
 
 def apply_freeze_schedule(
@@ -433,37 +382,19 @@ def apply_freeze_schedule(
     l4_only_epochs: int = 3,
     l3l4_epochs: int = 6,
 ) -> str:
-    """Apply gradual unfreezing schedule.
-
-    Returns a string describing which levels are trainable.
-    """
-    if epoch <= l4_only_epochs:
-        # Epochs 1-3: only L4
-        for p in l2_model.parameters():
-            p.requires_grad = False
-        for p in l3_model.parameters():
-            p.requires_grad = False
-        for p in l4_model.parameters():
-            p.requires_grad = True
-        return "L4 only"
-    elif epoch <= l3l4_epochs:
-        # Epochs 4-6: L3 + L4
-        for p in l2_model.parameters():
-            p.requires_grad = False
-        for p in l3_model.parameters():
-            p.requires_grad = True
-        for p in l4_model.parameters():
-            p.requires_grad = True
-        return "L3+L4"
-    else:
-        # Epochs 7+: L2 + L3 + L4
-        for p in l2_model.parameters():
-            p.requires_grad = True
-        for p in l3_model.parameters():
-            p.requires_grad = True
-        for p in l4_model.parameters():
-            p.requires_grad = True
-        return "L2+L3+L4"
+    """Gradual unfreezing: L4, then L3 with L2's team-vector layers, then all
+    of L2. Returns a description of what is trainable."""
+    l2_pretrained, l2_team = l2_param_groups(l2_model)
+    stage = 1 if epoch <= l4_only_epochs else 2 if epoch <= l3l4_epochs else 3
+    for params, trainable in (
+        (l4_model.parameters(), True),
+        (l3_model.parameters(), stage >= 2),
+        (l2_team, stage >= 2),
+        (l2_pretrained, stage >= 3),
+    ):
+        for p in params:
+            p.requires_grad = trainable
+    return ("L4 only", "L3+L4 (+L2 team layers)", "L2+L3+L4")[stage - 1]
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +551,6 @@ def train_epoch(
     for batch in loader:
         actual_margin = batch["actual_margin"].to(device)
         actual_win = batch["actual_home_win"].to(device)
-        actual_total = batch["actual_total"].to(device)
 
         # Forward
         predictions = forward_l2_l3_l4(batch, l2_model, l3_model, l4_model, device)
@@ -630,7 +560,6 @@ def train_epoch(
             predictions=predictions,
             actual_margin=actual_margin,
             actual_home_win=actual_win,
-            actual_total=actual_total,
             cfg=l4_cfg,
         )
 
@@ -676,13 +605,12 @@ def evaluate(
     total_losses = {}
     n_batches = 0
 
-    all_preds = {"spread_mu": [], "spread_sigma": [], "win_prob": [], "total_mu": []}
-    all_targets = {"margin": [], "win": [], "total": []}
+    all_preds = {"spread_mu": [], "spread_sigma": [], "win_prob": []}
+    all_targets = {"margin": [], "win": []}
 
     for batch in loader:
         actual_margin = batch["actual_margin"].to(device)
         actual_win = batch["actual_home_win"].to(device)
-        actual_total = batch["actual_total"].to(device)
 
         predictions = forward_l2_l3_l4(batch, l2_model, l3_model, l4_model, device)
 
@@ -690,7 +618,6 @@ def evaluate(
             predictions=predictions,
             actual_margin=actual_margin,
             actual_home_win=actual_win,
-            actual_total=actual_total,
             cfg=l4_cfg,
         )
 
@@ -703,14 +630,12 @@ def evaluate(
         all_preds["spread_mu"].append(predictions["spread_mu"].cpu().numpy())
         all_preds["spread_sigma"].append(predictions["spread_sigma"].cpu().numpy())
         all_preds["win_prob"].append(predictions["win_prob"].cpu().numpy())
-        all_preds["total_mu"].append(predictions["total_mu"].cpu().numpy())
 
         all_targets["margin"].append(actual_margin.cpu().numpy())
         all_targets["win"].append(actual_win.cpu().numpy())
-        all_targets["total"].append(actual_total.cpu().numpy())
 
     avg_losses = {k: v / max(n_batches, 1) for k, v in total_losses.items()}
-    metrics = compute_metrics(all_preds, all_targets)
+    metrics = prediction_metrics(all_preds, all_targets)
 
     return avg_losses, metrics
 
@@ -746,10 +671,10 @@ def main():
     parser.add_argument(
         "--train-seasons",
         type=str,
-        default="2017-2018,2022-2023",
+        default="2008-2009,2023-2024",
         help="Start,end seasons for training (inclusive)",
     )
-    parser.add_argument("--val-season", type=str, default="2023-2024")
+    parser.add_argument("--val-season", type=str, default="2024-2025")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--drift-threshold",
@@ -863,9 +788,11 @@ def main():
     drift_monitor = DriftMonitor(l2_model, name="L2")
 
     # --- Optimizer with discriminative learning rates ---
+    l2_pretrained, l2_team = l2_param_groups(l2_model)
     optimizer = torch.optim.AdamW(
         [
-            {"params": l2_model.parameters(), "lr": args.l2_lr},
+            {"params": l2_pretrained, "lr": args.l2_lr},
+            {"params": l2_team, "lr": args.l3_lr},
             {"params": l3_model.parameters(), "lr": args.l3_lr},
             {"params": l4_model.parameters(), "lr": args.l4_lr},
         ],
@@ -895,10 +822,33 @@ def main():
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    best_val_mae = float("inf")
-    best_val_loss = float("inf")
+    def save_best(epoch, val_metrics, val_losses, l2_drift):
+        torch.save(
+            {
+                "epoch": epoch,
+                "l2_state_dict": l2_model.state_dict(),
+                "l3_state_dict": l3_model.state_dict(),
+                "l4_state_dict": l4_model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "l2_config": l2_cfg.__dict__,
+                "l3_config": l3_cfg.__dict__,
+                "l4_config": l4_cfg.__dict__,
+                "val_metrics": val_metrics,
+                "val_losses": val_losses,
+                "l2_drift": l2_drift,
+                "baseline_metrics": baseline_metrics,
+                "inference": inference,
+            },
+            str(CHECKPOINT_DIR / "phase_c_best.pt"),
+        )
+
+    # The Phase B starting point is epoch 0: fine-tuning must beat it on val,
+    # or the Phase B weights are what gets promoted
+    best_val_mae = baseline_metrics["spread_mae"]
+    best_val_loss = baseline_losses["total_loss"]
     best_epoch = 0
     patience_counter = 0
+    save_best(0, baseline_metrics, baseline_losses, 0.0)
     history = []
 
     logger.info(f"\nStarting Phase C training for {args.epochs} epochs...")
@@ -969,8 +919,8 @@ def main():
         elapsed = time.time() - t0
 
         lr_l2 = optimizer.param_groups[0]["lr"]
-        lr_l3 = optimizer.param_groups[1]["lr"]
-        lr_l4 = optimizer.param_groups[2]["lr"]
+        lr_l3 = optimizer.param_groups[2]["lr"]
+        lr_l4 = optimizer.param_groups[3]["lr"]
 
         logger.info(
             f"Epoch {epoch:3d}/{args.epochs} ({elapsed:.1f}s) [{schedule_name}] "
@@ -1010,24 +960,7 @@ def main():
             best_epoch = epoch
             patience_counter = 0
 
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "l2_state_dict": l2_model.state_dict(),
-                    "l3_state_dict": l3_model.state_dict(),
-                    "l4_state_dict": l4_model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "l2_config": l2_cfg.__dict__,
-                    "l3_config": l3_cfg.__dict__,
-                    "l4_config": l4_cfg.__dict__,
-                    "val_metrics": val_metrics,
-                    "val_losses": val_losses,
-                    "l2_drift": drift["overall"],
-                    "baseline_metrics": baseline_metrics,
-                    "inference": inference,
-                },
-                str(CHECKPOINT_DIR / "phase_c_best.pt"),
-            )
+            save_best(epoch, val_metrics, val_losses, drift["overall"])
             logger.info(f"  ** New best: MAE={best_val_mae:.3f} at epoch {epoch}")
         else:
             patience_counter += 1

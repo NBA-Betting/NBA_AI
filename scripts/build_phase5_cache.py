@@ -13,7 +13,7 @@ plus targets and, for Phase B, frozen L2 team vectors and roster summaries.
 
 Output (data/phase5_games/):
   game_ids.npy, seasons.npy, dates.npy   (N,)
-  targets.npz            margin, home_win, total
+  targets.npz            margin, home_win
   team_features.npz      features (N, 2, 34), raw
   game_context.npz       features (N, 14), raw
   rosters.npy            (N, 2, R) player ids by projected minutes, 0 = none
@@ -210,7 +210,6 @@ def main():
         out / "targets.npz",
         margin=margin,
         home_win=(margin > 0).astype(np.float32),
-        total=np.array([g[3] + g[4] for g in kept], dtype=np.float32),
     )
     np.savez(
         out / "team_features.npz",

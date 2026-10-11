@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from src.phase5.dataset import Normalizer
+from src.phase5.dataset import Normalizer, scaled_age
 from src.phase5.model import NKEH
 
 # Maximum sequence length per forward pass (must match training)
@@ -19,9 +19,8 @@ MAX_LEN = 300
 
 
 def _age_and_gap(ctx: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Raw (unnormalized) context col 0 (age, scaled as in training) and col 8
-    (days since last game)."""
-    return (ctx[:, 0:1] - 8.0) / 8.0, ctx[:, 8:9].clone()
+    """Aging input from raw context col 0 and raw col 8 (days since last game)."""
+    return scaled_age(ctx), ctx[:, 8:9].clone()
 
 
 def _normalized_inputs(seq: dict, normalizer: Normalizer, start: int, end: int):

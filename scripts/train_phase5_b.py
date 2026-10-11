@@ -31,7 +31,7 @@ from src.phase5.l3_config import L3Config
 from src.phase5.l3_model import TeamModel, count_parameters as l3_count_params
 from src.phase5.l4_config import L4Config
 from src.phase5.l4_model import GamePredictor, count_parameters as l4_count_params
-from src.phase5.l4_losses import game_prediction_loss
+from src.phase5.l4_losses import game_prediction_loss, prediction_metrics
 from src.phase5.game_dataset import load_phase_b_data, make_train_val_datasets
 
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints" / "phase5"
@@ -48,73 +48,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
-
-
-def compute_metrics(
-    all_preds: dict[str, list],
-    all_targets: dict[str, list],
-) -> dict[str, float]:
-    """Compute evaluation metrics from accumulated predictions/targets."""
-    spread_mu = np.concatenate(all_preds["spread_mu"])
-    spread_sigma = np.concatenate(all_preds["spread_sigma"])
-    win_prob = np.concatenate(all_preds["win_prob"])
-    total_mu = np.concatenate(all_preds["total_mu"])
-
-    actual_margin = np.concatenate(all_targets["margin"])
-    actual_win = np.concatenate(all_targets["win"])
-    actual_total = np.concatenate(all_targets["total"])
-
-    n = len(actual_margin)
-
-    # Spread MAE
-    spread_mae = np.abs(spread_mu - actual_margin).mean()
-
-    # Total MAE
-    total_mae = np.abs(total_mu - actual_total).mean()
-
-    # Win accuracy
-    win_pred = (win_prob > 0.5).astype(float)
-    win_acc = (win_pred == actual_win).mean()
-
-    # Win AUC (manual implementation to avoid sklearn dependency)
-    # Sort by predicted probability
-    order = np.argsort(win_prob)
-    sorted_labels = actual_win[order]
-    n_pos = int(actual_win.sum())
-    n_neg = n - n_pos
-    if n_pos > 0 and n_neg > 0:
-        # Wilcoxon-Mann-Whitney statistic
-        cum_pos = np.cumsum(sorted_labels)
-        auc = 1.0 - cum_pos[sorted_labels == 0].sum() / (n_pos * n_neg)
-    else:
-        auc = 0.5
-
-    # ECE (Expected Calibration Error, 10 bins)
-    n_bins = 10
-    bin_boundaries = np.linspace(0, 1, n_bins + 1)
-    ece = 0.0
-    for j in range(n_bins):
-        mask = (win_prob >= bin_boundaries[j]) & (win_prob < bin_boundaries[j + 1])
-        if j == n_bins - 1:
-            mask = mask | (win_prob == bin_boundaries[j + 1])
-        if mask.sum() > 0:
-            avg_confidence = win_prob[mask].mean()
-            avg_accuracy = actual_win[mask].mean()
-            ece += mask.sum() / n * abs(avg_confidence - avg_accuracy)
-
-    # Mean predicted spread sigma (calibration indicator)
-    mean_sigma = spread_sigma.mean()
-
-    return {
-        "spread_mae": float(spread_mae),
-        "total_mae": float(total_mae),
-        "win_acc": float(win_acc),
-        "win_auc": float(auc),
-        "ece": float(ece),
-        "mean_sigma": float(mean_sigma),
-        "n_games": n,
-    }
-
 
 # ---------------------------------------------------------------------------
 # Training loop
@@ -156,7 +89,6 @@ def train_epoch(
 
         actual_margin = batch["actual_margin"].to(device)
         actual_win = batch["actual_home_win"].to(device)
-        actual_total = batch["actual_total"].to(device)
 
         # L3 forward: home and away teams
         home_repr = l3_model(
@@ -191,7 +123,6 @@ def train_epoch(
             predictions=predictions,
             actual_margin=actual_margin,
             actual_home_win=actual_win,
-            actual_total=actual_total,
             cfg=l4_cfg,
         )
 
@@ -233,8 +164,8 @@ def evaluate(
     total_losses = {}
     n_batches = 0
 
-    all_preds = {"spread_mu": [], "spread_sigma": [], "win_prob": [], "total_mu": []}
-    all_targets = {"margin": [], "win": [], "total": []}
+    all_preds = {"spread_mu": [], "spread_sigma": [], "win_prob": []}
+    all_targets = {"margin": [], "win": []}
 
     for batch in loader:
         home_l2 = batch["home_l2"].to(device)
@@ -253,7 +184,6 @@ def evaluate(
 
         actual_margin = batch["actual_margin"].to(device)
         actual_win = batch["actual_home_win"].to(device)
-        actual_total = batch["actual_total"].to(device)
 
         # L3
         home_repr = l3_model(
@@ -287,7 +217,6 @@ def evaluate(
             predictions=predictions,
             actual_margin=actual_margin,
             actual_home_win=actual_win,
-            actual_total=actual_total,
             cfg=l4_cfg,
         )
 
@@ -301,14 +230,12 @@ def evaluate(
         all_preds["spread_mu"].append(predictions["spread_mu"].cpu().numpy())
         all_preds["spread_sigma"].append(predictions["spread_sigma"].cpu().numpy())
         all_preds["win_prob"].append(predictions["win_prob"].cpu().numpy())
-        all_preds["total_mu"].append(predictions["total_mu"].cpu().numpy())
 
         all_targets["margin"].append(actual_margin.cpu().numpy())
         all_targets["win"].append(actual_win.cpu().numpy())
-        all_targets["total"].append(actual_total.cpu().numpy())
 
     avg_losses = {k: v / max(n_batches, 1) for k, v in total_losses.items()}
-    metrics = compute_metrics(all_preds, all_targets)
+    metrics = prediction_metrics(all_preds, all_targets)
 
     return avg_losses, metrics
 
@@ -331,10 +258,10 @@ def main():
     parser.add_argument(
         "--train-seasons",
         type=str,
-        default="2017-2018,2022-2023",
+        default="2008-2009,2023-2024",
         help="Start,end seasons for training (inclusive)",
     )
-    parser.add_argument("--val-season", type=str, default="2023-2024")
+    parser.add_argument("--val-season", type=str, default="2024-2025")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -456,11 +383,9 @@ def main():
         logger.info(
             f"Epoch {epoch:3d}/{args.epochs} ({elapsed:.1f}s) | "
             f"Train loss={train_losses['total_loss']:.4f} "
-            f"(spread={train_losses['spread']:.4f}, win={train_losses['win']:.4f}, "
-            f"total={train_losses['total']:.4f}) | "
+            f"(spread={train_losses['spread']:.4f}, win={train_losses['win']:.4f}) | "
             f"Val MAE={val_metrics['spread_mae']:.2f}, "
             f"AUC={val_metrics['win_auc']:.3f}, "
-            f"TotalMAE={val_metrics['total_mae']:.2f}, "
             f"WinAcc={val_metrics['win_acc']:.3f}, "
             f"ECE={val_metrics['ece']:.4f}, "
             f"sigma={val_metrics['mean_sigma']:.2f} | "

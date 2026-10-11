@@ -230,9 +230,8 @@ ALTITUDE_MAP = {
 # ---------------------------------------------------------------------------
 
 
-# Game types in L1 sequences, for training and live updates alike. The current
-# l1.pt and the Phase B/C data it fed were built from regular-season games only.
-L1_SEASON_TYPES = ("Regular Season",)
+# Game types in L1 sequences, for training and live updates alike
+L1_SEASON_TYPES = ("Regular Season", "Post Season")
 
 # Profile for players without a PlayerAttributes row (e.g. call-ups)
 DEFAULT_PROFILE = {
@@ -240,7 +239,7 @@ DEFAULT_PROFILE = {
     "weight": 215,
     "draft_pick": 60,
     "undrafted": 1.0,
-    "birth_year": 2000,  # debut season; see _load_player_profile
+    "birth_year": 2000,  # replaced by an estimate from the debut season
     "wingspan_inches": 78,
     "pos_g": 0.0,
     "pos_f": 1.0,
@@ -323,19 +322,27 @@ def _debut_year(conn, person_id: int) -> int | None:
     return row[0] if row else None
 
 
-def _load_player_profile(conn, person_id: int) -> dict:
-    """Load static player profile for prior network.
+# Typical age in a player's debut season, to estimate unknown birth years
+DEBUT_AGE = 21
 
-    "birth_year" is the player's debut season (PlayerAttributes.from_year), so
-    context column 0 ("age") is years since debut. That is what the trained L1
-    model saw: PlayerAttributes.birth_year held from_year when its cache was
-    built (real birth years were filled in later).
-    """
+
+def player_profile(conn, person_id: int) -> dict:
+    """Profile for the L1 prior: PlayerAttributes, else DEFAULT_PROFILE with a
+    birth year estimated from the debut season."""
+    profile = _load_player_profile(conn, person_id)
+    if profile:
+        return profile
+    return {**DEFAULT_PROFILE, "birth_year": (_debut_year(conn, person_id) or 2021) - DEBUT_AGE}
+
+
+def _load_player_profile(conn, person_id: int) -> dict:
+    """Load static player profile for prior network ({} without a
+    PlayerAttributes row). Missing birth years are estimated from the debut."""
     cursor = conn.execute(
         """
         SELECT
             pa.height_inches, pa.weight, pa.draft_number, pa.undrafted,
-            pa.from_year, pa.position,
+            pa.birth_year, pa.position,
             dw.wingspan_in
         FROM PlayerAttributes pa
         LEFT JOIN DataballrWingspan dw ON pa.person_id = dw.nba_id
@@ -367,7 +374,8 @@ def _load_player_profile(conn, person_id: int) -> dict:
         "weight": weight or 215,
         "draft_pick": draft_pick or 60,  # undrafted → 60 (last pick equivalent)
         "undrafted": float(undrafted or 0),
-        "birth_year": birth_year or _debut_year(conn, person_id) or 2000,
+        "birth_year": birth_year
+        or (_debut_year(conn, person_id) or 2021) - DEBUT_AGE,
         "wingspan_inches": wingspan
         or (height or 78),  # default to height if no wingspan
         "pos_g": pos_g,
@@ -402,48 +410,55 @@ def _load_team_id_to_abbr(conn) -> dict[int, str]:
 
 def _load_team_rolling_stats(conn) -> dict[tuple[str, str], dict]:
     """
-    Pre-compute team stats (points, opponent points) per team per season.
-    Covers both home and away games. Uses points as proxy for ORTG/DRTG.
-    Returns {(team_abbr, season): {ortg, drtg, pace}}.
+    Team scoring as of each game: {(team_abbr, game_id): {ortg, drtg, pace}}.
+
+    Season-to-date averages of points scored (ortg) and allowed (drtg) and
+    their sum (pace proxy) over the team's earlier games that season; a team's
+    first game uses its previous season's averages (league average without).
     """
-    # Points for and against per game, keyed by the franchise's current
-    # abbreviation (Teams), so relocated teams (SEA, NJN) are included
-    cursor = conn.execute(
+    rows = conn.execute(
         """
-        SELECT t.abbreviation, g.season, AVG(tb.pts), AVG(tb_opp.pts)
-        FROM TeamBox tb
-        JOIN Games g ON g.game_id = tb.game_id
-        JOIN TeamBox tb_opp ON tb_opp.game_id = tb.game_id AND tb_opp.team_id != tb.team_id
+        SELECT g.game_id, g.season, g.date_time_utc, t.abbreviation, tb.pts, tb.pts_allowed
+        FROM Games g
+        JOIN TeamBox tb ON tb.game_id = g.game_id
         JOIN Teams t ON t.team_id = tb.team_id
-        WHERE g.status = 3
-        GROUP BY t.abbreviation, g.season
-        """,
-    )
+        WHERE g.status = 3 AND g.season_type IN ('Regular Season', 'Post Season')
+        ORDER BY g.date_time_utc
+        """
+    ).fetchall()
+    # Games store the team abbreviation of the time; TeamBox uses team ids, so
+    # map each game's team id to the abbreviation used in its Games row
+    abbr_in_game = {}
+    for gid, home, away in conn.execute("SELECT game_id, home_team, away_team FROM Games"):
+        for abbr in (home, away):
+            abbr_in_game[(gid, HISTORICAL_TO_MODERN.get(abbr, abbr))] = abbr
+
+    def stats(s):
+        n, pts, opp = s
+        return {"ortg": pts / n, "drtg": opp / n, "pace": (pts + opp) / n}
+
+    league = {"ortg": 110.0, "drtg": 110.0, "pace": 220.0}
+    totals: dict[tuple[str, str], list] = {}
     result = {}
-    for row in cursor:
-        team, season, avg_pts, avg_opp_pts = row
-        # Approximate ratings: scale points to per-100-possessions
-        # NBA average ~100 possessions/game, so raw points ≈ ORTG
-        result[(team, season)] = {
-            "pace": (avg_pts or 100)
-            + (avg_opp_pts or 100),  # total points ≈ pace proxy
-            "ortg": avg_pts or 110.0,
-            "drtg": avg_opp_pts or 110.0,
-        }
+    for gid, season, _, team, pts, opp in rows:
+        if pts is None or opp is None:
+            continue
+        team = HISTORICAL_TO_MODERN.get(team, team)
+        key = (team, season)
+        if key in totals:
+            before = stats(totals[key])
+        else:
+            prev = f"{int(season[:4]) - 1}-{season[:4]}"
+            before = stats(totals[(team, prev)]) if (team, prev) in totals else league
+            totals[key] = [0, 0.0, 0.0]
+        result[(abbr_in_game.get((gid, team), team), gid)] = before
+        totals[key][0] += 1
+        totals[key][1] += pts
+        totals[key][2] += opp
     return result
 
 
 # ---------------------------------------------------------------------------
-# Per-player cache building
-# ---------------------------------------------------------------------------
-
-
-def _extract_game_date(date_time_utc: str) -> str:
-    """Eastern date (YYYY-MM-DD) of a tip-off: DarkoDPM.game_date and rest days
-    are Eastern, and evening games fall on the next UTC day."""
-    if not date_time_utc:
-        return ""
-    return to_eastern_date(date_time_utc)
 
 
 def build_player_cache(
@@ -475,11 +490,9 @@ def build_player_cache(
     if not games or len(games) < min_games:
         return None
 
-    profile = _load_player_profile(conn, person_id)
-    if not profile:
-        if require_profile:
-            return None
-        profile = {**DEFAULT_PROFILE, "birth_year": int(games[0]["season"][:4])}
+    if require_profile and not _load_player_profile(conn, person_id):
+        return None
+    profile = player_profile(conn, person_id)
 
     pbp_data = _load_pbp_stats(conn, person_id)
     dpm_data = _load_dpm_targets(conn, person_id)
@@ -505,7 +518,8 @@ def build_player_cache(
         game_id = game["game_id"]
         game_ids.append(game_id)
         team_ids.append(int(game.get("team_id", 0)))
-        date_str = _extract_game_date(game.get("date_time_utc", ""))
+        # Eastern calendar date (rest days, age)
+        date_str = to_eastern_date(game["date_time_utc"]) if game.get("date_time_utc") else ""
 
         # --- Box stats ---
         for j, col in enumerate(BOX_STAT_COLUMNS):
@@ -571,7 +585,6 @@ def build_player_cache(
 
         # Normalize historical team abbreviations
         home_modern = HISTORICAL_TO_MODERN.get(home_team, home_team)
-        away_modern = HISTORICAL_TO_MODERN.get(away_team, away_team)
 
         # Determine if player is home via team_id → abbreviation lookup
         player_abbr = ""
@@ -580,12 +593,11 @@ def build_player_cache(
         is_home = player_abbr in (home_team, home_modern) if player_abbr else False
         context[i, 2] = 1.0 if is_home else 0.0
 
-        # Opponent and team stats (use modern abbreviations for lookup)
-        opponent = away_modern if is_home else home_modern
-        player_team_abbr = home_modern if is_home else away_modern
-
-        opp_stats = team_stats.get((opponent, season), {})
-        tm_stats = team_stats.get((player_team_abbr, season), {})
+        # As of tip-off (see _load_team_rolling_stats)
+        opp_team = away_team if is_home else home_team
+        own_team = home_team if is_home else away_team
+        opp_stats = team_stats.get((opp_team, game_id), {})
+        tm_stats = team_stats.get((own_team, game_id), {})
 
         context[i, 3] = opp_stats.get("drtg", 110.0)  # opponent_drtg
         context[i, 4] = tm_stats.get("pace", 200.0)  # team_pace (pts+opp_pts scale)
@@ -828,9 +840,10 @@ def build_cache(min_games: int = 5):
             "data_splits": {
                 "l1_pretrain": {"min_year": 2001, "max_year": 2016},
                 "l1_pretrain_val": {"min_year": 2017, "max_year": 2017},
-                "main_train": {"min_year": 2018, "max_year": 2022},
-                "val": {"min_year": 2023, "max_year": 2023},
-                "test": {"min_year": 2024, "max_year": 2030},
+                "main_train": {"min_year": 2018, "max_year": 2023},
+                "val": {"min_year": 2024, "max_year": 2024},
+                # 2025-26 onward: held out for the Phase5 evaluation
+                "test": {"min_year": 2025, "max_year": 2030},
             },
         }
 

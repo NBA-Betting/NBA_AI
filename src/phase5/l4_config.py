@@ -32,21 +32,13 @@ class L4Config:
 
     # --- Prediction heads ---
     # spread_mu: Linear(d_hidden, 1)
-    # spread_sigma: Softplus(Linear(d_hidden + 1, 1))  -- +1 for total_mu input
+    # spread_sigma: Softplus(Linear(d_hidden, 1))
     # win_logit: Linear(d_hidden, 1)
-    # total_mu: Linear(d_hidden, 1)
-    # total_sigma: Softplus(Linear(d_hidden, 1))
 
     # --- Loss weights ---
     w_spread: float = 1.0  # Gaussian NLL for spread
     w_win: float = 0.3  # BCE for win probability
-    w_total: float = 0.0  # Disabled: total head was hurting spread (MAE 105 off)
     w_consistency: float = 0.1  # MSE between Phi(mu/sigma) and win_prob
-
-    # --- ATS classification head ---
-    w_ats: float = 0.15  # BCE weight for ATS prediction
-    ats_ramp_start: int = 11  # epoch to start ramping ATS loss
-    ats_ramp_epochs: int = 5  # epochs over which to ramp from 0 to w_ats
 
     # --- Training ---
     learning_rate: float = 3e-4
@@ -58,7 +50,6 @@ class L4Config:
 
     # --- Spread loss ---
     spread_sigma_min: float = 1.0  # floor on spread sigma to prevent collapse
-    total_sigma_min: float = 1.0  # floor on total sigma
 
     @property
     def d_matchup(self) -> int:

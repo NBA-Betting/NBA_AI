@@ -16,6 +16,14 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+# Age input to the Kalman transition (aging drift), in years from a typical prime
+AGE_CENTER, AGE_SCALE = 27.0, 5.0
+
+
+def scaled_age(context: torch.Tensor) -> torch.Tensor:
+    """(T, 1) aging input from raw context column 0 (age at the game, years)."""
+    return (context[:, 0:1] - AGE_CENTER) / AGE_SCALE
+
 logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "phase5_cache"
@@ -453,9 +461,7 @@ class CareerSequenceDataset(Dataset):
         profile = self._get_profile(pid)
 
         # Age sequence for Kalman prediction step
-        # Context column 0 is career tenure (years), not biological age
-        # Normalize to roughly [-1, 1.5]: (tenure - 8) / 8
-        age_t = (ctx_t[:, 0:1] - 8.0) / 8.0  # (max_len, 1)
+        age_t = scaled_age(ctx_t)  # (max_len, 1)
 
         # Days-since-last-game for time-scaled Kalman drift + process noise
         # Context column 8 is raw days_since_last_game (extract BEFORE normalization)

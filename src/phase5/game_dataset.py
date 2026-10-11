@@ -41,7 +41,6 @@ class PhaseBDataset(Dataset):
         roster_summaries: np.ndarray,  # (N, 2, 12)
         targets_margin: np.ndarray,  # (N,)
         targets_win: np.ndarray,  # (N,)
-        targets_total: np.ndarray,  # (N,)
         # Coach data
         coach_indices: np.ndarray | None = None,  # (N, 2) int64
         coach_games: np.ndarray | None = None,  # (N, 2) float32
@@ -73,7 +72,6 @@ class PhaseBDataset(Dataset):
         self.roster_summaries = roster_summaries
         self.targets_margin = targets_margin
         self.targets_win = targets_win
-        self.targets_total = targets_total
         self.coach_indices = coach_indices
         self.coach_games = coach_games
 
@@ -160,7 +158,6 @@ class PhaseBDataset(Dataset):
             # Targets
             "actual_margin": torch.tensor(self.targets_margin[i], dtype=torch.float32),
             "actual_home_win": torch.tensor(self.targets_win[i], dtype=torch.float32),
-            "actual_total": torch.tensor(self.targets_total[i], dtype=torch.float32),
         }
 
 
@@ -210,7 +207,6 @@ def load_phase_b_data(
         "game_context": gc_data["features"],
         "targets_margin": tgt_data["margin"],
         "targets_win": tgt_data["home_win"],
-        "targets_total": tgt_data["total"],
         "game_ids": game_ids,
         "seasons": seasons,
         "metadata": metadata,
@@ -301,7 +297,6 @@ def make_train_val_datasets(
         roster_summaries=data["roster_summaries"],
         targets_margin=data["targets_margin"],
         targets_win=data["targets_win"],
-        targets_total=data["targets_total"],
         coach_indices=data.get("coach_indices"),
         coach_games=data.get("coach_games"),
         l3_mean=l3_mean,
