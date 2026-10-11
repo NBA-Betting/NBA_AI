@@ -242,8 +242,12 @@ def load_prior_states(game_ids_dict, db_path=DB_PATH, parse_players_data=False):
                         continue
                     # A relocated team played that season under its old
                     # abbreviation (SEA for OKC's first 2008-09 game); match the
-                    # franchise and relabel, since features find the team by name
-                    abbrs = franchise_abbrs(info[side])
+                    # franchise and relabel, since features find the team by name.
+                    # The Charlotte Hornets (CHH) moved to New Orleans in 2002, but
+                    # the NBA gave that history back to Charlotte's franchise.
+                    abbrs = franchise_abbrs(info[side]) + (
+                        ["CHH"] if info[side] == "NOH" else []
+                    )
                     q = ", ".join("?" * len(abbrs))
                     cursor.execute(
                         f"""
