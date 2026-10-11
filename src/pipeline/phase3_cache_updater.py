@@ -90,7 +90,8 @@ class Phase3CacheUpdater:
 
         Uses Games table only (no GameStates join) since game_data_finalized=1
         already implies GameStates exist. This avoids a slow join on the large
-        GameStates table.
+        GameStates table. The box score must be final too: a cached game is
+        never rebuilt, and the cache stores its box-score stats.
         """
         season_placeholders = ",".join(["?"] * len(self.seasons))
         query = f"""
@@ -99,6 +100,7 @@ class Phase3CacheUpdater:
             WHERE season IN ({season_placeholders})
               AND status = 3
               AND game_data_finalized = 1
+              AND boxscore_data_finalized = 1
               AND season_type IN ('Regular Season', 'Post Season')
         """
         with get_db(self.db_path) as conn:
