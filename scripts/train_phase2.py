@@ -82,7 +82,8 @@ def load_aux_features(path: str) -> dict | None:
 def load_projected_rosters(cache: dict, seasons: list[str], cache_dir: str) -> dict:
     """Pre-game rosters for every game in the seasons, built as the predictor
     builds them (RosterAssembler as of tip-off, capped at ROSTER_CAP), so the
-    model trains on what it sees live. Saved in the cache dir."""
+    model trains on what it sees live. Saved in the cache dir, which only
+    gains games it lacks: delete it after changing the roster code."""
     import json
 
     from src.database import DB_PATH
@@ -90,12 +91,20 @@ def load_projected_rosters(cache: dict, seasons: list[str], cache_dir: str) -> d
     from src.pipeline.roster_assembler import RosterAssembler
 
     path = Path(cache_dir) / "projected_rosters.json"
-    if path.exists():
-        return {g: tuple(r) for g, r in json.loads(path.read_text()).items()}
-    game_ids = [g for g, gf in cache["game_features"].items() if gf.season in seasons]
+    rosters = (
+        {g: tuple(r) for g, r in json.loads(path.read_text()).items()}
+        if path.exists()
+        else {}
+    )
+    game_ids = [
+        g
+        for g, gf in cache["game_features"].items()
+        if gf.season in seasons and g not in rosters
+    ]
+    if not game_ids:
+        return rosters
     logging.info(f"Projecting pre-game rosters for {len(game_ids)} games...")
     assembler = RosterAssembler(DB_PATH, historical=True)
-    rosters = {}
     for i in range(0, len(game_ids), 500):
         for g, r in assembler.get_projected_rosters(game_ids[i : i + 500]).items():
             rosters[g] = (r["home_players"][:ROSTER_CAP], r["away_players"][:ROSTER_CAP])

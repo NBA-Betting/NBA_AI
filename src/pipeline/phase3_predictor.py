@@ -48,12 +48,12 @@ DEFAULT_CONFIG_PATHS = [
 
 DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "phase3_cache"
 
-# Projected players per team for upcoming games. Training rosters were the
-# players who logged minutes in the game itself (~10.9/team), and that count
-# tracks the final margin, so the model reads roster size as a margin signal.
-# Uncapped projected rosters (~13-15) score no better than predicting the mean
-# margin; 11 gave the best-calibrated spreads on 2024-26 games (MAE 11.7 vs
-# 12.9). Retraining on pre-game rosters is the real fix.
+# Projected players per team (top by recent minutes). The model trains on the
+# same capped pre-game rosters (scripts/train_phase2.py). The cap dates from
+# models trained on box-score rosters (~10.9/team), where 11 gave the best
+# spreads. Injury reports start in Oct 2023, so earlier training rosters still
+# include injured players (~1.4-1.95 per team-game who didn't play, vs ~1.1-1.2
+# since and live).
 ROSTER_CAP = 11
 
 
