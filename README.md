@@ -150,7 +150,7 @@ The repository includes trained models for four predictors that work out of the 
 
 Linear, Tree, and MLP are combined by the **Ensemble** predictor (equal-weight average), along with Phase5 and Phase3 when their models are present.
 
-The deep learning models (**Phase5** and **Phase3**) are not included due to size. To use them, train your own using the scripts in `scripts/`. To retrain the legacy models on updated data:
+The deep learning models (**Phase5** and **Phase3**) are not included due to size. To use them, train your own using the scripts in `scripts/`. Training them needs the full historical database (every season since 2001-02 plus the training-only tables such as RAPM and lineups); the starter database has two seasons and none of those tables. To retrain the legacy models on updated data:
 
 ```bash
 python scripts/train_legacy_models.py --cutoff-date 2026-03-31
