@@ -27,6 +27,7 @@ import sqlite3
 from src.config import config
 from src.database import get_db
 from src.logging_config import setup_logging
+from src.phase5.arena_data import franchise_abbrs
 from src.utils import log_execution_time, lookup_basic_game_info
 
 # Configuration values
@@ -239,20 +240,28 @@ def load_prior_states(game_ids_dict, db_path=DB_PATH, parse_players_data=False):
                 for side in ("home", "away"):
                     if states[f"{side}_prior_states"]:
                         continue
+                    # A relocated team played that season under its old
+                    # abbreviation (SEA for OKC's first 2008-09 game); match the
+                    # franchise and relabel, since features find the team by name
+                    abbrs = franchise_abbrs(info[side])
+                    q = ", ".join("?" * len(abbrs))
                     cursor.execute(
-                        """
+                        f"""
                         SELECT gs.* FROM GameStates gs
                         JOIN Games g ON g.game_id = gs.game_id
                         WHERE g.season = ?
                         AND g.season_type IN ('Regular Season', 'Post Season')
                         AND g.status = 3 AND gs.is_final_state = 1
-                        AND (g.home_team = ? OR g.away_team = ?)
+                        AND (g.home_team IN ({q}) OR g.away_team IN ({q}))
                         AND g.date_time_utc < ?
                         ORDER BY g.date_time_utc
                         """,
-                        (previous_season, info[side], info[side], info["date_time_utc"]),
+                        (previous_season, *abbrs, *abbrs, info["date_time_utc"]),
                     )
                     fallback = [dict(row) for row in cursor.fetchall()]
+                    for state in fallback:
+                        team_side = "home" if state["home"] in abbrs else "away"
+                        state[team_side] = info[side]
                     if parse_players_data:
                         for state in fallback:
                             state["players_data"] = json.loads(state["players_data"])
