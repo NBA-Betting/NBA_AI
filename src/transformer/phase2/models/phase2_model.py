@@ -319,6 +319,8 @@ class Phase2Model(nn.Module):
             roster_exp = roster_ids.unsqueeze(2).unsqueeze(3)  # (B, R, 1, 1)
             game_exp = player_ids.unsqueeze(1)  # (B, 1, G, 15)
             presence = (roster_exp == game_exp).any(dim=-1)  # (B, R, G)
+            # A padded roster slot (id 0) matches padded game slots; it's not a player
+            presence = presence & (roster_ids != 0).unsqueeze(-1)
 
             # Absence mask for attention: absent games + padded games + padded roster slots
             absence = ~presence | game_mask.unsqueeze(1)  # (B, R, G)

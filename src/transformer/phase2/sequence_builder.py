@@ -56,9 +56,12 @@ class Phase2SequenceBuilder:
         season_index: dict[tuple, list[str]],
         n_recent_games: int = 5,
         max_context_games: int = 82,
+        projected_rosters: Optional[dict[str, tuple[list[int], list[int]]]] = None,
     ):
         self.game_features = game_features
         self.season_index = season_index
+        # {game_id: (home, away)} pre-game rosters, as live predictions see them
+        self.projected_rosters = projected_rosters or {}
         self.n_recent_games = n_recent_games
         self.max_context_games = max_context_games
 
@@ -150,9 +153,13 @@ class Phase2SequenceBuilder:
             max(0, n_away - self.n_recent_games), n_away
         ))
 
-        # Extract target roster (player IDs only)
-        home_roster = self._extract_roster(target, is_home=True)
-        away_roster = self._extract_roster(target, is_home=False)
+        # Target roster: the pre-game projection when given (training must see
+        # what live predictions see), else the players who played
+        if game_id in self.projected_rosters:
+            home_roster, away_roster = self.projected_rosters[game_id]
+        else:
+            home_roster = self._extract_roster(target, is_home=True)
+            away_roster = self._extract_roster(target, is_home=False)
 
         # Compute rest days
         home_rest_days = self._compute_rest_days(home_context, target_date)
