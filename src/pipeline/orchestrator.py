@@ -1,9 +1,10 @@
 """
 Pipeline Orchestrator: daily entry point for the NBA_AI production pipeline.
 
-Two modes of operation:
-  - post-game (~1:30am ET): update DB with yesterday's results, run L1 incremental updates
-  - pre-game  (~4pm ET):    refresh injuries/betting, generate predictions for today's games
+Two modes of operation, run back to back by --mode=full (cron: 10am and 6pm ET):
+  - post-game: update DB with finished games' results, run L1 incremental updates
+  - pre-game:  refresh injuries/betting, predict today's games that haven't
+               started (the 6pm run re-predicts later games with fresher injuries)
 
 Usage:
     python -m src.pipeline.orchestrator --mode=post-game --season=Current
