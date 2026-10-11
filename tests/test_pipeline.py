@@ -65,11 +65,11 @@ class TestWebAppIntegration:
             assert r.status_code == 200
 
 
-def test_l1_updater_waits_for_pbp_then_masks_it():
+def test_l1_updater_waits_for_pbp():
     """A recent game without PBP stats holds back itself and every later
     game (the Kalman filter only moves forward); once it's older than
-    PBP_WAIT_DAYS it's processed with PBP masked. (Child process: the
-    updater loads torch.)"""
+    PBP_WAIT_DAYS it goes ahead (with PBP masked; not checked here).
+    (Child process: the updater loads torch.)"""
     code = """
 from datetime import datetime, timedelta, timezone
 from src.pipeline.l1_updater import PBP_WAIT_DAYS, L1IncrementalUpdater
