@@ -29,7 +29,7 @@ Usage:
 
 import argparse
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from tqdm import tqdm
 
@@ -37,9 +37,11 @@ from src.config import config
 from src.database import get_db
 from src.database_updater.betting import update_betting_data
 from src.database_updater.boxscores import get_boxscores, save_boxscores
+from src.database_updater.coaches import update_coaches
 from src.database_updater.game_states import create_game_states, save_game_states
 from src.database_updater.nba_official_injuries import update_nba_official_injuries
 from src.database_updater.pbp import get_pbp, save_pbp
+from src.database_updater.player_attributes import update_player_attributes
 from src.database_updater.players import update_players
 from src.database_updater.prior_states import (
     determine_prior_states_needed,
@@ -53,6 +55,8 @@ from src.utils import log_execution_time, lookup_basic_game_info
 
 # Configuration
 DB_PATH = config["database"]["path"]
+# An unfinished game this old no longer holds back its teams' later games
+BLOCKING_STALE_DAYS = 3
 
 
 def _validate_pbp(game_ids, db_path=DB_PATH, suppress_no_final_state=False):
@@ -157,33 +161,36 @@ def update_database(
     except Exception:
         pass  # Don't let the estimate check block the actual update
 
-    # STEP 1: Update Schedule
-    update_schedule(season)
-
-    # STEP 2: Update Players List
-    update_players(db_path)
-
-    # STEP 3: Update Injury Data
-    update_injury_data(season, db_path)
-
-    # STEP 4: Update Betting Data
-    update_betting_lines(season, db_path)
-
-    # STEP 5: Update Play-by-Play Data
-    update_pbp_data(season, db_path)
-
-    # STEP 6: Update Game States (parsed from PbP)
-    update_game_state_data(season, db_path)
-
-    # STEP 7: Update Boxscore Data
-    update_boxscore_data(season, db_path)
-
-    # STEP 8: Update Pre Game Data (Prior States, Feature Sets)
-    update_pre_game_data(season, db_path)
-
-    # STEP 9: Update Predictions
+    # Steps run in order; a failing step is logged and the rest still run
+    # (later steps work from what is already in the DB), then the failure is raised.
+    steps = [
+        ("schedule", lambda: update_schedule(season)),
+        ("players", lambda: update_players(db_path)),
+        # Phase5 inputs: current-season head coaches, missing player attributes
+        ("coaches", lambda: update_coaches(season, db_path)),
+        ("player_attributes", lambda: update_player_attributes(db_path)),
+        ("injuries", lambda: update_injury_data(season, db_path)),
+        ("betting", lambda: update_betting_lines(season, db_path)),
+        ("pbp", lambda: update_pbp_data(season, db_path)),
+        ("game_states", lambda: update_game_state_data(season, db_path)),
+        ("boxscores", lambda: update_boxscore_data(season, db_path)),
+        # Prior states and feature sets
+        ("pre_game", lambda: update_pre_game_data(season, db_path)),
+    ]
     if predictor:
-        update_prediction_data(season, predictor, db_path)
+        steps.append(
+            ("predictions", lambda: update_prediction_data(season, predictor, db_path))
+        )
+
+    failed = []
+    for name, step in steps:
+        try:
+            step()
+        except Exception as e:
+            logging.error(f"Database update step '{name}' failed: {e}")
+            failed.append(name)
+    if failed:
+        raise RuntimeError(f"Database update steps failed: {', '.join(failed)}")
 
 
 @log_execution_time()
@@ -245,6 +252,9 @@ def update_pbp_data(season, db_path=DB_PATH, chunk_size=100):
 
             if pbar:
                 pbar.update(1)
+            # get_pbp stops early once the API throttles; the rest wait for the next run
+            if len(pbp_data) < len(chunk_game_ids):
+                break
         except Exception as e:
             logging.error(f"Error processing PBP chunk starting at index {i}: {str(e)}")
             if pbar:
@@ -458,6 +468,9 @@ def update_boxscore_data(season, db_path=DB_PATH, chunk_size=30):
 
             if pbar:
                 pbar.update(1)
+            # get_boxscores stops early once the API throttles; the rest wait for the next run
+            if len(boxscore_data) < len(chunk_game_ids):
+                break
         except Exception as e:
             logging.error(
                 f"Error processing boxscore chunk starting at index {i}: {str(e)}"
@@ -567,7 +580,7 @@ def get_games_needing_pbp_update(season, db_path):
                  AND game_data_finalized = 0
                  AND NOT EXISTS (SELECT 1 FROM PbP_Logs WHERE PbP_Logs.game_id = Games.game_id))
             )
-            ORDER BY date_time_utc
+            ORDER BY date_time_utc DESC  -- newest first: old failures can't block recent games
             """,
             (season,),
         )
@@ -1096,7 +1109,7 @@ def get_games_needing_boxscores(season, db_path):
                      AND boxscore_data_finalized = 0
                      AND NOT EXISTS (SELECT 1 FROM PlayerBox WHERE PlayerBox.game_id = Games.game_id))
                 )
-                ORDER BY date_time_utc
+                ORDER BY date_time_utc DESC  -- newest first, as for PBP
                 """,
                 (season,),
             )
@@ -1110,7 +1123,7 @@ def get_games_needing_boxscores(season, db_path):
                 AND status IN (2, 3)  -- In Progress or Final
                 AND boxscore_data_finalized = 0
                 AND NOT EXISTS (SELECT 1 FROM PlayerBox WHERE PlayerBox.game_id = Games.game_id)
-                ORDER BY date_time_utc
+                ORDER BY date_time_utc DESC
                 """,
                 (season,),
             )
@@ -1266,13 +1279,34 @@ def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
             AND (g2.home_team = g1.home_team OR g2.away_team = g1.home_team OR g2.home_team = g1.away_team OR g2.away_team = g1.away_team)
             AND (g2.game_data_finalized = 0 OR g2.boxscore_data_finalized = 0)
             AND g2.status_text != 'PPD'  -- Ignore postponed games when checking for blocking
+            -- A game still unfinished days later (missing box score, API gap)
+            -- stops blocking, or both teams would get no features all season
+            AND g2.date_time_utc > ?
       )
     """
+    stale_before = (datetime.now(timezone.utc) - timedelta(days=BLOCKING_STALE_DAYS)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
     with get_db(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute(query, (season, season, season))
+        cursor.execute(query, (season, season, season, stale_before))
         results = cursor.fetchall()
+        stale = conn.execute(
+            """
+            SELECT game_id FROM Games
+            WHERE season = ? AND season_type IN ('Regular Season', 'Post Season')
+            AND (game_data_finalized = 0 OR boxscore_data_finalized = 0)
+            AND status_text != 'PPD' AND date_time_utc <= ?
+            """,
+            (season, stale_before),
+        ).fetchall()
+    if stale:
+        logging.warning(
+            f"{len(stale)} games still unfinalized after {BLOCKING_STALE_DAYS} days "
+            f"(no longer blocking later games' features): "
+            f"{', '.join(r[0] for r in stale[:10])}"
+        )
 
     return [row[0] for row in results]
 

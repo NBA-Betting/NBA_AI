@@ -24,6 +24,8 @@ import logging
 import math
 from numbers import Real
 
+import numpy as np
+
 from src.predictions.features import FEATURE_NAMES, load_feature_sets
 
 SCORE_FEATURES = ("Home_PPG", "Home_OPP_PPG", "Away_PPG", "Away_OPP_PPG")
@@ -48,6 +50,9 @@ class BasePredictor(ABC):
                                          Ignored for formula-based predictors.
         """
         self.model_paths = model_paths or []
+        # Games deliberately not predicted ({game_id: reason}), e.g. too
+        # little history; any other missing game is a failure
+        self.skipped = {}
 
     @abstractmethod
     def make_pre_game_predictions(self, game_ids):
@@ -88,8 +93,9 @@ class BasePredictor(ABC):
             cleaned = {}
             for name in self.required_features:
                 value = row[name]
-                # Existing models impute unavailable contextual stats as zero,
-                # but scores must have actual data and infinities are invalid.
+                # Unavailable contextual stats are imputed later (training mean,
+                # see _standardize), but scores must have actual data and
+                # infinities are invalid.
                 if value is None or (isinstance(value, Real) and math.isnan(value)):
                     if name in SCORE_FEATURES:
                         break
@@ -133,6 +139,19 @@ class BaseMLPredictor(BasePredictor):
         super().__init__(model_paths)
         self.models = []
         self.load_models()
+
+    @staticmethod
+    def _standardize(features: list[dict], mean, std) -> np.ndarray:
+        """Feature matrix with missing values set to the training mean (as in
+        training), then standardized. Without a scaler, missing values are 0."""
+        values = np.array(
+            [[np.nan if v is None else v for v in row.values()] for row in features],
+            dtype=np.float64,
+        )
+        if mean is None:
+            return np.nan_to_num(values)
+        mean, std = np.asarray(mean, dtype=np.float64), np.asarray(std, dtype=np.float64)
+        return (np.where(np.isnan(values), mean, values) - mean) / std
 
     @abstractmethod
     def load_models(self):

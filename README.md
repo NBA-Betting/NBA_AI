@@ -16,7 +16,7 @@
 
 This project predicts NBA game spreads and winners using a combination of deep learning models and traditional ML. Unlike my previous project, [NBA Betting](https://github.com/NBA-Betting/NBA_Betting/tree/main), which focused on extensive data collection and feature engineering, this project focuses on building advanced prediction models that learn directly from play-by-play data, box scores, and player tracking — minimizing manual feature engineering in favor of letting the models find the signal.
 
-The system runs a fully automated daily pipeline that collects game data, updates player ability models, and generates pre-game predictions for all upcoming games using multiple prediction engines. A Flask web app displays predictions alongside Vegas opening lines, with a dashboard for tracking model performance over time.
+The system runs a fully automated daily pipeline that collects game data, updates player ability models, and generates pre-game predictions for all upcoming games using multiple prediction engines. A Flask web app displays predictions alongside Vegas lines, with a dashboard for tracking model performance over time.
 
 ### Architecture
 
@@ -54,7 +54,7 @@ The system runs multiple prediction engines, each taking a different approach to
 
 - **Phase 5 (Hierarchical)**: A 4-level neural architecture that models basketball from the ground up — individual player abilities (L1, Kalman filter), player synergy (L2, GATv2), team effects (L3), and game-level matchup prediction (L4). ~1.4M parameters, trained on play-by-play and box score data.
 
-- **Phase 3 (Transformer)**: A roster-conditioned temporal transformer that processes each team's full season history with player-level attention. ~25M parameters, captures game-to-game dynamics and roster interactions.
+- **Phase 3 (Transformer)**: A roster-conditioned temporal transformer that processes each team's full season history with player-level attention. ~27M parameters, captures game-to-game dynamics and roster interactions.
 
 ### Traditional ML Models
 
@@ -65,11 +65,11 @@ The system runs multiple prediction engines, each taking a different approach to
 
 ### Ensemble
 
-- **Ensemble**: Equal-weight combination of all five models above. Averages spreads arithmetically and win probabilities in log-odds space.
+- **Ensemble**: Equal-weight combination of Phase5, Phase3, Linear, Tree, and MLP (whichever have predictions, at least two). Averages spreads arithmetically and win probabilities in log-odds space.
 
 ### Performance
 
-All models are evaluated against the spread (ATS) using Vegas closing lines. Performance chart will be updated once sufficient live data has accumulated.
+All models are evaluated against the spread (ATS) using Vegas closing lines. The dashboard shows each model's live record (predictions made before tip-off) and a 2025-26 backtest that replays the season through each model's live code with pre-game information only.
 
 <!-- Regenerate with: python scripts/generate_readme_chart.py -->
 <!-- ![Prediction Engine Performance Metrics](docs/images/predictor_performance.png) -->
@@ -80,7 +80,7 @@ All models are evaluated against the spread (ATS) using Vegas closing lines. Per
 
 - Python 3.10+
 - PyTorch (required for MLP predictor; optional for others)
-- ~2GB disk space (starter database expands to ~1.4GB)
+- ~2GB disk space (starter database expands to ~1.6GB)
 
 ### 1. Install
 
@@ -103,7 +103,7 @@ Download `NBA_AI_starter.sqlite.gz` from [GitHub Releases](https://github.com/NB
 python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('NBA_AI_starter.sqlite.gz','rb'), open('data/NBA_AI_starter.sqlite','wb'))"
 ```
 
-The starter database contains the current season's games, box scores, play-by-play, betting lines, injury reports, and predictions from all models. The `.env` file is already configured to use it.
+The starter database contains the current and previous seasons' games, box scores, play-by-play, betting lines, injury reports, and predictions from all models. The `.env` file is already configured to use it.
 
 ### 3. Run the Web App
 
@@ -148,9 +148,9 @@ The repository includes trained models for four predictors that work out of the 
 | **Tree** | XGBoost | Same features, Optuna-tuned hyperparameters |
 | **MLP** | Neural Network | 256-128-64 architecture with Huber loss |
 
-These models are combined by the **Ensemble** predictor (equal-weight average).
+Linear, Tree, and MLP are combined by the **Ensemble** predictor (equal-weight average), along with Phase5 and Phase3 when their models are present.
 
-The deep learning models (**Phase5** and **Phase3**) are not included due to size. To use them, train your own using the scripts in `scripts/`. To retrain the legacy models on updated data:
+The deep learning models (**Phase5** and **Phase3**) are not included due to size. To use them, train your own using the scripts in `scripts/`. Training them needs the full historical database (every season since 2001-02 plus the training-only tables such as RAPM and lineups); the starter database has two seasons and none of those tables. To retrain the legacy models on updated data:
 
 ```bash
 python scripts/train_legacy_models.py --cutoff-date 2026-03-31

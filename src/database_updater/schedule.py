@@ -407,7 +407,7 @@ def fetch_schedule(season, stage_logger=None):
 
         return all_games
 
-    except (KeyError, TypeError) as e:
+    except (KeyError, TypeError, ValueError) as e:  # ValueError: non-JSON reply
         logging.error(f"Error processing schedule data for {season}: {e}")
         return []
 
@@ -509,6 +509,14 @@ def save_schedule(games, season, db_path=DB_PATH, stage_logger=None):
                 COALESCE((SELECT game_data_finalized FROM Games WHERE game_id = :game_id), 0),
                 COALESCE((SELECT boxscore_data_finalized FROM Games WHERE game_id = :game_id), 0))
             ON CONFLICT(game_id) DO UPDATE SET
+                -- A rescheduled game's pre-game features (rest, day of season)
+                -- were built for its old slot: rebuild them. (Old row values.)
+                pre_game_data_finalized=CASE
+                    WHEN Games.status = 1 AND (
+                        Games.date_time_utc != excluded.date_time_utc
+                        OR Games.home_team != excluded.home_team
+                        OR Games.away_team != excluded.away_team)
+                    THEN 0 ELSE Games.pre_game_data_finalized END,
                 date_time_utc=excluded.date_time_utc,
                 home_team=excluded.home_team,
                 away_team=excluded.away_team,

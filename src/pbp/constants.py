@@ -8,7 +8,12 @@ Constants for PBP stat computation, matching pbpstats package values.
 AT_RIM_CUTOFF = 4  # < 4 ft = at rim
 SHORT_MID_CUTOFF = 14  # 4-14 ft = short mid-range
 # 14+ ft non-3PT = long mid-range
-CORNER_3_Y_CUTOFF = 87  # |locY| <= 87 = corner 3 (legacy coords)
+CORNER_3_Y_CUTOFF = 90  # |locY| <= 90 = corner 3 (legacy coords)
+# Legacy coordinates (0.1 ft, hoop at origin): restricted area and paint bounds,
+# fitted to the live feed's area labels (97.6% of 2PT shots agree)
+RESTRICTED_AREA_RADIUS = 44
+PAINT_HALF_WIDTH = 78
+PAINT_DEPTH = 137
 HEAVE_DISTANCE = 40  # > 40 ft = heave
 HEAVE_TIME = 2.0  # < 2 seconds remaining = heave
 

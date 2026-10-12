@@ -29,15 +29,20 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
+# Phase3 trains and predicts on 2008-09 onward; older seasons in the DB (added
+# for Phase5's L1) would only make the cache slower to update and load
+FIRST_SEASON = "2008-2009"
+
 
 def _get_available_seasons() -> list[str]:
-    """Get all seasons with finalized games from the database."""
+    """Get the seasons from FIRST_SEASON on with finalized games in the database."""
     with get_db() as conn:
         rows = conn.execute("""
             SELECT DISTINCT season FROM Games
             WHERE status = 3 AND season_type IN ('Regular Season', 'Post Season')
+            AND season >= ?
             ORDER BY season
-        """).fetchall()
+        """, (FIRST_SEASON,)).fetchall()
     return [row[0] for row in rows if row[0]]
 
 
@@ -85,7 +90,8 @@ class Phase3CacheUpdater:
 
         Uses Games table only (no GameStates join) since game_data_finalized=1
         already implies GameStates exist. This avoids a slow join on the large
-        GameStates table.
+        GameStates table. The box score must be final too: a cached game is
+        never rebuilt, and the cache stores its box-score stats.
         """
         season_placeholders = ",".join(["?"] * len(self.seasons))
         query = f"""
@@ -94,6 +100,7 @@ class Phase3CacheUpdater:
             WHERE season IN ({season_placeholders})
               AND status = 3
               AND game_data_finalized = 1
+              AND boxscore_data_finalized = 1
               AND season_type IN ('Regular Season', 'Post Season')
         """
         with get_db(self.db_path) as conn:
@@ -187,10 +194,14 @@ class Phase3CacheUpdater:
                 len(new_games),
                 self.cache_dir,
             )
+            # Keep the existing player mapping: the model's player embeddings
+            # are indexed by it, so re-sorting all player IDs would scramble them
+            mapping_path = self.cache_dir / "player_mapping.json"
             result = build_cache(
                 seasons=self.seasons,
                 cache_dir=str(self.cache_dir),
                 db_path=self.db_path,
+                player_mapping_path=str(mapping_path) if mapping_path.exists() else None,
             )
 
         n_total = result["n_games"]

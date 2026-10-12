@@ -18,6 +18,7 @@ import numpy as np
 
 from src.database import get_db
 from src.transformer.gamestates.tokenizer import GameStateTokenizer
+from src.utils import to_eastern_date
 
 # Cap for GameStates rows per game. Typical game has ~400-500 rows.
 MAX_GAMESTATES_ROWS = 750
@@ -79,7 +80,7 @@ class GameStateSequenceBuilder:
                 SELECT game_id
                 FROM Games
                 WHERE (home_team = ? OR away_team = ?)
-                AND date(date_time_utc) < date(?)
+                AND date(date_time_utc, '-5 hours') < date(?)
                 AND game_data_finalized = 1
                 AND status = 3
                 AND season_type IN ('Regular Season', 'Post Season')
@@ -147,7 +148,7 @@ class GameStateSequenceBuilder:
          final_home_score, final_away_score,
          reg_home_score, reg_away_score, is_overtime) = row
 
-        target_date = date_time_utc.split("T")[0]
+        target_date = to_eastern_date(date_time_utc)
 
         if is_overtime:
             train_home = reg_home_score

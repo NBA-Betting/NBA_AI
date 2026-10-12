@@ -8,7 +8,8 @@ It consists of functions to:
 
 Functions:
 - determine_predictor_class(predictor_name): Determines the predictor class based on the provided predictor name.
-- make_pre_game_predictions(game_ids, predictor_name=None, save=True): Generates pre-game predictions for the given game IDs using the specified predictor.
+- create_predictor(predictor_name, historical=False): Instantiates a predictor with its configured model paths.
+- make_pre_game_predictions(game_ids, predictor_name=None, save=True, skipped=None): Generates pre-game predictions for the given game IDs using the specified predictor.
 - main(): Main function to handle command-line arguments and orchestrate the prediction process.
 
 Usage:
@@ -20,6 +21,7 @@ Usage:
 
 import argparse
 import importlib
+import inspect
 import json
 import logging
 
@@ -112,23 +114,41 @@ def determine_predictor_class(predictor_name):
     return _get_predictor_class(predictor_name), predictor_name
 
 
-@log_execution_time(average_over="game_ids")
-def make_pre_game_predictions(game_ids, predictor_name=None, save=True):
-    # Determine the predictor class based on the provided name
+def create_predictor(predictor_name, historical=False):
+    """
+    Instantiate a predictor with its configured model paths.
+
+    historical=True predicts past games as of their tip-off (backtests), for
+    the predictors that support it; the others use stored pre-game features
+    either way.
+    """
     predictor_class, predictor_name = determine_predictor_class(predictor_name)
+    kwargs = {
+        "model_paths": PREDICTORS_CONFIG.get(predictor_name, {}).get("model_paths", [])
+    }
+    if historical and "historical" in inspect.signature(predictor_class).parameters:
+        kwargs["historical"] = True
+    return predictor_class(**kwargs)
+
+
+@log_execution_time(average_over="game_ids")
+def make_pre_game_predictions(game_ids, predictor_name=None, save=True, skipped=None):
+    """Predict the games with the named predictor (optionally saving them).
+    If a dict is passed as `skipped`, it receives the games the predictor
+    deliberately didn't predict, {game_id: reason}."""
+    # Resolve the predictor name (None -> default)
+    _, predictor_name = determine_predictor_class(predictor_name)
 
     logging.debug(
         f"Generating pre-game predictions for {len(game_ids)} games using predictor '{predictor_name}'."
     )
 
-    # Get the model paths from the configuration
-    model_paths = PREDICTORS_CONFIG.get(predictor_name, {}).get("model_paths", [])
-
-    # Instantiate the predictor class
-    predictor_instance = predictor_class(model_paths=model_paths)
+    predictor_instance = create_predictor(predictor_name)
 
     # Create the predictions
     pre_game_predictions = predictor_instance.make_pre_game_predictions(game_ids)
+    if skipped is not None:
+        skipped.update(predictor_instance.skipped)
     pre_game_predictions = _drop_implausible_predictions(
         pre_game_predictions, predictor_name
     )
@@ -157,7 +177,8 @@ def make_pre_game_predictions(game_ids, predictor_name=None, save=True):
 def save_predictions(predictions, predictor_name, db_path=DB_PATH):
     """
     Save predictions to the Predictions table.
-    Validates that predictions are made before game start time.
+    Predictions for games that have started are allowed (backtests), but never
+    replace a stored prediction that was made before that game's tip-off.
 
     Parameters:
     predictions (dict): The predictions to save.
@@ -166,9 +187,6 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
 
     Returns:
     None
-
-    Raises:
-    ValueError: If prediction is made after game start time.
     """
     if not predictions:
         logging.debug("No predictions to save.")
@@ -193,6 +211,14 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
         game_times = {
             row[0]: pd.to_datetime(row[1], utc=True) for row in cursor.fetchall()
         }
+        cursor.execute(
+            f"SELECT game_id, prediction_datetime FROM Predictions "
+            f"WHERE predictor = ? AND game_id IN ({placeholders})",
+            [predictor_name, *game_ids],
+        )
+        saved_at = {
+            row[0]: pd.to_datetime(row[1], utc=True) for row in cursor.fetchall()
+        }
 
         # Check each game
         for game_id in game_ids:
@@ -206,6 +232,13 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
             time_until_game = (game_time - prediction_datetime).total_seconds() / 60
 
             if time_until_game < 0:
+                if game_id in saved_at and saved_at[game_id] < game_time:
+                    logging.warning(
+                        f"Keeping the pre-game {predictor_name} prediction for "
+                        f"{game_id}; not replacing it after tip-off ({game_time})."
+                    )
+                    predictions = {k: v for k, v in predictions.items() if k != game_id}
+                    continue
                 # Allow predictions for past games (for historical analysis)
                 logging.debug(
                     f"Saving prediction for completed game {game_id}: prediction time "

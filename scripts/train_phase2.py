@@ -79,6 +79,39 @@ def load_aux_features(path: str) -> dict | None:
     return data
 
 
+def load_projected_rosters(cache: dict, seasons: list[str], cache_dir: str) -> dict:
+    """Pre-game rosters for every game in the seasons, built as the predictor
+    builds them (RosterAssembler as of tip-off, capped at ROSTER_CAP), so the
+    model trains on what it sees live. Saved in the cache dir, which only
+    gains games it lacks: delete it after changing the roster code."""
+    import json
+
+    from src.database import DB_PATH
+    from src.pipeline.phase3_predictor import ROSTER_CAP
+    from src.pipeline.roster_assembler import RosterAssembler
+
+    path = Path(cache_dir) / "projected_rosters.json"
+    rosters = (
+        {g: tuple(r) for g, r in json.loads(path.read_text()).items()}
+        if path.exists()
+        else {}
+    )
+    game_ids = [
+        g
+        for g, gf in cache["game_features"].items()
+        if gf.season in seasons and g not in rosters
+    ]
+    if not game_ids:
+        return rosters
+    logging.info(f"Projecting pre-game rosters for {len(game_ids)} games...")
+    assembler = RosterAssembler(DB_PATH, historical=True)
+    for i in range(0, len(game_ids), 500):
+        for g, r in assembler.get_projected_rosters(game_ids[i : i + 500]).items():
+            rosters[g] = (r["home_players"][:ROSTER_CAP], r["away_players"][:ROSTER_CAP])
+    path.write_text(json.dumps(rosters))
+    return rosters
+
+
 def create_dataloaders(
     config: Phase2ExperimentConfig,
     cache: dict,
@@ -86,6 +119,11 @@ def create_dataloaders(
     """Create train, validation, and test data loaders."""
 
     aux_features = load_aux_features(config.data.aux_features_file)
+    projected_rosters = load_projected_rosters(
+        cache,
+        config.data.train_seasons + config.data.val_seasons + config.data.test_seasons,
+        config.data.cache_dir,
+    )
 
     common_kwargs = dict(
         game_features=cache["game_features"],
@@ -104,6 +142,7 @@ def create_dataloaders(
         n_efficiency_features=config.data.n_efficiency_features,
         player_experience=cache.get("player_experience", {}),
         aux_features=aux_features,
+        projected_rosters=projected_rosters,
     )
 
     logging.info("Creating training dataset...")

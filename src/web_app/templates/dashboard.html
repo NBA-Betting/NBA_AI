@@ -1,497 +1,127 @@
-<!DOCTYPE html>
-<html lang="en">
+{% extends "base.html" %}
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NBA AI - Results Dashboard</title>
+{% block title %}NBA AI - Results Dashboard{% endblock %}
 
-    <!-- Bootstrap 5 CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
-
-    <!-- Custom CSS -->
-    <link href="{{ url_for('static', filename='css/custom.css') }}" rel="stylesheet">
-
-    <!-- Favicon -->
-    <link rel="icon" href="{{ url_for('static', filename='img/basketball.png') }}">
-
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-
-    <style>
-        .summary-card {
-            text-align: center;
-            padding: 1.25rem;
-            border-radius: 0.5rem;
-        }
-        .summary-card .card-value {
-            font-size: 2rem;
-            font-weight: 700;
-        }
-        .summary-card .card-label {
-            font-size: 0.85rem;
-            color: #6c757d;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        .summary-card .card-detail {
-            font-size: 0.9rem;
-            color: #495057;
-            margin-top: 0.25rem;
-        }
-        .text-profit { color: #28a745; }
-        .text-loss { color: #dc3545; }
-        .ats-win { color: #28a745 !important; font-weight: 700; }
-        .ats-loss { color: #dc3545 !important; font-weight: 700; }
-        .ats-push { color: #6c757d !important; font-weight: 700; }
-        .chart-container {
-            position: relative;
-            height: 300px;
-            margin-bottom: 1.5rem;
-        }
-        .table-dashboard th {
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-        }
-        .table-dashboard td {
-            vertical-align: middle;
-        }
-        #loadingSpinner {
-            text-align: center;
-            padding: 3rem;
-        }
-        #dashboardContent {
-            display: none;
-        }
-        #errorAlert {
-            display: none;
-        }
-    </style>
-</head>
-
-<body>
-
-    <!-- Header and Navbar -->
-    <nav class="navbar navbar-expand-lg navbar-light bg-light">
-        <div class="container">
-            <a class="navbar-brand d-flex align-items-center" href="{{ url_for('home') }}">
-                <img src="{{ url_for('static', filename='img/nba_ai_logo.png') }}" alt="NBA AI Logo" width="60"
-                    height="60">
-                <span class="navbar-text">NBA AI</span>
-            </a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="{{ url_for('home') }}">Games</a>
-                <a class="nav-link active" href="{{ url_for('dashboard.dashboard_page') }}">Dashboard</a>
-            </div>
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-2">
+        <div>
+            <h2 class="mb-1">Prediction Results</h2>
+            <p class="text-muted mb-0">Graded against Vegas closing lines, $100 bets at -110</p>
         </div>
-    </nav>
+        <div class="d-flex align-items-center gap-2">
+            <select id="recordSelect" class="form-select form-select-sm w-auto" aria-label="Record"></select>
+            <select id="predictorSelect" class="form-select form-select-sm w-auto" aria-label="Predictor"></select>
+        </div>
+    </div>
+    <p id="recordNote" class="small text-muted mb-4"></p>
 
-    <div class="container mt-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h2 class="mb-1">Prediction Results Dashboard</h2>
-                <p class="text-muted mb-0">Model performance against Vegas closing lines</p>
-            </div>
-            <div class="d-flex align-items-center gap-3">
-                <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="liveOnlyToggle"
-                        {% if live_only %}checked{% endif %} onchange="updateFilters()">
-                    <label class="form-check-label" for="liveOnlyToggle">Live Only</label>
+    <div id="loadingSpinner" class="text-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <div id="errorAlert" class="alert alert-danger" hidden></div>
+
+    <p id="emptyState" class="text-center text-muted py-5" hidden>No graded predictions yet.</p>
+
+    <div id="dashboardContent" hidden>
+        <!-- Summary -->
+        <div class="row mb-4 g-3">
+            <div class="col-md-3 col-6">
+                <div class="card summary-card h-100">
+                    <div class="card-value" id="atsRecord"></div>
+                    <div class="card-label">ATS Record</div>
+                    <div class="card-detail" id="atsPct"></div>
                 </div>
-                <select id="predictorSelect" class="form-select form-select-sm" style="width: auto;" onchange="updateFilters()">
-                    {% for p in available_predictors %}
-                    <option value="{{ p }}" {% if p == predictor %}selected{% endif %}>{{ p }}</option>
-                    {% endfor %}
-                </select>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card summary-card h-100">
+                    <div class="card-value" id="roi"></div>
+                    <div class="card-label">ROI</div>
+                    <div class="card-detail" id="roiDetail"></div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card summary-card h-100">
+                    <div class="card-value" id="mae"></div>
+                    <div class="card-label">Spread MAE</div>
+                    <div class="card-detail" id="maeDetail"></div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card summary-card h-100">
+                    <div class="card-value" id="nGames"></div>
+                    <div class="card-label">Games</div>
+                    <div class="card-detail" id="nGamesDetail"></div>
+                </div>
             </div>
         </div>
 
-        <!-- Loading Spinner -->
-        <div id="loadingSpinner">
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Loading...</span>
-            </div>
-            <p class="mt-2 text-muted">Loading dashboard data...</p>
-        </div>
-
-        <!-- Error Alert -->
-        <div id="errorAlert" class="alert alert-danger"></div>
-
-        <!-- Dashboard Content (hidden until data loads) -->
-        <div id="dashboardContent">
-
-            <!-- Summary Cards -->
-            <div class="row mb-4 g-3">
-                <div class="col-md-3 col-6">
-                    <div class="card summary-card h-100">
-                        <div class="card-value" id="atsRecord">--</div>
-                        <div class="card-label">ATS Record</div>
-                        <div class="card-detail" id="atsPct">--</div>
-                    </div>
-                </div>
-                <div class="col-md-3 col-6">
-                    <div class="card summary-card h-100">
-                        <div class="card-value" id="roi">--</div>
-                        <div class="card-label">ROI at -110</div>
-                        <div class="card-detail" id="roiDetail">--</div>
-                    </div>
-                </div>
-                <div class="col-md-3 col-6">
-                    <div class="card summary-card h-100">
-                        <div class="card-value" id="mae">--</div>
-                        <div class="card-label">Spread MAE</div>
-                        <div class="card-detail">vs actual margin</div>
-                    </div>
-                </div>
-                <div class="col-md-3 col-6">
-                    <div class="card summary-card h-100">
-                        <div class="card-value" id="nGames">--</div>
-                        <div class="card-label">Games Tracked</div>
-                        <div class="card-detail" id="nGamesDetail">--</div>
+        <div class="row mb-4 g-3">
+            <!-- Cumulative P&L -->
+            <div class="col-lg-7">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h6 class="card-title">Cumulative P&amp;L</h6>
+                        <div class="chart-container"><canvas id="plChart"></canvas></div>
                     </div>
                 </div>
             </div>
-
-            <!-- Charts Row -->
-            <div class="row mb-4">
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-body">
-                            <h6 class="card-title">Cumulative P&L ($100 flat bets at -110)</h6>
-                            <div class="chart-container">
-                                <canvas id="plChart"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-body">
-                            <h6 class="card-title">Rolling 20-Game ATS Win Rate</h6>
-                            <div class="chart-container">
-                                <canvas id="atsChart"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Recent Games Table -->
-            <div class="card mb-4">
-                <div class="card-body">
-                    <h6 class="card-title">Recent Games</h6>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-striped table-dashboard">
+            <!-- All models on the same games -->
+            <div class="col-lg-5">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h6 class="card-title mb-0">Model Comparison</h6>
+                        <p class="small text-muted" id="comparisonNote"></p>
+                        <table class="table table-sm table-hover table-dashboard mb-0">
                             <thead>
                                 <tr>
-                                    <th>Date</th>
-                                    <th>Home</th>
-                                    <th>Away</th>
-                                    <th class="text-center">Actual Margin</th>
-                                    <th class="text-center">Our Spread</th>
-                                    <th class="text-center">Vegas Close</th>
-                                    <th class="text-center">ATS</th>
-                                    <th class="text-center">Error</th>
+                                    <th>Model</th>
+                                    <th class="text-end">ATS</th>
+                                    <th class="text-end">ROI</th>
+                                    <th class="text-end">MAE</th>
                                 </tr>
                             </thead>
-                            <tbody id="gamesTableBody">
-                            </tbody>
+                            <tbody id="comparisonBody"></tbody>
                         </table>
                     </div>
-                    <div class="text-center mt-2">
-                        <button class="btn btn-sm btn-outline-secondary" id="showMoreBtn" style="display: none;">
-                            Show More
-                        </button>
-                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Games -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h6 class="card-title">Games</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped table-dashboard mb-0">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Home</th>
+                                <th>Away</th>
+                                <th class="text-center">Actual Margin</th>
+                                <th class="text-center">Our Spread</th>
+                                <th class="text-center">Vegas Close</th>
+                                <th class="text-center">ATS</th>
+                                <th class="text-center">Error</th>
+                            </tr>
+                        </thead>
+                        <tbody id="gamesTableBody"></tbody>
+                    </table>
+                </div>
+                <div class="text-center mt-2">
+                    <button class="btn btn-sm btn-outline-secondary" id="showMoreBtn" hidden>Show More</button>
                 </div>
             </div>
         </div>
     </div>
+</div>
+{% endblock %}
 
-    <!-- Bootstrap 5 JS bundle -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-
-    <script>
-        let allGames = [];
-        let gamesShown = 20;
-
-        function updateFilters() {
-            const predictor = document.getElementById("predictorSelect").value;
-            const liveOnly = document.getElementById("liveOnlyToggle").checked;
-            window.location.href = `/dashboard?predictor=${encodeURIComponent(predictor)}&live_only=${encodeURIComponent(liveOnly)}`;
-        }
-
-        function loadDashboard() {
-            const predictor = document.getElementById("predictorSelect").value;
-            const liveOnly = document.getElementById("liveOnlyToggle").checked;
-            fetch(`/dashboard/data?predictor=${predictor}&live_only=${liveOnly}`)
-                .then(response => {
-                    if (!response.ok) {
-                        return response.json().then(err => { throw new Error(err.error || "Failed to load data"); });
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    document.getElementById("loadingSpinner").style.display = "none";
-                    document.getElementById("dashboardContent").style.display = "block";
-
-                    if (data.error) {
-                        document.getElementById("errorAlert").style.display = "block";
-                        document.getElementById("errorAlert").textContent = data.error;
-                        return;
-                    }
-
-                    populateSummary(data.summary);
-                    drawPLChart(data.rolling.cumulative_pl);
-                    drawATSChart(data.rolling.ats);
-                    allGames = data.games;
-                    renderGamesTable(gamesShown);
-                })
-                .catch(err => {
-                    document.getElementById("loadingSpinner").style.display = "none";
-                    document.getElementById("errorAlert").style.display = "block";
-                    document.getElementById("errorAlert").textContent = "Error loading dashboard: " + err.message;
-                });
-        }
-
-        document.addEventListener("DOMContentLoaded", function () {
-            loadDashboard();
-
-            document.getElementById("showMoreBtn").addEventListener("click", function () {
-                gamesShown += 20;
-                renderGamesTable(gamesShown);
-            });
-        });
-
-        function populateSummary(summary) {
-            document.getElementById("atsRecord").textContent =
-                summary.ats_wins + "-" + summary.ats_losses +
-                (summary.ats_pushes > 0 ? "-" + summary.ats_pushes : "");
-
-            document.getElementById("atsPct").textContent = summary.ats_pct + "% win rate";
-
-            const roiEl = document.getElementById("roi");
-            roiEl.textContent = (summary.roi >= 0 ? "+" : "") + summary.roi + "%";
-            roiEl.className = "card-value " + (summary.roi >= 0 ? "text-profit" : "text-loss");
-
-            const winPayout = 100 / 1.10;
-            const totalProfit = (summary.ats_wins * winPayout) - (summary.ats_losses * 100);
-            document.getElementById("roiDetail").textContent =
-                (totalProfit >= 0 ? "+$" : "-$") + Math.abs(totalProfit).toFixed(0) + " profit";
-
-            document.getElementById("mae").textContent = summary.mae.toFixed(2);
-            document.getElementById("nGames").textContent = summary.n_games;
-
-            const decided = summary.ats_wins + summary.ats_losses;
-            document.getElementById("nGamesDetail").textContent =
-                decided + " decided, " + summary.ats_pushes + " pushes";
-        }
-
-        function drawPLChart(plData) {
-            if (!plData || plData.length === 0) return;
-
-            const ctx = document.getElementById("plChart").getContext("2d");
-
-            // Sample labels to avoid overcrowding (show ~15 date labels)
-            const step = Math.max(1, Math.floor(plData.length / 15));
-
-            new Chart(ctx, {
-                type: "line",
-                data: {
-                    labels: plData.map((d, i) => i % step === 0 || i === plData.length - 1 ? d.date : ""),
-                    datasets: [{
-                        label: "Cumulative P&L ($)",
-                        data: plData.map(d => d.pl),
-                        borderColor: plData[plData.length - 1].pl >= 0 ? "#28a745" : "#dc3545",
-                        backgroundColor: "transparent",
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        tension: 0.1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {
-                        intersect: false,
-                        mode: "index"
-                    },
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                title: function(items) {
-                                    const idx = items[0].dataIndex;
-                                    return plData[idx].date;
-                                },
-                                label: function(context) {
-                                    const val = context.parsed.y;
-                                    return (val >= 0 ? "+$" : "-$") + Math.abs(val).toFixed(2);
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            ticks: {
-                                maxRotation: 45,
-                                autoSkip: true,
-                                maxTicksLimit: 15
-                            },
-                            grid: { display: false }
-                        },
-                        y: {
-                            ticks: {
-                                callback: function(val) {
-                                    return (val >= 0 ? "+$" : "-$") + Math.abs(val);
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        function drawATSChart(atsData) {
-            if (!atsData || atsData.length === 0) return;
-
-            const ctx = document.getElementById("atsChart").getContext("2d");
-            const step = Math.max(1, Math.floor(atsData.length / 15));
-
-            new Chart(ctx, {
-                type: "line",
-                data: {
-                    labels: atsData.map((d, i) => i % step === 0 || i === atsData.length - 1 ? d.date : ""),
-                    datasets: [
-                        {
-                            label: "20-Game ATS %",
-                            data: atsData.map(d => d.ats_pct),
-                            borderColor: "#0d6efd",
-                            backgroundColor: "transparent",
-                            borderWidth: 2,
-                            pointRadius: 0,
-                            tension: 0.1
-                        },
-                        {
-                            label: "Breakeven (52.4%)",
-                            data: atsData.map(() => 52.4),
-                            borderColor: "#ffc107",
-                            borderDash: [6, 4],
-                            borderWidth: 1.5,
-                            pointRadius: 0
-                        },
-                        {
-                            label: "Coin Flip (50%)",
-                            data: atsData.map(() => 50),
-                            borderColor: "#adb5bd",
-                            borderDash: [3, 3],
-                            borderWidth: 1,
-                            pointRadius: 0
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {
-                        intersect: false,
-                        mode: "index"
-                    },
-                    plugins: {
-                        legend: {
-                            position: "bottom",
-                            labels: { boxWidth: 12, padding: 15 }
-                        },
-                        tooltip: {
-                            callbacks: {
-                                title: function(items) {
-                                    const idx = items[0].dataIndex;
-                                    return atsData[idx].date;
-                                },
-                                label: function(context) {
-                                    return context.dataset.label + ": " + context.parsed.y.toFixed(1) + "%";
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            ticks: {
-                                maxRotation: 45,
-                                autoSkip: true,
-                                maxTicksLimit: 15
-                            },
-                            grid: { display: false }
-                        },
-                        y: {
-                            min: 20,
-                            max: 80,
-                            ticks: {
-                                callback: function(val) { return val + "%"; }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        function renderGamesTable(limit) {
-            const tbody = document.getElementById("gamesTableBody");
-            tbody.innerHTML = "";
-
-            // Show most recent games first
-            const reversedGames = [...allGames].reverse();
-            const gamesToShow = reversedGames.slice(0, limit);
-
-            if (gamesToShow.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No completed games with predictions yet.</td></tr>';
-                return;
-            }
-
-            gamesToShow.forEach(game => {
-                const tr = document.createElement("tr");
-
-                // Format our spread in Vegas convention (negate: positive model = negative Vegas)
-                const vegasPredSpread = -game.pred_spread;
-                const predSpreadStr = (vegasPredSpread >= 0 ? "+" : "") + vegasPredSpread.toFixed(1);
-
-                // Vegas closing spread
-                const closingStr = (game.closing_spread >= 0 ? "+" : "") + game.closing_spread.toFixed(1);
-
-                // Actual margin display
-                const marginStr = (game.actual_margin >= 0 ? "+" : "") + game.actual_margin;
-
-                // ATS result styling
-                let atsClass = "ats-push";
-                if (game.ats_result === "W") atsClass = "ats-win";
-                else if (game.ats_result === "L") atsClass = "ats-loss";
-
-                tr.innerHTML =
-                    '<td>' + game.date + '</td>' +
-                    '<td>' + game.home + '</td>' +
-                    '<td>' + game.away + '</td>' +
-                    '<td class="text-center">' + marginStr + '</td>' +
-                    '<td class="text-center">' + predSpreadStr + '</td>' +
-                    '<td class="text-center">' + closingStr + '</td>' +
-                    '<td class="text-center ' + atsClass + '">' + game.ats_result + '</td>' +
-                    '<td class="text-center">' + game.abs_error.toFixed(1) + '</td>';
-
-                tbody.appendChild(tr);
-            });
-
-            // Show/hide "Show More" button
-            const btn = document.getElementById("showMoreBtn");
-            if (limit < allGames.length) {
-                btn.style.display = "inline-block";
-                btn.textContent = "Show More (" + Math.min(allGames.length - limit, 20) + " more)";
-            } else {
-                btn.style.display = "none";
-            }
-        }
-    </script>
-
-</body>
-
-</html>
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

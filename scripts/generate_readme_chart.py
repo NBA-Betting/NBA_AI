@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Generate prediction model performance chart for README.
 
-Queries the database for live predictions (April 1, 2026 onward) and computes
-ATS win rate, ROI at -110, and Spread MAE for all predictors. Produces a
+Scores live predictions (made before tip-off, April 1, 2026 onward) with the
+results dashboard's model comparison: ATS win rate, ROI at -110, and Spread
+MAE for all predictors on the games they all predicted. Produces a
 grouped bar chart saved to docs/images/predictor_performance.png.
 
 Usage:
     python scripts/generate_readme_chart.py
 """
 
-import json
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -22,9 +21,12 @@ import matplotlib.pyplot as plt
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.database import get_db  # noqa: E402
+from src.web_app.dashboard import (  # noqa: E402
+    LIVE_PREDICTIONS_START as LIVE_START,
+    compare_predictors,
+    load_live_record,
+)
 
-LIVE_START = "2026-04-01"
 OUTPUT_PATH = REPO_ROOT / "docs" / "images" / "predictor_performance.png"
 
 # Breakeven ATS% at -110 odds
@@ -54,105 +56,6 @@ COLORS = {
     "Linear": "#d97706",  # amber
     "Baseline": "#6b7280",  # gray
 }
-
-
-def compute_predictor_metrics(predictor: str, conn: sqlite3.Connection) -> dict | None:
-    """
-    Compute ATS win rate, ROI, and spread MAE for a single predictor.
-
-    Uses the same logic as src/web_app/dashboard.py:_fetch_dashboard_data().
-    """
-    query = """
-        SELECT
-            g.game_id,
-            gs.home_score,
-            gs.away_score,
-            p.prediction_set,
-            COALESCE(b.espn_closing_spread, b.covers_closing_spread) AS closing_spread
-        FROM Games g
-        JOIN Predictions p ON g.game_id = p.game_id
-        JOIN Betting b ON g.game_id = b.game_id
-        JOIN GameStates gs ON g.game_id = gs.game_id AND gs.is_final_state = 1
-        WHERE g.status = 3
-          AND p.predictor = ?
-          AND COALESCE(b.espn_closing_spread, b.covers_closing_spread) IS NOT NULL
-          AND g.date_time_utc >= ?
-        ORDER BY g.date_time_utc ASC
-    """
-
-    rows = conn.execute(query, (predictor, LIVE_START)).fetchall()
-
-    ats_wins = 0
-    ats_losses = 0
-    ats_pushes = 0
-    abs_errors = []
-
-    for game_id, home_score, away_score, prediction_set_json, closing_spread in rows:
-        prediction_set = json.loads(prediction_set_json)
-        pred_spread = prediction_set.get("pred_spread")
-
-        # Legacy predictors output scores, not spread — derive spread.
-        if pred_spread is None:
-            pred_home = prediction_set.get("pred_home_score")
-            pred_away = prediction_set.get("pred_away_score")
-            if pred_home is not None and pred_away is not None:
-                pred_spread = pred_home - pred_away
-            else:
-                continue
-
-        if closing_spread is None:
-            continue
-
-        actual_margin = home_score - away_score
-
-        # ATS logic (mirrors dashboard.py exactly):
-        # pred_spread: positive = home advantage (model convention)
-        # closing_spread: negative = home favored (Vegas convention)
-        #
-        # Our pick: home covers when pred_spread > -closing_spread
-        # Home actually covers when actual_margin > -closing_spread
-        vegas_line = -closing_spread  # convert to home-favored-positive
-        margin_vs_line = actual_margin - vegas_line  # >0 means home covered
-
-        # Push check
-        if abs(margin_vs_line) < 0.25:
-            ats_pushes += 1
-        else:
-            home_covered = margin_vs_line > 0
-            we_picked_home = pred_spread > vegas_line
-            if we_picked_home == home_covered:
-                ats_wins += 1
-            else:
-                ats_losses += 1
-
-        # Spread MAE
-        abs_errors.append(abs(pred_spread - actual_margin))
-
-    n_decided = ats_wins + ats_losses
-    if n_decided == 0:
-        return None
-
-    ats_pct = ats_wins / n_decided * 100
-
-    # ROI: flat $100 bets at -110 odds
-    win_payout = 100 / 1.10  # ~$90.91
-    total_profit = (ats_wins * win_payout) - (ats_losses * 100)
-    total_wagered = n_decided * 100
-    roi = total_profit / total_wagered * 100
-
-    mae = sum(abs_errors) / len(abs_errors) if abs_errors else 0.0
-
-    return {
-        "predictor": predictor,
-        "ats_wins": ats_wins,
-        "ats_losses": ats_losses,
-        "ats_pushes": ats_pushes,
-        "n_decided": n_decided,
-        "n_games": len(rows),
-        "ats_pct": round(ats_pct, 1),
-        "roi": round(roi, 1),
-        "mae": round(mae, 2),
-    }
 
 
 def print_table(metrics: list[dict]) -> None:
@@ -296,14 +199,15 @@ def create_chart(metrics: list[dict]) -> None:
 
 
 def main():
-    metrics = []
-    with get_db() as conn:
-        for predictor in PREDICTORS:
-            m = compute_predictor_metrics(predictor, conn)
-            if m is not None:
-                metrics.append(m)
-            else:
-                print(f"WARNING: {predictor} — no decided games, skipping.")
+    # Same comparison as the dashboard: every model on the games they all
+    # predicted (models with too few games are left out)
+    games, predictions = load_live_record()
+    rows, n_common, excluded = compare_predictors(games, predictions)
+    by_name = {row["predictor"]: row for row in rows}
+    metrics = [by_name[p] for p in PREDICTORS if p in by_name]
+    print(f"{n_common} games every model predicted")
+    for p in excluded:
+        print(f"WARNING: {p} — too few games, left out.")
 
     if not metrics:
         print("ERROR: No metrics computed. Is the database populated?")

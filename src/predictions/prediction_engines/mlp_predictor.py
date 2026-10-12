@@ -16,7 +16,6 @@ Usage:
     pre_game_predictions = predictor.make_pre_game_predictions(game_ids)
 """
 
-import pandas as pd
 import torch
 
 from src.model_training.models import MLP, MLPv2
@@ -121,20 +120,13 @@ class MLPPredictor(BaseMLPredictor):
             return {}
 
         features = [games[game_id] for game_id in game_ids]
-        features_df = pd.DataFrame(features).fillna(0)
-
         # Use the first model for predictions
         model = self.models[0]
         with torch.no_grad():
-            features_tensor = torch.tensor(features_df.values, dtype=torch.float32)
-
-            # Normalize features
-            if model.scaler_mean is not None:
-                features_normalized = (
-                    features_tensor - model.scaler_mean
-                ) / model.scaler_scale
-            else:
-                features_normalized = features_tensor
+            features_normalized = torch.tensor(
+                self._standardize(features, model.scaler_mean, model.scaler_scale),
+                dtype=torch.float32,
+            )
 
             # Get predictions
             pred_norm = model(features_normalized).numpy()

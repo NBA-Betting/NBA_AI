@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}NBA AI{% endblock %}</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/custom.css') }}" rel="stylesheet">
+    <link rel="icon" href="{{ url_for('static', filename='img/basketball.png') }}">
+</head>
+
+<body {% block body_attrs %}{% endblock %}>
+
+    <nav class="navbar navbar-light bg-light">
+        <div class="container">
+            <a class="navbar-brand d-flex align-items-center" href="{{ url_for('home') }}">
+                <img src="{{ url_for('static', filename='img/nba_ai_logo.png') }}" alt="NBA AI Logo" width="48"
+                    height="48">
+                <span class="navbar-text">NBA AI</span>
+            </a>
+            <div class="navbar-nav flex-row gap-3 ms-auto">
+                <a class="nav-link{% if request.endpoint == 'home' %} active{% endif %}"
+                    href="{{ url_for('home') }}">Games</a>
+                <a class="nav-link{% if request.endpoint == 'dashboard.dashboard_page' %} active{% endif %}"
+                    href="{{ url_for('dashboard.dashboard_page') }}">Dashboard</a>
+            </div>
+        </div>
+    </nav>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="container mt-3">
+        {% for category, message in messages %}
+        <div class="alert alert-{{ 'danger' if category == 'error' else category }}">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+
+</html>

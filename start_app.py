@@ -11,7 +11,7 @@ Usage:
 
 Options:
     --predictor : str, optional
-        The predictor to use for predictions. Default is 'Best'.
+        The predictor to use for predictions. Default is config's default_predictor.
         Valid options are listed in the configuration.
     --log_level : str, optional
         The log level to use for logging. Options are DEBUG, INFO, WARNING, ERROR, CRITICAL. Default is 'INFO'.

@@ -93,7 +93,7 @@ def fetch_game_data(
     try:
         # Attempt to fetch data from the primary endpoint
         response = session.get(
-            primary_base_url.format(game_id), headers=primary_headers, timeout=10
+            primary_base_url.format(game_id), headers=primary_headers, timeout=(10, 30)
         )
         response.raise_for_status()
         data = response.json()
@@ -102,14 +102,16 @@ def fetch_game_data(
         )
         return game_id, actions_sorted
 
-    except (requests.exceptions.HTTPError, KeyError):
+    # Any failure (HTTP error, timeout, bad JSON, missing keys) falls back; one
+    # escaping here would abort every other game in the batch
+    except (requests.exceptions.RequestException, ValueError, KeyError):
         if fallback_base_url:
             try:
                 # Fallback to the secondary endpoint if the primary endpoint fails
                 response = session.get(
                     fallback_base_url.format(game_id),
                     headers=fallback_headers,
-                    timeout=10,
+                    timeout=(10, 30),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -213,6 +215,7 @@ def get_pbp(game_ids, pbp_endpoint="both", stage_logger=None):
             f"PBP catch-up mode: {n} games, fetching {burst_size} at a time "
             f"with {cooldown}s cooldown"
         )
+        failures = 0
         with requests_retry_session() as session:
             with tqdm(total=n, desc="Fetching PBP", unit="game", leave=False) as pbar:
                 for i, game_id in enumerate(game_ids):
@@ -221,6 +224,16 @@ def get_pbp(game_ids, pbp_endpoint="both", stage_logger=None):
                     if stage_logger:
                         stage_logger.log_api_call()
                     pbar.update(1)
+                    # Consecutive failures mean the API has started throttling, which
+                    # lasts 30-60+ minutes; stop instead of hanging on timeouts. Games
+                    # left out of the results are fetched on the next run.
+                    failures = 0 if actions_sorted else failures + 1
+                    if failures == 3:
+                        logging.warning(
+                            "PBP catch-up stopped after 3 consecutive failures "
+                            "(likely NBA API throttling)"
+                        )
+                        break
                     # Cooldown between bursts
                     if (i + 1) % burst_size == 0 and i + 1 < n:
                         time.sleep(cooldown)
@@ -279,6 +292,28 @@ def save_pbp(pbp_data, db_path=DB_PATH):
                         "SELECT COUNT(*) FROM PbP_Logs WHERE game_id = ?", (game_id,)
                     )
                     existing_count = cursor.fetchone()[0]
+
+                    # Never replace a game's PBP with a shorter copy of the same
+                    # feed: it only grows during a game, so fewer actions means a
+                    # truncated fetch. Counts across feeds don't compare (the
+                    # stats feed is terser), so a newer fetch from the other
+                    # feed (e.g. the final stats copy after a mid-game live
+                    # one) replaces it.
+                    stored = cursor.execute(
+                        "SELECT log_data FROM PbP_Logs WHERE game_id = ? LIMIT 1",
+                        (game_id,),
+                    ).fetchone()
+                    same_feed = stored is None or (
+                        "timeActual" in json.loads(stored[0])
+                    ) == ("timeActual" in pbp_logs_sorted[0])
+                    if same_feed and existing_count > len(pbp_logs_sorted):
+                        conn.execute("ROLLBACK")
+                        logging.warning(
+                            f"Game ID {game_id} - refetch has {len(pbp_logs_sorted)} "
+                            f"actions, {existing_count} stored; keeping stored PBP"
+                        )
+                        unchanged_count += 1
+                        continue
 
                     # Delete existing logs for the game_id
                     conn.execute("DELETE FROM PbP_Logs WHERE game_id = ?", (game_id,))

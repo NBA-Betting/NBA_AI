@@ -19,11 +19,15 @@ Usage:
 """
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytz
 from tzlocal import get_localzone
 
 from src.utils import NBATeamConverter, get_player_image, log_execution_time
+from src.web_app.dashboard import ats_result
+
+TEAM_LOGOS_DIR = Path(__file__).parent / "static" / "img" / "team_logos"
 
 
 def get_user_datetime(as_eastern_tz=False):
@@ -119,17 +123,33 @@ def process_game_data(games, user_tz=None):
         # Preseason games are listed, but the prediction pipeline covers only
         # regular-season and postseason games. Hide any older preseason forecasts.
         predictions = (
-            {} if game.get("season_type") == "Pre Season" else game.get("predictions", {})
+            {}
+            if game.get("season_type") == "Pre Season"
+            else game.get("predictions", {})
         )
         pre_game_predictions = predictions.get("pre_game", {}).get("prediction_set", {})
+        # Predictions saved at or after tip-off are backtests: show them, but
+        # don't grade them like real pre-game picks. prediction_datetime is
+        # "YYYY-MM-DD HH:MM:SS" (UTC); date_time_utc is "YYYY-MM-DDTHH:MM:SSZ".
+        pred_time = predictions.get("pre_game", {}).get("prediction_datetime")
+        is_backtest = bool(pred_time) and (
+            pred_time.replace(" ", "T") + "Z" >= game["date_time_utc"]
+        )
+        outbound_game_data["pred_is_backtest"] = is_backtest
 
-        pred_home_win_pct = pre_game_predictions.get("pred_home_win_pct", "")
-        pred_home_score = pre_game_predictions.get("pred_home_score", "")
-        pred_away_score = pre_game_predictions.get("pred_away_score", "")
+        # Stored values can be null (e.g. recovered Phase5 rows); treat as missing
+        pred_home_win_pct, pred_home_score, pred_away_score, pred_spread = (
+            "" if pre_game_predictions.get(key) is None else pre_game_predictions[key]
+            for key in (
+                "pred_home_win_pct",
+                "pred_home_score",
+                "pred_away_score",
+                "pred_spread",
+            )
+        )
 
         # Predicted spread: use pred_spread if available (Phase5/Phase3),
         # otherwise derive from predicted scores (legacy models)
-        pred_spread = pre_game_predictions.get("pred_spread", "")
         if pred_spread == "" and pred_home_score != "" and pred_away_score != "":
             pred_spread = pred_home_score - pred_away_score
 
@@ -175,7 +195,7 @@ def process_game_data(games, user_tz=None):
             """Format spread as 'TEAM by X'. Positive = home favored."""
             if spread_val is None or spread_val == "":
                 return ""
-            v = float(spread_val)
+            v = round(float(spread_val), 1)
             if v > 0:
                 return f"{home} by {v:.1f}"
             elif v < 0:
@@ -189,17 +209,21 @@ def process_game_data(games, user_tz=None):
             else ""
         )
 
-        # Vegas opening spread: negative = home favored → negate for our convention
-        opening_spread = game.get("opening_spread")
-        outbound_game_data["opening_spread"] = (
-            _spread_display(-opening_spread, home_abbr, away_abbr)
-            if opening_spread is not None
-            else ""
+        # Vegas line: the closing line once there is one, else the opening
+        # line. Vegas convention (negative = home favored), so negate.
+        closing_spread = game.get("closing_spread")
+        line = closing_spread if closing_spread is not None else game.get("opening_spread")
+        outbound_game_data["vegas_line"] = (
+            _spread_display(-line, home_abbr, away_abbr) if line is not None else ""
+        )
+        outbound_game_data["vegas_line_kind"] = (
+            "Closing" if closing_spread is not None else "Opening" if line is not None else ""
         )
 
         # Determine if predicted winner was correct (for completed games)
         if (
             game["status"] == 3
+            and not is_backtest
             and pred_winner
             and outbound_game_data["home_score"] != ""
             and outbound_game_data["away_score"] != ""
@@ -215,26 +239,24 @@ def process_game_data(games, user_tz=None):
         else:
             outbound_game_data["pred_winner_correct"] = None
 
-        # Determine if our predicted spread was closer to actual margin than Vegas
+        # Against the spread: graded like the results dashboard, against the
+        # closing line (a push is left ungraded)
         if (
             game["status"] == 3
+            and not is_backtest
             and pred_spread != ""
-            and opening_spread is not None
+            and closing_spread is not None
             and outbound_game_data["home_score"] != ""
             and outbound_game_data["away_score"] != ""
         ):
-            home_score = outbound_game_data["home_score"]
-            away_score = outbound_game_data["away_score"]
-            # Actual margin in Vegas convention: negative = home won by that amount
-            actual_margin = -(home_score - away_score)
-            our_spread_val = (
-                -pred_spread
-            )  # pred_spread is model's home advantage; negate for Vegas convention
-            our_error = abs(our_spread_val - actual_margin)
-            vegas_error = abs(opening_spread - actual_margin)
-            outbound_game_data["spread_closer_than_vegas"] = our_error < vegas_error
+            result = ats_result(
+                pred_spread,
+                closing_spread,
+                outbound_game_data["home_score"] - outbound_game_data["away_score"],
+            )
+            outbound_game_data["pred_ats_win"] = None if result == "P" else result == "W"
         else:
-            outbound_game_data["spread_closer_than_vegas"] = None
+            outbound_game_data["pred_ats_win"] = None
 
         # Add sorted players and condensed play-by-play logs if available
         outbound_game_data.update(_get_sorted_players(game, predictions))
@@ -260,18 +282,24 @@ def _process_team_names(game):
     Returns:
         dict: A dictionary containing the full and formatted team names.
     """
-    # Retrieve full team names
-    home_full_name = NBATeamConverter.get_full_name(game["home"])
-    away_full_name = NBATeamConverter.get_full_name(game["away"])
 
-    def format_team_name(full_name):
-        # Special formatting for Trail Blazers
-        if "Trail Blazers" in full_name:
-            city, team = full_name.split(" Trail ")
-            return f"{city}<br>Trail {team}"
-        else:
-            city, team = full_name.rsplit(" ", 1)
-            return f"{city}<br>{team}"
+    def full_name(abbreviation):
+        # Non-NBA preseason opponents (e.g. international clubs) aren't in
+        # Teams; show their abbreviation
+        try:
+            return NBATeamConverter.get_full_name(abbreviation)
+        except ValueError:
+            return abbreviation
+
+    home_full_name = full_name(game["home"])
+    away_full_name = full_name(game["away"])
+
+    def format_team_name(name):
+        # City over nickname; Trail Blazers keep both words together
+        if "Trail Blazers" in name:
+            city, team = name.split(" Trail ")
+            return f"{city}\nTrail {team}"
+        return "\n".join(name.rsplit(" ", 1))
 
     # Format team names for display
     home_team_display = format_team_name(home_full_name)
@@ -295,10 +323,10 @@ def _generate_logo_url(team_name):
     Returns:
         str: The URL for the team's logo.
     """
-    # Format the team name for URL
-    formatted_team_name = team_name.lower().replace(" ", "-")
-    logo_url = f"static/img/team_logos/nba-{formatted_team_name}-logo.png"
-    return logo_url
+    filename = f"nba-{team_name.lower().replace(' ', '-')}-logo.png"
+    if not (TEAM_LOGOS_DIR / filename).exists():
+        return "/static/img/basketball.png"
+    return f"/static/img/team_logos/{filename}"
 
 
 def _format_date_time_display(game, user_tz=None):
@@ -327,19 +355,13 @@ def _format_date_time_display(game, user_tz=None):
         minutes = int(minutes)
         seconds = int(seconds.split(".")[0])
         time_remaining = f"{minutes}:{seconds:02}"
-        period_display_dict = {
-            1: "1st Quarter",
-            2: "2nd Quarter",
-            3: "3rd Quarter",
-            4: "4th Quarter",
-            5: "Overtime",
-            6: "2nd Overtime",
-            7: "3rd Overtime",
-            8: "4th Overtime",
-            9: "5th Overtime",
-            10: "Crazy Overtime",
-        }
-        period_display = period_display_dict[period]
+        ordinal = {1: "1st", 2: "2nd", 3: "3rd"}
+        if period <= 4:
+            period_display = f"{ordinal.get(period, f'{period}th')} Quarter"
+        elif period == 5:
+            period_display = "Overtime"
+        else:
+            period_display = f"{ordinal.get(period - 4, f'{period - 4}th')} Overtime"
         datetime_display = f"{time_remaining} - {period_display}"
         return {"datetime_display": datetime_display}
 
@@ -368,7 +390,7 @@ def _format_date_time_display(game, user_tz=None):
     elif game_date == previous_date:
         date_display = "Yesterday"
     else:
-        date_display = game_date.strftime("%b %d")
+        date_display = f"{game_date:%b} {game_date.day}"
 
     time_display = game_date_time_local.strftime("%I:%M %p").lstrip("0")
 

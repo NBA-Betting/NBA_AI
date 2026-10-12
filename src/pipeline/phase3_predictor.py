@@ -28,6 +28,7 @@ import numpy as np
 import torch
 
 from src.predictions.prediction_engines.base_predictor import BasePredictor
+from src.utils import to_eastern_date
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +48,19 @@ DEFAULT_CONFIG_PATHS = [
 
 DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "phase3_cache"
 
+# Projected players per team (top by recent minutes). The model trains on the
+# same capped pre-game rosters (scripts/train_phase2.py). The cap dates from
+# models trained on box-score rosters (~10.9/team), where 11 gave the best
+# spreads. Injury reports start in Oct 2023, so earlier training rosters still
+# include injured players (~1.4-1.95 per team-game who didn't play, vs ~1.1-1.2
+# since and live).
+ROSTER_CAP = 11
+
 
 class Phase3Predictor(BasePredictor):
     """Phase 3 transformer model predictor (Exp 5 / 5b roster-temporal)."""
 
-    def __init__(self, model_paths: Optional[dict] = None):
+    def __init__(self, model_paths: Optional[dict] = None, historical: bool = False):
         """
         Initialize Phase 3 predictor.
 
@@ -60,9 +69,13 @@ class Phase3Predictor(BasePredictor):
                 checkpoint: path to model .pt file
                 config: path to .yaml config file
                 cache_dir: path to phase3 cache directory
+            historical: predict past games as of their tip-off (backtests):
+                pre-game rosters from appearances, and no cache update
         """
         super().__init__()
         model_paths = model_paths or {}
+        self.historical = historical
+        self._roster_assembler = None  # created on first use, then reused
 
         self._checkpoint_path = model_paths.get("checkpoint")
         self._config_path = model_paths.get("config")
@@ -175,6 +188,14 @@ class Phase3Predictor(BasePredictor):
             logger.warning("Missing keys in checkpoint: %s", missing[:5])
         if unexpected:
             logger.warning("Unexpected keys in checkpoint: %s", unexpected[:5])
+        # Training validated and selected the checkpoint on its EMA weights, so
+        # use those. Overlay by parameter so tied embeddings get the EMA values.
+        ema = ckpt.get("ema_state_dict") if isinstance(ckpt, dict) else None
+        if ema and "shadow" in ema:
+            with torch.no_grad():
+                for name, param in self._model.named_parameters():
+                    if name in ema["shadow"]:
+                        param.copy_(ema["shadow"][name])
 
         self._model.eval()
 
@@ -218,7 +239,8 @@ class Phase3Predictor(BasePredictor):
                 roster_confidence
             }}
         """
-        self._ensure_cache_fresh()
+        if not self.historical:
+            self._ensure_cache_fresh()
         self._ensure_models_loaded()
 
         predictions = {}
@@ -241,9 +263,10 @@ class Phase3Predictor(BasePredictor):
         """
         Build input batch for a single game and run model inference.
 
-        Handles both completed games (in cache) and upcoming games (not in cache).
-        For upcoming games, looks up game info from the DB, gets projected rosters
-        from RosterAssembler, and builds context sequences from prior cached games.
+        Every game, finished or not, is built as of its tip-off: context from
+        prior cached games and the projected roster from RosterAssembler. (The
+        cache's own sample for a finished game uses the players who logged
+        minutes, which reveals the result.)
 
         Returns prediction dict, or None if the game cannot be processed.
         """
@@ -266,15 +289,7 @@ class Phase3Predictor(BasePredictor):
             max_context_games=data_cfg.max_context_games,
         )
 
-        if game_id in game_features:
-            # Completed game in cache -- use standard path
-            sample = builder.build_sample(game_id)
-            roster_confidence = 1.0
-        else:
-            # Upcoming game not in cache -- build sample from DB + projected rosters
-            sample, roster_confidence = self._build_sample_for_upcoming_game(
-                game_id, builder, player_id_map
-            )
+        sample, roster_confidence = self._build_pre_game_sample(game_id, builder)
 
         if sample is None:
             return None
@@ -290,6 +305,9 @@ class Phase3Predictor(BasePredictor):
                 len(sample.home_context),
                 len(sample.away_context),
                 data_cfg.min_history_games,
+            )
+            self.skipped[game_id] = (
+                f"fewer than {data_cfg.min_history_games} games this season"
             )
             return None
 
@@ -331,14 +349,11 @@ class Phase3Predictor(BasePredictor):
             "roster_confidence": round(roster_confidence, 3),
         }
 
-    def _build_sample_for_upcoming_game(
-        self,
-        game_id: str,
-        builder,
-        player_id_map: dict,
+    def _build_pre_game_sample(
+        self, game_id: str, builder
     ) -> tuple[Optional["Phase2Sample"], float]:
         """
-        Build a Phase2Sample for an upcoming game that is NOT in the cache.
+        Build a Phase2Sample for a game as of its tip-off.
 
         Looks up game info from the DB, gets projected rosters via
         RosterAssembler, and constructs context sequences from the team's
@@ -371,8 +386,8 @@ class Phase3Predictor(BasePredictor):
         home_team = HISTORICAL_TO_CURRENT.get(home_team, home_team)
         away_team = HISTORICAL_TO_CURRENT.get(away_team, away_team)
 
-        # Extract date string (YYYY-MM-DD) for comparison with cache dates
-        target_date = date_time_utc[:10] if date_time_utc else None
+        # Eastern date (YYYY-MM-DD), as the cache stores game dates
+        target_date = to_eastern_date(date_time_utc) if date_time_utc else None
         if not target_date:
             logger.warning("Game %s has no date_time_utc", game_id)
             return None, 0.0
@@ -382,7 +397,7 @@ class Phase3Predictor(BasePredictor):
             return None, 0.0
 
         logger.info(
-            "Building sample for upcoming game %s: %s @ %s on %s (%s)",
+            "Building pre-game sample for %s: %s @ %s on %s (%s)",
             game_id,
             away_team,
             home_team,
@@ -421,10 +436,13 @@ class Phase3Predictor(BasePredictor):
         # Step 3: Get projected rosters via RosterAssembler
         roster_confidence = 1.0
         try:
-            from src.pipeline.roster_assembler import RosterAssembler
+            if self._roster_assembler is None:
+                from src.pipeline.roster_assembler import RosterAssembler
 
-            assembler = RosterAssembler(db_path=str(db_path))
-            rosters = assembler.get_projected_rosters([game_id])
+                self._roster_assembler = RosterAssembler(
+                    db_path=str(db_path), historical=self.historical
+                )
+            rosters = self._roster_assembler.get_projected_rosters([game_id])
             roster_info = rosters.get(game_id)
 
             if roster_info:
@@ -471,8 +489,8 @@ class Phase3Predictor(BasePredictor):
             away_days_before=away_days_before,
             home_team=home_team,
             away_team=away_team,
-            home_roster=home_roster,
-            away_roster=away_roster,
+            home_roster=home_roster[:ROSTER_CAP],
+            away_roster=away_roster[:ROSTER_CAP],
             home_rest_days=home_rest_days,
             away_rest_days=away_rest_days,
             target_home_score=0.0,  # Unknown for upcoming games

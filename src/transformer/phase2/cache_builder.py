@@ -19,6 +19,7 @@ import numpy as np
 import torch
 
 from src.database import get_db
+from src.utils import to_eastern_date
 from src.transformer.gamestates.tokenizer import GameStateTokenizer
 
 logger = logging.getLogger(__name__)
@@ -479,7 +480,7 @@ def build_cache(
 
         home_players, away_players = _parse_players_data(players_data)
 
-        game_date = str(date_utc)[:10] if date_utc else ""
+        game_date = to_eastern_date(date_utc) if date_utc else ""
 
         margin = home_score - away_score
         total = home_score + away_score
@@ -579,6 +580,17 @@ def build_cache(
         logger.info(
             f"Loaded external player mapping: {len(player_id_map)} players from {player_mapping_path}"
         )
+        # Append players the mapping hasn't seen (existing indices unchanged)
+        seen = set()
+        for gf in game_features.values():
+            for entry in (gf.home_player_stats or gf.home_player_points) + (
+                gf.away_player_stats or gf.away_player_points
+            ):
+                seen.add(entry[0])
+        next_idx = max(player_id_map.values(), default=0) + 1
+        for pid in sorted(seen - player_id_map.keys()):
+            player_id_map[pid] = next_idx
+            next_idx += 1
     else:
         # Build player ID mapping: raw NBA API IDs -> sequential indices (0=padding)
         all_player_ids = set()
@@ -736,7 +748,7 @@ def update_cache(
         away_team = HISTORICAL_TO_CURRENT.get(away_team, away_team)
 
         home_players, away_players = _parse_players_data(players_data)
-        game_date = str(date_utc)[:10] if date_utc else ""
+        game_date = to_eastern_date(date_utc) if date_utc else ""
         margin = home_score - away_score
         total = home_score + away_score
 

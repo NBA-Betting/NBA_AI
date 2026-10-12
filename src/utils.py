@@ -200,6 +200,15 @@ def parse_utc_datetime(utc_string: str) -> datetime:
     return dt.replace(tzinfo=timezone.utc)
 
 
+def to_eastern_date(utc_string: str) -> str:
+    """US/Eastern calendar date (YYYY-MM-DD) of a UTC datetime string.
+
+    NBA dates (schedules, rest days, injury reports) are Eastern; most evening
+    tip-offs fall on the following day in UTC.
+    """
+    return parse_utc_datetime(utc_string).astimezone(get_eastern_tz()).date().isoformat()
+
+
 def lookup_basic_game_info(game_ids, db_path=DB_PATH):
     """
     Looks up basic game information given a game_id or a list of game_ids from the Games table in the SQLite database.
@@ -300,10 +309,9 @@ def get_season_start_date(season: str, db_path: str = DB_PATH) -> datetime:
         result = cursor.fetchone()[0]
 
         if result:
-            # Parse ISO format datetime and return just the date part
-            return datetime.fromisoformat(result.replace("Z", "+00:00")).replace(
-                hour=0, minute=0, second=0, microsecond=0, tzinfo=None
-            )
+            # Eastern date of the first tip-off (evening games are the next
+            # UTC day)
+            return datetime.fromisoformat(to_eastern_date(result))
         else:
             # Fallback to Oct 22 if no games found (typical season start)
             season_start_year = int(season.split("-")[0])
@@ -591,6 +599,8 @@ def validate_game_ids(game_ids):
             game_id
             and isinstance(game_id, str)
             and len(game_id) == 10
+            and game_id.isascii()
+            and game_id.isdigit()
             and game_id.startswith("00")
         ):
             invalid_game_ids.append(game_id)
@@ -599,8 +609,11 @@ def validate_game_ids(game_ids):
             )
 
     if invalid_game_ids:
+        # Echo a few, shortened: the message can go back to API callers
+        shown = ", ".join(repr(str(g)[:20]) for g in invalid_game_ids[:5])
+        more = f" (+{len(invalid_game_ids) - 5} more)" if len(invalid_game_ids) > 5 else ""
         raise ValueError(
-            f"Invalid game IDs: {invalid_game_ids}. Each game ID must be a 10-digit string starting with '00'. Example: '0022100001'."
+            f"Invalid game IDs: {shown}{more}. Each game ID must be a 10-digit string starting with '00'. Example: '0022100001'."
         )
 
 
@@ -645,6 +658,11 @@ def validate_date_format(date):
         raise ValueError(
             "Invalid day. Please use DD format with a value between 01 and 31."
         )
+    # Feb 29 in a non-leap year
+    try:
+        datetime(year, month, day)
+    except ValueError:
+        raise ValueError(f"Invalid day. {date} is not a calendar date.") from None
 
 
 def validate_season_format(season, abbreviated=False):
@@ -833,7 +851,7 @@ class NBATeamConverter:
             cursor.execute("SELECT short_name FROM Teams WHERE team_id = ?", (team_id,))
 
             # Return the short name of the team
-            return cursor.fetchone()[0].title()
+            return cursor.fetchone()[0]
 
     @staticmethod
     def get_full_name(identifier):
@@ -857,4 +875,4 @@ class NBATeamConverter:
             cursor.execute("SELECT full_name FROM Teams WHERE team_id = ?", (team_id,))
 
             # Return the full name of the team
-            return cursor.fetchone()[0].title()
+            return cursor.fetchone()[0]

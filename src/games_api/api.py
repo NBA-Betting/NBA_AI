@@ -74,7 +74,7 @@ def games():
     """
     Retrieve game data based on game IDs or a specific date.
 
-    This endpoint accepts either a list of game IDs or a specific date to fetch game data. It ensures that the input parameters are validated and returns detailed information based on the requested detail level and predictive model.
+    This endpoint accepts either a list of game IDs or a specific date to fetch game data, validates the inputs, and returns each game with the requested predictor's pre-game prediction.
 
     Query Parameters:
     - game_ids (str): Comma-separated list of game IDs to retrieve data for. (e.g., "0042300401,0022300649"). Maximum 20 IDs allowed.
@@ -84,14 +84,14 @@ def games():
     Returns:
     - JSON response containing game data, or an error message if inputs are invalid.
 
-    Raises:
-    - ValueError: For invalid game IDs, date format, or detail level.
-    - Exception: For any unexpected server errors.
+    Errors:
+    - 400 with {"error": ...} for invalid or missing parameters
+    - 500 with {"error": "Internal server error"} for unexpected failures
     """
     try:
         game_ids = request.args.get("game_ids")
         date = request.args.get("date")
-        predictor = request.args.get("predictor")
+        predictor = request.args.get("predictor") or config.get("default_predictor")
 
         # Validate that only one of game_ids or date is provided
         if game_ids and date:
@@ -112,8 +112,10 @@ def games():
             )
 
         if game_ids:
-            # Split and validate game_ids
-            game_ids_list = game_ids.split(",")
+            # Split and validate game_ids (spaces and empty entries ignored)
+            game_ids_list = [g.strip() for g in game_ids.split(",") if g.strip()]
+            if not game_ids_list:
+                return jsonify({"error": "game_ids cannot be empty."}), 400
             if len(game_ids_list) > MAX_GAME_IDS:
                 return (
                     jsonify(
@@ -127,8 +129,7 @@ def games():
             try:
                 validate_game_ids(game_ids_list)
             except ValueError as ve:
-                logging.warning("Invalid game_ids: %s", ve)
-                return jsonify({"error": "Invalid game IDs."}), 400
+                return jsonify({"error": str(ve)}), 400
 
             # Ensure all game_ids belong to the valid seasons
             valid_seasons = get_valid_seasons()

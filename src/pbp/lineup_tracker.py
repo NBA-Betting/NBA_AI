@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
-from .event_parser import Event
+from .event_parser import _SUB_RE, Event
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ class LineupTracker:
 
         # Track whether starters were successfully found for each period
         self.starters_found: dict[int, bool] = {}
+        self._period_subbed_in: set[int] = set()
 
         # Group events by period
         self._period_events: dict[int, list[Event]] = defaultdict(list)
@@ -120,9 +121,13 @@ class LineupTracker:
         desc = evt.description
         if not desc:
             return ""
-        # For substitution events with parsed names, skip
+        # Older-format substitution "SUB: In FOR Out": the row's player is the
+        # outgoing one, so its name is the "Out" part. This teaches the lookup
+        # players whose only actions are substitutions (else their entry can't
+        # be resolved and a later sub-out makes them a phantom period starter)
         if evt.is_substitution:
-            return ""
+            m = _SUB_RE.search(desc)
+            return m.group(2).strip() if m else ""
         # First word that looks like a name (skip MISS, SUB, etc.)
         parts = desc.split()
         for part in parts:
@@ -164,6 +169,12 @@ class LineupTracker:
         for evt in period_events:
             pid = evt.player_id
             tid = evt.team_id
+
+            # Jump-ball players are on court (teams assigned from their other
+            # events, else filled in below)
+            for jb_pid in evt.jump_ball_player_ids:
+                if jb_pid not in starters and jb_pid not in subbed_in:
+                    starters.append(jb_pid)
 
             if pid == 0 or not pid:
                 continue
@@ -250,6 +261,8 @@ class LineupTracker:
                             if opp:
                                 player_team[secondary_pid] = opp
 
+        self._period_subbed_in = subbed_in
+
         # Split starters by team
         starters_by_team: dict[int, set[int]] = {tid: set() for tid in self.team_ids}
         unassigned = []
@@ -286,7 +299,22 @@ class LineupTracker:
 
     def initialize_period(self, period: int):
         """Set the on-court players for the start of a period."""
+        previous = {tid: set(players) for tid, players in self.on_court.items()}
         starters = self.detect_period_starters(period)
+        # A player with no action at all in the period (e.g. an OT where he
+        # never touches the ball) can't be detected: he stayed on from the
+        # end of the previous period, unless he subbed in during this one
+        if not self.starters_found[period]:
+            taken = set().union(*starters.values())
+            for tid, players in starters.items():
+                for pid in sorted(previous.get(tid, ())):
+                    if len(players) >= 5:
+                        break
+                    if pid not in taken and pid not in self._period_subbed_in:
+                        players.add(pid)
+            self.starters_found[period] = all(
+                len(starters[tid]) == 5 for tid in self.team_ids
+            )
         self.on_court = {tid: set(players) for tid, players in starters.items()}
         # Track starters as seen on court
         for tid, players in self.on_court.items():

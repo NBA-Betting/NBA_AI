@@ -1,9 +1,10 @@
 """
 Pipeline Orchestrator: daily entry point for the NBA_AI production pipeline.
 
-Two modes of operation:
-  - post-game (~1:30am ET): update DB with yesterday's results, run L1 incremental updates
-  - pre-game  (~4pm ET):    refresh injuries/betting, generate predictions for today's games
+Two modes of operation, run back to back by --mode=full (cron: 10am and 6pm ET):
+  - post-game: update DB with finished games' results, run L1 incremental updates
+  - pre-game:  refresh injuries/betting, predict today's games that haven't
+               started (the 6pm run re-predicts later games with fresher injuries)
 
 Usage:
     python -m src.pipeline.orchestrator --mode=post-game --season=Current
@@ -104,6 +105,8 @@ class PipelineOrchestrator:
             lambda: self._stage_pbp_enrichment(dry_run),
         )
         summary["stages"]["pbp_enrichment"] = stage_result
+        if stage_result.get("error"):
+            summary["warnings"].append(f"pbp_enrichment: {stage_result['error']}")
 
         # Stage 3: L1 incremental updates (requires Phase 5 checkpoint)
         l1_checkpoint = PROJECT_ROOT / "models" / "phase5" / "l1.pt"
@@ -224,6 +227,8 @@ class PipelineOrchestrator:
             )
             if stage_result.get("error"):
                 summary["errors"].append(f"predictions: {stage_result['error']}")
+            if stage_result.get("warning"):
+                summary["warnings"].append(f"predictions: {stage_result['warning']}")
 
         summary["total_time"] = round(time.time() - t_start, 1)
 
@@ -313,9 +318,16 @@ class PipelineOrchestrator:
                     }
 
                 logger.info(f"Enriching PBP for {len(new_ids)} new games")
-                process_games(new_ids, conn)
+                n_done = process_games(new_ids, conn)
 
-            return {"status": "ok", "games_processed": len(new_ids)}
+            if n_done < len(new_ids):
+                # L1 holds games without PBP back for a while, then masks PBP
+                return {
+                    "status": "warning",
+                    "error": f"{len(new_ids) - n_done} of {len(new_ids)} games failed",
+                    "games_processed": n_done,
+                }
+            return {"status": "ok", "games_processed": n_done}
 
         except Exception as e:
             logger.warning(f"PBP enrichment failed (non-critical): {e}")
@@ -328,8 +340,15 @@ class PipelineOrchestrator:
         updater = L1IncrementalUpdater(db_path=str(self.db_path))
         results = updater.update_all_new(dry_run=dry_run)
         total_games = sum(results.values())
+        failed = updater.failed
         return {
-            "status": "ok",
+            "status": "warning" if failed else "ok",
+            "error": (
+                f"{len(failed)} player(s) failed to update: "
+                + ", ".join(map(str, failed[:10]))
+                if failed
+                else None
+            ),
             "players_updated": len(results),
             "games_processed": total_games,
         }
@@ -458,13 +477,18 @@ class PipelineOrchestrator:
         total_preds = 0
         results_by_predictor = {}
         errors = []
+        # Games a predictor deliberately skipped (e.g. Phase3 before a team
+        # has 3 games this season) are warnings; any other missing game is
+        # an error, as is producing no predictions at all
+        skipped_msgs = []
 
         for predictor_name in predictors_to_run:
             try:
                 # Each pre-game run follows fresh injuries/betting; replace
                 # earlier forecasts, with Ensemble recomputed last.
+                skipped = {}
                 predictions = make_pre_game_predictions(
-                    game_ids, predictor_name, save=False
+                    game_ids, predictor_name, save=False, skipped=skipped
                 )
                 save_predictions(predictions or {}, predictor_name, db_path=self.db_path)
                 n = len(predictions) if predictions else 0
@@ -472,19 +496,26 @@ class PipelineOrchestrator:
                 results_by_predictor[predictor_name] = n
                 logger.info(f"  {predictor_name}: {n} predictions generated")
                 missing = set(game_ids) - set(predictions or {})
-                if missing:
+                failed = sorted(missing - skipped.keys())
+                if failed:
                     errors.append(
-                        f"{predictor_name}: missing predictions for {', '.join(sorted(missing))}"
+                        f"{predictor_name}: missing predictions for {', '.join(failed)}"
                     )
+                for gid in sorted(missing & skipped.keys()):
+                    skipped_msgs.append(f"{predictor_name}: skipped {gid} ({skipped[gid]})")
 
             except Exception as e:
                 logger.warning(f"  {predictor_name} failed: {e}")
                 results_by_predictor[predictor_name] = 0
                 errors.append(f"{predictor_name}: {e}")
 
+        if not total_preds:
+            errors.extend(skipped_msgs)
+            skipped_msgs = []
         return {
             "status": ("partial" if total_preds else "error") if errors else "ok",
             "error": "; ".join(errors) if errors else None,
+            "warning": "; ".join(skipped_msgs) if skipped_msgs else None,
             "predictions_generated": total_preds,
             "game_ids": game_ids,
             "by_predictor": results_by_predictor,

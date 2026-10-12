@@ -6,11 +6,11 @@ Architecture:
   2. ContextEncoder: project 14-d game context features → 64-d
   3. L2SkipConnection: project L2 home-away diff → 256-d (additive after first layer)
   4. Prediction MLP: Linear(576, 256) → 2x ResidualBlock(256, 512) → 256-d
-  5. PredictionHeads: spread (mu, sigma), win_prob, total (mu, sigma)
+  5. PredictionHeads: spread (mu, sigma), win_prob
 
 Input: L3 team_home (128-d), L3 team_away (128-d), L2 home (134-d), L2 away (134-d),
        game context (14-d)
-Output: spread_mu, spread_sigma, win_prob, total_mu, total_sigma
+Output: spread_mu, spread_sigma, win_prob
 """
 
 from __future__ import annotations
@@ -125,52 +125,32 @@ class PredictionHeads(nn.Module):
 
     Outputs:
       - spread_mu: predicted margin (positive = home advantage)
-      - spread_sigma: uncertainty (Softplus, conditioned on total_mu)
+      - spread_sigma: uncertainty (Softplus)
       - win_prob: P(home win) via sigmoid
-      - total_mu: predicted total points
-      - total_sigma: total uncertainty (Softplus)
     """
 
     def __init__(self, cfg: L4Config):
         super().__init__()
         d = cfg.d_hidden
         self.sigma_min_spread = cfg.spread_sigma_min
-        self.sigma_min_total = cfg.total_sigma_min
 
         # Spread
         self.spread_mu_head = nn.Linear(d, 1)
-        # spread_sigma takes d_hidden + 1 (total_mu as extra conditioning input)
-        self.spread_sigma_head = nn.Linear(d + 1, 1)
+        self.spread_sigma_head = nn.Linear(d, 1)
 
         # Win probability
         self.win_logit_head = nn.Linear(d, 1)
-
-        # Total
-        self.total_mu_head = nn.Linear(d, 1)
-        self.total_sigma_head = nn.Linear(d, 1)
 
     def forward(self, h: torch.Tensor) -> dict[str, torch.Tensor]:
         """
         Args:
             h: (B, d_hidden) shared L4 representation
         Returns:
-            dict with spread_mu, spread_sigma, win_prob, total_mu, total_sigma
-            all shaped (B,)
+            dict with spread_mu, spread_sigma, win_logit, win_prob, all (B,)
         """
-        # Total (computed first because spread_sigma is conditioned on it)
-        total_mu = self.total_mu_head(h).squeeze(-1)  # (B,)
-        total_sigma = (
-            F.softplus(self.total_sigma_head(h).squeeze(-1)) + self.sigma_min_total
-        )  # (B,)
-
-        # Spread
         spread_mu = self.spread_mu_head(h).squeeze(-1)  # (B,)
-
-        # spread_sigma conditioned on total_mu (game pace affects spread uncertainty)
-        sigma_input = torch.cat([h, total_mu.unsqueeze(-1)], dim=-1)  # (B, d+1)
         spread_sigma = (
-            F.softplus(self.spread_sigma_head(sigma_input).squeeze(-1))
-            + self.sigma_min_spread
+            F.softplus(self.spread_sigma_head(h).squeeze(-1)) + self.sigma_min_spread
         )  # (B,)
 
         # Win probability
@@ -182,8 +162,6 @@ class PredictionHeads(nn.Module):
             "spread_sigma": spread_sigma,
             "win_logit": win_logit,
             "win_prob": win_prob,
-            "total_mu": total_mu,
-            "total_sigma": total_sigma,
         }
 
 
@@ -192,8 +170,8 @@ class GamePredictor(nn.Module):
     Level 4: Full game prediction model.
 
     Takes L3 team representations (128-d each), L2 team vectors (134-d each),
-    and game context (14-d) to produce spread, win probability, and total
-    predictions with calibrated uncertainties.
+    and game context (14-d) to produce spread and win probability predictions
+    with calibrated uncertainty.
 
     Architecture:
       matchup (512-d) + context_proj (64-d) → Linear(576, 256)
@@ -231,14 +209,6 @@ class GamePredictor(nn.Module):
         # Heads
         self.heads = PredictionHeads(cfg)
 
-        # ATS classification head (Vegas-aware)
-        # Takes 256-d hidden + 1 Vegas spread scalar -> P(home covers)
-        self.ats_head = nn.Sequential(
-            nn.Linear(cfg.d_hidden + 1, 64),  # 257 -> 64
-            nn.GELU(),
-            nn.Linear(64, 1),
-        )
-
     def forward(
         self,
         team_home: torch.Tensor,
@@ -246,7 +216,6 @@ class GamePredictor(nn.Module):
         l2_home: torch.Tensor,
         l2_away: torch.Tensor,
         context: torch.Tensor,
-        vegas_spread: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """
         Full L4 forward pass.
@@ -257,11 +226,8 @@ class GamePredictor(nn.Module):
             l2_home: (B, 134) L2 home team vector
             l2_away: (B, 134) L2 away team vector
             context: (B, 14) game-specific context features
-            vegas_spread: (B,) optional Vegas closing spread (negative=home favored)
         Returns:
-            dict with spread_mu, spread_sigma, win_logit, win_prob,
-            total_mu, total_sigma — all (B,)
-            If vegas_spread is provided, also includes ats_logit and ats_prob.
+            dict with spread_mu, spread_sigma, win_logit, win_prob — all (B,)
         """
         # 1. Build matchup representation
         matchup = self.matchup(team_home, team_away)  # (B, 512)
@@ -290,16 +256,7 @@ class GamePredictor(nn.Module):
         h = self.output_norm(h)
 
         # 9. Prediction heads
-        out = self.heads(h)
-
-        # 10. ATS prediction (only when vegas_spread is provided)
-        if vegas_spread is not None:
-            ats_input = torch.cat([h, vegas_spread.unsqueeze(-1)], dim=-1)  # (B, 257)
-            ats_logit = self.ats_head(ats_input).squeeze(-1)  # (B,)
-            out["ats_logit"] = ats_logit
-            out["ats_prob"] = torch.sigmoid(ats_logit)
-
-        return out
+        return self.heads(h)
 
 
 def count_parameters(model: nn.Module) -> int:

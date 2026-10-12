@@ -368,22 +368,20 @@ def _encode_team_context(
         for r, rid in enumerate(roster_ids):
             if rid == 0:
                 continue  # Padding player
-            app_idx = 0
-            # Scan all context games for this player's appearances
-            for g in range(n_games):
-                if app_idx >= A:
-                    break
-                # Check player_ids for this game
-                for p in range(max_players):
-                    if player_ids[g, p] == rid:
-                        form_points[r, app_idx] = player_points[g, p]
-                        form_days[r, app_idx] = days_before_arr[g]
-                        form_mask[r, app_idx] = False
-                        if use_stats:
-                            form_stats[r, app_idx] = player_stats_arr[g, p]
-                            form_pm_available[r, app_idx] = player_pm_available[g, p]
-                        app_idx += 1
-                        break
+            # The player's most recent A appearances, kept in chronological order
+            appearances = [
+                (g, p)
+                for g in range(n_games)
+                for p in range(max_players)
+                if player_ids[g, p] == rid
+            ][-A:]
+            for app_idx, (g, p) in enumerate(appearances):
+                form_points[r, app_idx] = player_points[g, p]
+                form_days[r, app_idx] = days_before_arr[g]
+                form_mask[r, app_idx] = False
+                if use_stats:
+                    form_stats[r, app_idx] = player_stats_arr[g, p]
+                    form_pm_available[r, app_idx] = player_pm_available[g, p]
 
         result["roster_form_points"] = form_points
         result["roster_form_days"] = form_days
@@ -483,6 +481,7 @@ class Phase2Dataset(Dataset):
         n_efficiency_features: int = 0,
         player_experience: Optional[dict] = None,
         aux_features: Optional[dict[str, list[float]]] = None,
+        projected_rosters: Optional[dict[str, tuple[list[int], list[int]]]] = None,
     ):
         self.game_features = game_features
         self.gs_cache = gs_cache
@@ -511,12 +510,16 @@ class Phase2Dataset(Dataset):
             season_index=season_index,
             n_recent_games=n_recent_games,
             max_context_games=max_context_games,
+            projected_rosters=projected_rosters,
         )
 
         self.game_ids = self.builder.get_training_game_ids(
             seasons=seasons,
             min_history=min_history_games,
         )
+        if projected_rosters is not None:
+            # Games the live path couldn't project a roster for aren't trained on
+            self.game_ids = [g for g in self.game_ids if g in projected_rosters]
 
         logger.info(f"Phase2Dataset: {len(self.game_ids)} games for seasons {seasons}")
 

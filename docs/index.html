@@ -187,7 +187,7 @@
           The system runs a fully automated daily pipeline that collects game
           data, updates player ability models, and generates pre-game predictions
           for all upcoming games using multiple prediction engines. A Flask web
-          app displays predictions alongside Vegas opening lines, with a
+          app displays predictions alongside Vegas lines, with a
           dashboard for tracking model performance over time.
         </p>
 
@@ -301,7 +301,7 @@
           <li>
             <strong>Phase 3 (Transformer):</strong> A roster-conditioned
             temporal transformer that processes each team's full season history
-            with player-level attention. ~25M parameters, captures game-to-game
+            with player-level attention. ~27M parameters, captures game-to-game
             dynamics and roster interactions.
           </li>
         </ul>
@@ -331,9 +331,10 @@
 
         <ul>
           <li>
-            <strong>Ensemble:</strong> Equal-weight combination of all five
-            models above. Averages spreads arithmetically and win probabilities
-            in log-odds space.
+            <strong>Ensemble:</strong> Equal-weight combination of Phase5,
+            Phase3, Linear, Tree, and MLP (whichever have predictions, at least
+            two). Averages spreads arithmetically and win probabilities in
+            log-odds space.
           </li>
         </ul>
       </div>
@@ -346,7 +347,7 @@
         <ul>
           <li>Python 3.10+</li>
           <li>PyTorch (required for MLP predictor; optional for others)</li>
-          <li>~2GB disk space (starter database expands to ~1.4GB)</li>
+          <li>~2GB disk space (starter database expands to ~1.6GB)</li>
         </ul>
 
         <h3>1. Install</h3>
@@ -376,7 +377,7 @@ cp .env.example .env</code></pre>
         <pre><code>python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('NBA_AI_starter.sqlite.gz','rb'), open('data/NBA_AI_starter.sqlite','wb'))"</code></pre>
 
         <p>
-          The starter database contains the current season's games, box scores,
+          The starter database contains the current and previous seasons' games, box scores,
           play-by-play, betting lines, injury reports, and predictions from all
           models. The <code>.env</code> file is already configured to use it.
         </p>
@@ -419,7 +420,9 @@ cp .env.example .env</code></pre>
         </p>
 
         <pre><code># Automated (add via 'crontab -e')
-TZ=US/Eastern
+# Note: cron schedules use your system's local timezone. Pick an hour that is
+# morning US Eastern for you (e.g. 10am ET = "0 7" on a US Pacific machine),
+# so the run lands after the previous night's games and before the day's games.
 0 10 * * * cd /path/to/NBA_AI && venv/bin/python -m src.pipeline.orchestrator --mode=full --season=Current >> logs/cron_daily.log 2>&amp;1</code></pre>
 
         <h3>Included Models</h3>
@@ -462,8 +465,9 @@ TZ=US/Eastern
         </table>
 
         <p>
-          These models are combined by the <strong>Ensemble</strong> predictor
-          (equal-weight average).
+          Linear, Tree, and MLP are combined by the <strong>Ensemble</strong>
+          predictor (equal-weight average), along with Phase5 and Phase3 when
+          their models are present.
         </p>
 
         <p>

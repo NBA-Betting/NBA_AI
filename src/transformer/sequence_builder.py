@@ -26,6 +26,7 @@ import numpy as np
 
 from src.database import get_db
 from src.transformer.tokenizer import PBPTokenizer, TokenizedGame
+from src.utils import to_eastern_date
 
 # Safety cap for play truncation. The longest regulation game in our dataset
 # is 701 plays (MEM @ GSW, Nov 2024). 750 provides margin for future data.
@@ -139,8 +140,10 @@ class SequenceBuilder:
         Get game IDs and dates for the last N games for a team before a given date.
 
         This is where TEMPORAL ORDERING is enforced: the query uses
-        "date(date_time_utc) < date(?)" to ensure we ONLY retrieve games
-        that happened BEFORE the target game. This prevents data leakage.
+        "date(date_time_utc, '-5 hours') < date(?)" (the Eastern date: every NBA
+        tip-off, EST or EDT, lands on its Eastern day after -5 hours) to ensure
+        we ONLY retrieve games that happened BEFORE the target game. This
+        prevents data leakage.
 
         Args:
             team: Team tricode (e.g., "BOS")
@@ -156,7 +159,7 @@ class SequenceBuilder:
                 SELECT game_id, date_time_utc
                 FROM Games
                 WHERE (home_team = ? OR away_team = ?)
-                AND date(date_time_utc) < date(?)    -- STRICT: only games BEFORE the target date
+                AND date(date_time_utc, '-5 hours') < date(?)    -- STRICT: only games BEFORE the target date
                 AND game_data_finalized = 1           -- Only fully recorded games
                 AND status = 3                        -- status=3 means the game is completed
                 AND season_type IN ('Regular Season', 'Post Season')
@@ -168,7 +171,7 @@ class SequenceBuilder:
             rows = cursor.fetchall()
 
         # Return (game_id, date) tuples — dates used for schedule features (Phase 1c)
-        return [(row[0], row[1].split("T")[0]) for row in rows]
+        return [(row[0], to_eastern_date(row[1])) for row in rows]
 
     def _get_game_with_cache(self, game_id: str) -> Optional[TokenizedGame]:
         """
@@ -281,9 +284,9 @@ class SequenceBuilder:
          final_home_score, final_away_score,
          reg_home_score, reg_away_score, is_overtime) = row
 
-        # Extract just the date portion (e.g., "2024-01-15") from the full
-        # datetime string (e.g., "2024-01-15T19:30:00Z") for temporal filtering
-        target_date = date_time_utc.split("T")[0]
+        # Eastern calendar date of the tip-off (evening games fall on the next
+        # UTC day), for temporal filtering
+        target_date = to_eastern_date(date_time_utc)
 
         # Training targets: use regulation scores for OT games (cleaner signal),
         # final scores for regulation games (they're identical anyway).
@@ -310,7 +313,7 @@ class SequenceBuilder:
                         """
                         SELECT COUNT(*) FROM Games
                         WHERE (home_team = ? OR away_team = ?)
-                        AND date(date_time_utc) < date(?)
+                        AND date(date_time_utc, '-5 hours') < date(?)
                         AND season = ?
                         AND status = 3
                         AND season_type IN ('Regular Season', 'Post Season')

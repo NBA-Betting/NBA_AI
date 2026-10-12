@@ -235,7 +235,7 @@ def train_ridge(X_train, y_train, X_val, y_val, meta):
     log.info("TRAINING: Ridge Regression (RidgeCV)")
     log.info("=" * 60)
 
-    alphas = [0.1, 1.0, 10.0, 50.0, 100.0]
+    alphas = [0.1, 1.0, 10.0, 50.0, 100.0, 300.0, 1000.0, 3000.0]
     log.info(f"  Alpha candidates: {alphas}")
 
     model = RidgeCV(alphas=alphas, store_cv_results=True)
@@ -481,51 +481,35 @@ def train_mlp(X_train, y_train, X_val, y_val, meta):
 # ---------------------------------------------------------------------------
 
 
+# Each model is saved where its predictor loads it (config.yaml model_paths)
+MODEL_DIRS = {"ridge": "linear", "xgboost": "tree", "mlp": "mlp"}
+
+
 def save_model(model, model_name, metrics, hyperparams, meta):
-    """Save model + metadata. Returns (model_path, metadata_path)."""
-    MODELS_DIR.mkdir(exist_ok=True)
-    mae_str = f"{metrics['avg_score_mae']:.1f}"
+    """Save model, scaler and metadata.json into models/<type>/.
+
+    Overwrites the models the predictors load. Returns the model file paths.
+    """
+    model_dir = MODELS_DIR / MODEL_DIRS[model_name]
+    model_dir.mkdir(parents=True, exist_ok=True)
+    scaler_data = {
+        "feature_names": FEATURE_NAMES,
+        "mean": meta["scaler_mean"].tolist(),
+        "std": meta["scaler_std"].tolist(),
+    }
 
     if model_name == "ridge":
         from joblib import dump
 
-        filename = f"ridge_v{MODEL_VERSION}_mae{mae_str}.joblib"
-        filepath = MODELS_DIR / filename
-        dump(model, filepath)
-
-        # Save scaler params so the predictor can standardize features at inference
-        scaler_path = filepath.parent / "scaler.json"
-        scaler_data = {
-            "feature_names": FEATURE_NAMES,
-            "mean": meta["scaler_mean"].tolist(),
-            "std": meta["scaler_std"].tolist(),
-        }
-        with open(scaler_path, "w") as f:
-            json.dump(scaler_data, f, indent=2)
-        log.info(f"  Saved scaler: {scaler_path}")
-
+        filepaths = [model_dir / "model.joblib"]
+        dump(model, filepaths[0])
     elif model_name == "xgboost":
-        from joblib import dump
-
-        filename = f"xgboost_v{MODEL_VERSION}_mae{mae_str}.joblib"
-        filepath = MODELS_DIR / filename
-        # model is (home_xgb, away_xgb) tuple
-        dump(model, filepath)
-
-        # Save scaler params so the predictor can standardize features at inference
-        scaler_path = filepath.parent / "scaler.json"
-        scaler_data = {
-            "feature_names": FEATURE_NAMES,
-            "mean": meta["scaler_mean"].tolist(),
-            "std": meta["scaler_std"].tolist(),
-        }
-        with open(scaler_path, "w") as f:
-            json.dump(scaler_data, f, indent=2)
-        log.info(f"  Saved scaler: {scaler_path}")
-
+        # model is a (home_xgb, away_xgb) tuple, saved as native XGBoost JSON
+        filepaths = [model_dir / "home_model.json", model_dir / "away_model.json"]
+        for xgb_model, path in zip(model, filepaths):
+            xgb_model.save_model(path)
     elif model_name == "mlp":
-        filename = f"mlp_v{MODEL_VERSION}_mae{mae_str}.pth"
-        filepath = MODELS_DIR / filename
+        filepaths = [model_dir / "model.pth"]
         checkpoint = {
             "model_state_dict": model.state_dict(),
             "input_size": model.input_size,
@@ -536,13 +520,22 @@ def save_model(model, model_name, metrics, hyperparams, meta):
             "y_mean": model.y_mean,
             "y_std": model.y_std,
         }
-        torch.save(checkpoint, filepath)
+        torch.save(checkpoint, filepaths[0])
+        scaler_data = None  # the MLP checkpoint carries its own scaler
 
-    # Metadata
+    if scaler_data:
+        with open(model_dir / "scaler.json", "w") as f:
+            json.dump(scaler_data, f, indent=2)
+
+    rel_paths = [str(p.relative_to(PROJECT_ROOT)) for p in filepaths]
     metadata = {
         "model_type": {"ridge": "Linear", "xgboost": "Tree", "mlp": "MLP"}[model_name],
         "version": MODEL_VERSION,
-        "model_file": str(filepath.relative_to(PROJECT_ROOT)),
+        **(
+            {"model_files": rel_paths}
+            if len(rel_paths) > 1
+            else {"model_file": rel_paths[0]}
+        ),
         "train_seasons": meta["train_seasons"],
         "val_season": meta["val_seasons"],
         "cutoff_date": meta["cutoff_date"],
@@ -555,43 +548,11 @@ def save_model(model, model_name, metrics, hyperparams, meta):
         "feature_names": FEATURE_NAMES,
         "created_at": datetime.now().isoformat(),
     }
-
-    metadata_path = MODELS_DIR / f"{model_name}_v{MODEL_VERSION}_metadata.json"
-    with open(metadata_path, "w") as f:
+    with open(model_dir / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
-    log.info(f"  Saved: {filepath}")
-    log.info(f"  Metadata: {metadata_path}")
-
-    return filepath, metadata_path
-
-
-# ---------------------------------------------------------------------------
-# Config update
-# ---------------------------------------------------------------------------
-
-
-def update_config(saved_paths):
-    """Update config.yaml model_paths to point to v0.5 files."""
-    config_path = PROJECT_ROOT / "config.yaml"
-    text = config_path.read_text()
-
-    replacements = {}
-    if "ridge" in saved_paths:
-        rel = saved_paths["ridge"].relative_to(PROJECT_ROOT)
-        replacements[r"models/ridge_v0.4_mae11.2.joblib"] = str(rel)
-    if "xgboost" in saved_paths:
-        rel = saved_paths["xgboost"].relative_to(PROJECT_ROOT)
-        replacements[r"models/xgboost_v0.4_mae10.1.joblib"] = str(rel)
-    if "mlp" in saved_paths:
-        rel = saved_paths["mlp"].relative_to(PROJECT_ROOT)
-        replacements[r"models/mlp_v0.4_mae11.1.pth"] = str(rel)
-
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-
-    config_path.write_text(text)
-    log.info(f"  Updated config.yaml with v{MODEL_VERSION} model paths")
+    log.info(f"  Saved: {', '.join(rel_paths)} (+ metadata.json)")
+    return filepaths
 
 
 # ---------------------------------------------------------------------------
@@ -656,11 +617,6 @@ def parse_args():
         action="store_true",
         help="Load data and report sizes without training",
     )
-    parser.add_argument(
-        "--no-config-update",
-        action="store_true",
-        help="Skip updating config.yaml",
-    )
     return parser.parse_args()
 
 
@@ -708,7 +664,6 @@ def main():
 
     # Train models
     results = {}
-    saved_paths = {}
 
     for model_name in args.models:
         if model_name == "ridge":
@@ -731,17 +686,11 @@ def main():
 
         results[model_name] = metrics
 
-        # Save
-        filepath, _ = save_model(model, model_name, metrics, hyperparams, meta)
-        saved_paths[model_name] = filepath
+        save_model(model, model_name, metrics, hyperparams, meta)
 
     # Comparison table
     if results:
         print_comparison(results, meta)
-
-    # Update config
-    if saved_paths and not args.no_config_update:
-        update_config(saved_paths)
 
     print("\nTraining complete.")
 

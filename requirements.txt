@@ -22,7 +22,7 @@ xgboost==3.0.5
 joblib==1.5.2
 
 # PyTorch — NOT included here; install it separately.
-# Required for: MLP predictor, Phase5 (hierarchical), Phase3 (transformer), and Ensemble.
+# Required for: MLP predictor, Phase5 (hierarchical), and Phase3 (transformer).
 # Without PyTorch, Baseline/Linear/Tree predictors still work.
 # CPU-only (sufficient for MLP inference):
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -43,11 +43,9 @@ pytest-cov==7.0.0
 
 # Visualization
 matplotlib==3.9.1
-seaborn==0.13.2
 
 # Removed unused dependencies:
 # - wandb (experiment tracking - removed, not needed)
 # - docker-pycreds (was a wandb dependency, not directly used)
 # - pyan3 (code analysis tool, not needed for runtime)
 # - Many transitive dependencies that pip will install automatically
-aiohttp>=3.9.0  # collect_pbpstats.py

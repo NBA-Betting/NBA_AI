@@ -477,16 +477,17 @@ class InjuryValidator(BaseValidator):
                 )
             )
 
-        # Check 3: Duplicate records (semantic duplicates by player_name/timestamp/team)
-        # Note: Uses player_name + report_timestamp + team as the semantic key
-        # because nba_player_id can be NULL for unmatched players
+        # Check 3: Duplicate records (semantic duplicates by player/game date/team)
+        # Note: Uses player_name + game_date + team as the semantic key (the
+        # table's unique key) because nba_player_id can be NULL for unmatched
+        # players; one report lists a team's back-to-back games separately
         cursor.execute(
             """
-            SELECT player_name, report_timestamp, team, COUNT(*) as cnt
+            SELECT player_name, game_date, team, COUNT(*) as cnt
             FROM InjuryReports
             WHERE source = 'NBA_Official'
             AND report_timestamp BETWEEN ? AND ?
-            GROUP BY player_name, report_timestamp, COALESCE(team, '')
+            GROUP BY player_name, game_date, COALESCE(team, '')
             HAVING cnt > 1
         """,
             (start_date, end_date),

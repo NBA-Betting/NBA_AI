@@ -1,50 +1,59 @@
-/* Styles used directly in index.html */
+/* Navbar */
 .navbar-text {
-    font-size: 28px;
-    line-height: 32px;
+    font-size: 1.5rem;
     margin-left: 10px;
     font-weight: 700;
+    color: #212529 !important;
 }
 
-.border-bottom-custom {
-    border-color: lightgrey;
-}
-
-.img-fluid-custom {
-    max-width: 100px;
-}
-
-.text-success-custom {
-    color: #28a745;
-}
-
-.bi-caret-left-fill-custom,
-.bi-caret-right-fill-custom {
-    visibility: hidden;
-    font-size: 2rem;
-}
-
-/* Styles used in main.js */
-.custom-vertical-align-middle {
+/* Games table */
+.games-table td {
     vertical-align: middle;
 }
 
-.custom-display-flex {
-    display: flex;
+.game-row {
+    cursor: pointer;
 }
 
-.custom-align-items-center {
-    align-items: center;
+.game-row:hover,
+.game-row:focus-visible {
+    background-color: #f8f9fa;
+    outline: none;
 }
 
-.custom-team-logo {
-    width: 50px;
+/* Text with newlines (team city / nickname, date / status) */
+.multiline {
+    white-space: pre-line;
+}
+
+.team-logo-row {
+    width: 40px;
     height: auto;
     margin-right: 10px;
+    flex-shrink: 0;
 }
 
-.custom-text-align-left {
-    text-align: left;
+/* Game details modal */
+.team-logo-title {
+    width: 30px;
+    height: auto;
+}
+
+.modal-team-logo {
+    max-width: 100px;
+    width: 100%;
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+}
+
+.winner-arrow {
+    visibility: hidden;
+    font-size: 2rem;
+    color: #2c3e50;
 }
 
 .player-headshot {
@@ -53,22 +62,26 @@
     flex-shrink: 0;
 }
 
-.no-pbp-data {
-    text-align: center;
-}
+@media (max-width: 575.98px) {
+    .games-table {
+        font-size: 0.8rem;
+    }
 
-.team-logo {
-    width: 30px;
-    height: auto;
-}
+    .games-table > :not(caption) > * > * {
+        padding: 0.4rem 0.25rem;
+    }
 
-.breakpoint {
-    display: none;
-}
+    .team-logo-row {
+        width: 32px;
+        margin-right: 0;
+    }
 
-@media (max-width: 600px) {
-    .breakpoint {
-        display: inline;
+    .modal-body h4 {
+        font-size: 1rem;
+    }
+
+    .player-headshot {
+        width: 40px;
     }
 }
 
@@ -79,6 +92,11 @@
 
 .pred-wrong {
     color: #cf222e !important;
+}
+
+.pred-backtest {
+    color: #8c959f !important;
+    font-style: italic;
 }
 
 /* Date navigation bar */
@@ -283,4 +301,77 @@
 
 .date-picker-today:hover {
     background-color: #e7f1ff;
+}
+
+/* Results dashboard */
+.summary-card {
+    text-align: center;
+    padding: 1.25rem;
+}
+
+.summary-card .card-value {
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+.summary-card .card-label {
+    font-size: 0.8rem;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.summary-card .card-detail {
+    font-size: 0.85rem;
+    color: #495057;
+    margin-top: 0.25rem;
+}
+
+.text-profit {
+    color: #1a7f37;
+}
+
+.text-loss {
+    color: #cf222e;
+}
+
+.ats-win,
+.ats-loss,
+.ats-push {
+    font-weight: 700;
+}
+
+.ats-win {
+    color: #1a7f37 !important;
+}
+
+.ats-loss {
+    color: #cf222e !important;
+}
+
+.ats-push {
+    color: #6c757d !important;
+}
+
+.chart-container {
+    position: relative;
+    height: 300px;
+}
+
+.comparison-row {
+    cursor: pointer;
+}
+
+@media (max-width: 575.98px) {
+    .summary-card .card-value {
+        font-size: 1.35rem;
+        white-space: nowrap;
+    }
+}
+
+.table-dashboard th {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
 }

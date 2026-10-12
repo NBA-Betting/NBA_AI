@@ -31,7 +31,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.phase5.l2_config import L2Config
 from src.phase5.l2_model import PlayerSynergyNetwork, count_parameters
 from src.phase5.l2_dataset import PairDataset, LineupDataset
-from src.phase5.l2_losses import l2_total_loss
+from src.phase5.l2_losses import l2_total_loss, lineup_loss
 
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints" / "phase5"
 L2_CACHE_DIR = PROJECT_ROOT / "data" / "l2_cache"
@@ -389,6 +389,38 @@ def train_one_epoch_pairs(
     return total_losses
 
 
+def predict_lineup(
+    model: PlayerSynergyNetwork, batch: dict, device: str, freeze_fm: bool = False
+) -> torch.Tensor:
+    """Lineup net rating prediction: individual contributions plus the sum of
+    pairwise synergies. Shared by lineup training and validation.
+
+    freeze_fm: detach the FM/archetype synergies and use the GATv2-pooled team
+    vector norm as the individual term, so only GATv2/pooling layers learn.
+    """
+    ability = batch["ability"].to(device)
+    mask = batch["mask"].to(device)
+    outputs = model(
+        ability=ability,
+        uncertainty=batch["uncertainty"].to(device),
+        archetypes=batch["archetypes"].to(device),
+        mask=mask,
+        player_idx=batch["player_idx"].to(device),
+        edge_features=batch["edge_features"].to(device),
+    )
+    pairwise_total = outputs["pairwise_total"]  # (B, A, A)
+    valid_pairs = (mask.unsqueeze(-1) & mask.unsqueeze(-2)) & ~torch.eye(
+        pairwise_total.shape[1], dtype=torch.bool, device=device
+    ).unsqueeze(0)
+    if freeze_fm:
+        sum_pairwise = (pairwise_total.detach() * valid_pairs.float()).sum(dim=(1, 2))
+        sum_individual = outputs["team_player"].norm(dim=-1)
+    else:
+        sum_pairwise = (pairwise_total * valid_pairs.float()).sum(dim=(1, 2))
+        sum_individual = (ability.norm(dim=-1) * mask.float()).sum(dim=1)
+    return sum_individual + sum_pairwise
+
+
 def train_one_epoch_lineups(
     model: PlayerSynergyNetwork,
     lineup_loader: DataLoader,
@@ -411,67 +443,13 @@ def train_one_epoch_lineups(
     n_batches = 0
 
     for batch in lineup_loader:
-        ability = batch["ability"].to(device)  # (B, max_A, 32)
-        uncertainty = batch["uncertainty"].to(device)  # (B, max_A, 32)
-        archetypes = batch["archetypes"].to(device)  # (B, max_A, 10)
-        player_idx = batch["player_idx"].to(device)  # (B, max_A)
-        mask = batch["mask"].to(device)  # (B, max_A)
-        edge_features = batch["edge_features"].to(device)  # (B, max_A, max_A, 9)
-        target_net_rtg = batch["target_net_rtg"].to(device)  # (B,)
-        possessions = batch["possessions"].to(device)  # (B,)
-
-        # Full forward pass through all 4 stages
-        outputs = model(
-            ability=ability,
-            uncertainty=uncertainty,
-            archetypes=archetypes,
-            mask=mask,
-            player_idx=player_idx,
-            edge_features=edge_features,
+        pred_lineup = predict_lineup(model, batch, device, freeze_fm)
+        L_5man = lineup_loss(
+            pred_lineup,
+            batch["target_net_rtg"].to(device),
+            batch["possessions"].to(device),
         )
-
-        # Predict lineup net rating from pairwise synergies
-        # Sum all pairwise synergy scores (off-diagonal) as lineup prediction
-        pairwise_total = outputs["pairwise_total"]  # (B, A, A)
-        pair_mask = mask.unsqueeze(-1) & mask.unsqueeze(-2)
-        diag_mask = ~torch.eye(
-            pairwise_total.shape[1], dtype=torch.bool, device=device
-        ).unsqueeze(0)
-        valid_pairs = pair_mask & diag_mask
-
-        if freeze_fm:
-            # Detach FM/archetype pairwise scores so gradients only flow
-            # through GATv2 (player_vectors) and aggregation layers.
-            pairwise_detached = pairwise_total.detach()
-            sum_pairwise = (pairwise_detached * valid_pairs.float()).sum(dim=(1, 2))
-
-            # Use GATv2-based team_player vector norm as individual proxy.
-            # This goes through GatedAttentionPooling which handles masking
-            # properly (no NaN issues from masked positions).
-            team_player = outputs["team_player"]  # (B, d_team_player) — from pooling
-            sum_individual = team_player.norm(
-                dim=-1
-            )  # (B,) — has gradients through GATv2+pool
-        else:
-            # Standard: sum pairwise synergies (gradients flow through FM)
-            sum_pairwise = (pairwise_total * valid_pairs.float()).sum(
-                dim=(1, 2)
-            )  # (B,)
-
-            # Sum individual ability norms as proxy for individual contributions
-            ability_norms = ability.norm(dim=-1)  # (B, A)
-            sum_individual = (ability_norms * mask.float()).sum(dim=1)  # (B,)
-
-        # Predicted net rating = sum_individual + sum_pairwise
-        pred_lineup = sum_individual + sum_pairwise
-
-        # 5-man specific losses (using lineup_loss from l2_losses)
-        from src.phase5.l2_losses import lineup_loss, consistency_loss
-
-        L_5man = lineup_loss(pred_lineup, target_net_rtg, possessions)
-        L_consist = consistency_loss(pred_lineup, sum_individual, sum_pairwise)
-
-        loss = cfg.w_5man * L_5man + cfg.w_consistency * L_consist
+        loss = cfg.w_5man * L_5man
 
         optimizer.zero_grad()
         loss.backward()
@@ -479,9 +457,6 @@ def train_one_epoch_lineups(
         optimizer.step()
 
         total_losses["lineup"] = total_losses.get("lineup", 0) + L_5man.item()
-        total_losses["consistency"] = (
-            total_losses.get("consistency", 0) + L_consist.item()
-        )
         total_losses["total"] = total_losses.get("total", 0) + loss.item()
         n_batches += 1
 
@@ -500,7 +475,7 @@ def validate(
     lineup_loader: DataLoader | None,
     cfg: L2Config,
     device: str,
-    use_5man: bool = False,
+    freeze_fm: bool = False,
     test_mode: bool = False,
 ) -> dict[str, float]:
     """
@@ -508,8 +483,8 @@ def validate(
 
     Reports:
     - Pairwise: MAE, Huber loss, sign accuracy
-    - Lineup: MAE (if data available and curriculum allows)
-    - Total loss
+    - Lineup: training loss and MAE (when lineup data is available)
+    - Total: pair loss + cfg.w_5man * lineup loss
     """
     model.eval()
     metrics = {
@@ -566,56 +541,30 @@ def validate(
     if n_pair_samples > 0:
         metrics["pair_sign_acc"] /= n_pair_samples
 
-    # --- Lineup validation ---
+    # --- Lineup validation: the training lineup loss (possession-weighted
+    # Huber over lineups with enough possessions), every epoch, so the model
+    # selection metric keeps one scale through the curriculum ---
+    metrics["lineup_loss"] = 0.0
     metrics["lineup_mae"] = 0.0
     n_lineup_samples = 0
-
-    if use_5man and lineup_loader is not None:
+    if lineup_loader is not None:
         for batch in lineup_loader:
-            ability = batch["ability"].to(device)
-            uncertainty = batch["uncertainty"].to(device)
-            archetypes = batch["archetypes"].to(device)
-            player_idx = batch["player_idx"].to(device)
-            mask = batch["mask"].to(device)
-            edge_features = batch["edge_features"].to(device)
-            target_net_rtg = batch["target_net_rtg"].to(device)
-            possessions = batch["possessions"].to(device)
-
-            outputs = model(
-                ability=ability,
-                uncertainty=uncertainty,
-                archetypes=archetypes,
-                mask=mask,
-                player_idx=player_idx,
-                edge_features=edge_features,
+            pred_lineup = predict_lineup(model, batch, device, freeze_fm)
+            target = batch["target_net_rtg"].to(device)
+            B = target.shape[0]
+            metrics["lineup_loss"] += (
+                lineup_loss(pred_lineup, target, batch["possessions"].to(device)).item() * B
             )
-
-            pairwise_total = outputs["pairwise_total"]
-            pair_mask = mask.unsqueeze(-1) & mask.unsqueeze(-2)
-            diag_mask = ~torch.eye(
-                pairwise_total.shape[1], dtype=torch.bool, device=device
-            ).unsqueeze(0)
-            valid_pairs = pair_mask & diag_mask
-
-            sum_pairwise = (pairwise_total * valid_pairs.float()).sum(dim=(1, 2))
-            ability_norms = ability.norm(dim=-1)
-            sum_individual = (ability_norms * mask.float()).sum(dim=1)
-            pred_lineup = sum_individual + sum_pairwise
-
-            B = target_net_rtg.shape[0]
-            metrics["lineup_mae"] += (pred_lineup - target_net_rtg).abs().sum().item()
+            metrics["lineup_mae"] += (pred_lineup - target).abs().sum().item()
             n_lineup_samples += B
-
             if test_mode and n_lineup_samples >= 64:
                 break
-
         if n_lineup_samples > 0:
+            metrics["lineup_loss"] /= n_lineup_samples
             metrics["lineup_mae"] /= n_lineup_samples
 
-    # Total val loss (same weighting as training)
-    metrics["total"] = metrics["pair_loss"]
-    if use_5man and n_lineup_samples > 0:
-        metrics["total"] += cfg.w_5man * metrics["lineup_mae"]
+    # Selection metric: fixed weights (cfg.w_5man, not the warm-up ramp)
+    metrics["total"] = metrics["pair_loss"] + cfg.w_5man * metrics["lineup_loss"]
 
     return metrics
 
@@ -631,8 +580,10 @@ def save_checkpoint(
     epoch: int,
     val_metrics: dict,
     path: Path,
+    player_to_idx: dict[int, int],
 ):
-    """Save model checkpoint."""
+    """Save model checkpoint, with the player -> embedding row mapping (the
+    game cache must index players the same way)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -640,6 +591,7 @@ def save_checkpoint(
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "val_metrics": val_metrics,
+            "player_to_idx": {str(k): v for k, v in player_to_idx.items()},
         },
         path,
     )
@@ -814,9 +766,9 @@ def train(
             model,
             val_pair_loader,
             val_lineup_loader,
-            effective_cfg,
+            cfg,
             device,
-            use_5man=use_5man,
+            freeze_fm=freeze_fm,
             test_mode=test_mode,
         )
 
@@ -830,7 +782,7 @@ def train(
             lineup_str = f" lineup={lineup_losses.get('lineup', 0):.4f}"
 
         val_lineup_str = ""
-        if use_5man and val_metrics.get("lineup_mae", 0) > 0:
+        if val_metrics.get("lineup_mae", 0) > 0:
             val_lineup_str = f" lineup_mae={val_metrics['lineup_mae']:.3f}"
 
         logging.info(
@@ -852,6 +804,7 @@ def train(
                 epoch,
                 val_metrics,
                 CHECKPOINT_DIR / "l2_best.pt",
+                player_to_idx,
             )
         else:
             patience_counter += 1
@@ -868,6 +821,7 @@ def train(
         epoch,
         val_metrics,
         CHECKPOINT_DIR / "l2_final.pt",
+        player_to_idx,
     )
 
     logging.info("-" * 80)

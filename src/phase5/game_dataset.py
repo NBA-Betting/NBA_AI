@@ -18,8 +18,9 @@ from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
 
+# Built by scripts/build_phase5_cache.py
 PHASE_B_CACHE_DIR = (
-    Path(__file__).resolve().parent.parent.parent / "data" / "phase_b_cache"
+    Path(__file__).resolve().parent.parent.parent / "data" / "phase5_games"
 )
 
 
@@ -40,7 +41,6 @@ class PhaseBDataset(Dataset):
         roster_summaries: np.ndarray,  # (N, 2, 12)
         targets_margin: np.ndarray,  # (N,)
         targets_win: np.ndarray,  # (N,)
-        targets_total: np.ndarray,  # (N,)
         # Coach data
         coach_indices: np.ndarray | None = None,  # (N, 2) int64
         coach_games: np.ndarray | None = None,  # (N, 2) float32
@@ -72,7 +72,6 @@ class PhaseBDataset(Dataset):
         self.roster_summaries = roster_summaries
         self.targets_margin = targets_margin
         self.targets_win = targets_win
-        self.targets_total = targets_total
         self.coach_indices = coach_indices
         self.coach_games = coach_games
 
@@ -159,16 +158,16 @@ class PhaseBDataset(Dataset):
             # Targets
             "actual_margin": torch.tensor(self.targets_margin[i], dtype=torch.float32),
             "actual_home_win": torch.tensor(self.targets_win[i], dtype=torch.float32),
-            "actual_total": torch.tensor(self.targets_total[i], dtype=torch.float32),
         }
 
 
 def load_phase_b_data(
     cache_dir: Path | None = None,
 ) -> dict:
-    """Load all Phase B cache data.
+    """Load the Phase5 game cache.
 
     Returns dict with all numpy arrays + metadata needed for PhaseBDataset.
+    Normalization stats come from the training split (make_train_val_datasets).
     """
     if cache_dir is None:
         cache_dir = PHASE_B_CACHE_DIR
@@ -201,8 +200,6 @@ def load_phase_b_data(
     with open(str(cache_dir / "metadata.json")) as f:
         metadata = json.load(f)
 
-    norm = metadata["normalization"]
-
     data = {
         "l2_vectors": l2_data["vectors"],
         "roster_summaries": rs_data["summaries"],
@@ -210,19 +207,11 @@ def load_phase_b_data(
         "game_context": gc_data["features"],
         "targets_margin": tgt_data["margin"],
         "targets_win": tgt_data["home_win"],
-        "targets_total": tgt_data["total"],
         "game_ids": game_ids,
         "seasons": seasons,
         "metadata": metadata,
         "coach_indices": coach_indices,
         "coach_games": coach_games,
-        # Normalization arrays
-        "l3_mean": np.array(norm["l3_mean"], dtype=np.float32),
-        "l3_std": np.array(norm["l3_std"], dtype=np.float32),
-        "l4_mean": np.array(norm["l4_mean"], dtype=np.float32),
-        "l4_std": np.array(norm["l4_std"], dtype=np.float32),
-        "rs_mean": np.array(norm["roster_summary_mean"], dtype=np.float32),
-        "rs_std": np.array(norm["roster_summary_std"], dtype=np.float32),
     }
 
     logger.info(
@@ -238,17 +227,22 @@ def season_start_year(season: str) -> int:
     return int(season.split("-")[0])
 
 
-def make_train_val_datasets(
+# Default split (2025-26 is the held-out test season, scripts/backtest.py)
+TRAIN_SEASONS = ("2008-2009", "2023-2024")
+VAL_SEASON = "2024-2025"
+
+
+def split_and_normalize(
     data: dict,
-    train_seasons: tuple[str, str] = ("2017-2018", "2022-2023"),
-    val_season: str = "2023-2024",
-) -> tuple[PhaseBDataset, PhaseBDataset]:
-    """Split data by season and create train/val datasets.
+    train_seasons: tuple[str, str] = TRAIN_SEASONS,
+    val_season: str = VAL_SEASON,
+) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
+    """Train/val game indices by season (train_seasons inclusive) and the
+    normalization stats, from the training split only. Phase B and Phase C
+    share it, so Phase C's epoch 0 (the Phase B weights) sees the same inputs.
 
-    Train: train_seasons[0] through train_seasons[1] inclusive
-    Val: val_season only
-
-    Normalization stats are computed from training set only.
+    Returns (train_indices, val_indices, stats) with stats keys l3_mean,
+    l3_std, l4_mean, l4_std, rs_mean, rs_std.
     """
     seasons = data["seasons"]
     train_start = season_start_year(train_seasons[0])
@@ -279,28 +273,35 @@ def make_train_val_datasets(
     )
     logger.info(f"Val: {len(val_indices)} games ({val_season})")
 
-    # Compute normalization from training set only
-    train_tf = data["team_features"][train_indices]
-    train_gc = data["game_context"][train_indices]
-    train_rs = data["roster_summaries"][train_indices]
+    def stats(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        mean = x.mean(axis=0).astype(np.float32)
+        std = x.std(axis=0).astype(np.float32)
+        std[std < 1e-8] = 1e-8
+        return mean, std
 
-    # Team features: flatten home/away
-    tf_flat = train_tf.reshape(-1, 34)
-    l3_mean = tf_flat.mean(axis=0).astype(np.float32)
-    l3_std = tf_flat.std(axis=0).astype(np.float32)
-    l3_std[l3_std < 1e-8] = 1e-8
+    # Team features and roster summaries: home and away rows pooled
+    l3_mean, l3_std = stats(data["team_features"][train_indices].reshape(-1, 34))
+    l4_mean, l4_std = stats(data["game_context"][train_indices])
+    rs_mean, rs_std = stats(data["roster_summaries"][train_indices].reshape(-1, 12))
+    return train_indices, val_indices, {
+        "l3_mean": l3_mean,
+        "l3_std": l3_std,
+        "l4_mean": l4_mean,
+        "l4_std": l4_std,
+        "rs_mean": rs_mean,
+        "rs_std": rs_std,
+    }
 
-    # Game context
-    l4_mean = train_gc.mean(axis=0).astype(np.float32)
-    l4_std = train_gc.std(axis=0).astype(np.float32)
-    l4_std[l4_std < 1e-8] = 1e-8
 
-    # Roster summaries
-    rs_flat = train_rs.reshape(-1, 12)
-    rs_mean = rs_flat.mean(axis=0).astype(np.float32)
-    rs_std = rs_flat.std(axis=0).astype(np.float32)
-    rs_std[rs_std < 1e-8] = 1e-8
-
+def make_train_val_datasets(
+    data: dict,
+    train_seasons: tuple[str, str] = TRAIN_SEASONS,
+    val_season: str = VAL_SEASON,
+) -> tuple[PhaseBDataset, PhaseBDataset]:
+    """Phase B train/val datasets (see split_and_normalize)."""
+    train_indices, val_indices, norm = split_and_normalize(
+        data, train_seasons, val_season
+    )
     common_kwargs = dict(
         l2_vectors=data["l2_vectors"],
         team_features=data["team_features"],
@@ -308,15 +309,9 @@ def make_train_val_datasets(
         roster_summaries=data["roster_summaries"],
         targets_margin=data["targets_margin"],
         targets_win=data["targets_win"],
-        targets_total=data["targets_total"],
         coach_indices=data.get("coach_indices"),
         coach_games=data.get("coach_games"),
-        l3_mean=l3_mean,
-        l3_std=l3_std,
-        l4_mean=l4_mean,
-        l4_std=l4_std,
-        rs_mean=rs_mean,
-        rs_std=rs_std,
+        **norm,
     )
 
     train_ds = PhaseBDataset(indices=train_indices, **common_kwargs)

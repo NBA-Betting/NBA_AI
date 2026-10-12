@@ -26,6 +26,7 @@ from src.database import get_db, DB_PATH
 from src.logging_config import setup_logging
 from src.pbp.constants import STAT_COLUMNS
 from src.pbp.stat_computer import process_game
+from src.utils import NBATeamConverter
 
 # ---------------------------------------------------------------------------
 # DB schema
@@ -76,6 +77,24 @@ def load_game_events(conn, game_id: str) -> list[dict]:
     return events
 
 
+def box_player_names(conn, game_id: str) -> dict[int, tuple[int, list[str]]]:
+    """{player_id: (team_id, name forms)} from the game's box score, so subs
+    of players with no other actions resolve ("SUB: Waters III FOR ...")."""
+    names = {}
+    for pid, tid, full in conn.execute(
+        "SELECT player_id, team_id, player_name FROM PlayerBox WHERE game_id = ?",
+        (game_id,),
+    ):
+        parts = (full or "").split()
+        if len(parts) < 2:
+            continue
+        forms = {full, " ".join(parts[1:]), parts[-1]}
+        if parts[-1].rstrip(".").upper() in ("JR", "SR", "II", "III", "IV", "V"):
+            forms.add(parts[-2])
+        names[int(pid)] = (int(tid), sorted(forms))
+    return names
+
+
 def get_game_teams(conn, game_id: str) -> tuple[int, int]:
     """Get home and away team IDs for a game from the Games table."""
     # Try to get team IDs from TeamBox (more reliable)
@@ -97,9 +116,12 @@ def get_game_teams(conn, game_id: str) -> tuple[int, int]:
                 tuple(team_ids),
             )
             abbr_map = {r[1]: int(r[0]) for r in cursor}
-            home_id = abbr_map.get(home_abbr, team_ids[0])
-            away_id = abbr_map.get(away_abbr, team_ids[1])
-            return int(home_id), int(away_id)
+            # Games keeps the abbreviation of the day (SEA, NJN, NOH);
+            # Teams has today's
+            home_id = abbr_map.get(NBATeamConverter.get_abbreviation(home_abbr))
+            away_id = abbr_map.get(NBATeamConverter.get_abbreviation(away_abbr))
+            if home_id and away_id:
+                return home_id, away_id
         return int(team_ids[0]), int(team_ids[1])
 
     # Fallback: extract from PBP events
@@ -152,8 +174,17 @@ def get_game_ids_for_season(conn, season: str) -> list[str]:
 
 
 def get_all_game_ids(conn) -> list[str]:
-    """Get all game_ids that have PBP data."""
-    cursor = conn.execute("SELECT DISTINCT game_id FROM PbP_Logs ORDER BY game_id")
+    """Games whose PBP and box score are final. Stats are built once per game
+    (resume skips processed games), so a game fetched mid-play must wait;
+    the box score supplies names for resolving substitutions."""
+    cursor = conn.execute(
+        """
+        SELECT DISTINCT p.game_id FROM PbP_Logs p
+        JOIN Games g ON g.game_id = p.game_id
+        WHERE g.game_data_finalized = 1 AND g.boxscore_data_finalized = 1
+        ORDER BY p.game_id
+        """
+    )
     return [row[0] for row in cursor]
 
 
@@ -176,11 +207,14 @@ def process_games(
     conn,
     batch_size: int = 100,
 ):
-    """Process a list of games and insert results into the DB."""
+    """Process a list of games and insert results into the DB.
+
+    Returns the number of games processed (failures are logged and skipped).
+    """
     total = len(game_ids)
     if total == 0:
         print("No games to process.")
-        return
+        return 0
 
     print(f"Processing {total} games...")
     start_time = time.time()
@@ -202,7 +236,9 @@ def process_games(
                 logging.warning(f"Could not determine teams for {game_id}, skipping")
                 continue
 
-            result = process_game(events_raw, home_id, away_id, game_id)
+            result = process_game(
+                events_raw, home_id, away_id, game_id, box_player_names(conn, game_id)
+            )
 
             for pid, pdata in result.items():
                 row = [pid, game_id, pdata["team_id"]]
@@ -253,6 +289,7 @@ def process_games(
     )
     if starters_failures:
         print(f"  Starter detection failures: {starters_failures} games")
+    return games_processed
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +328,7 @@ def main():
 
     setup_logging(log_level=args.log_level.upper())
 
-    with get_db() as conn:
+    with get_db(args.db_path) as conn:
         # Create table
         conn.execute(CREATE_TABLE_SQL)
         conn.commit()
