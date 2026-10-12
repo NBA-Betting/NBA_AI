@@ -776,6 +776,7 @@ class TestMinutesBasedFinalization:
             CREATE TABLE Games (
                 game_id TEXT PRIMARY KEY,
                 status INTEGER,
+                date_time_utc TEXT,
                 boxscore_data_finalized BOOLEAN DEFAULT 0
             )
         """
@@ -813,7 +814,7 @@ class TestMinutesBasedFinalization:
         cursor = conn.cursor()
 
         cursor.execute(
-            "INSERT INTO Games (game_id, status, boxscore_data_finalized) VALUES ('0022300001', 3, 0)"
+            "INSERT INTO Games (game_id, status, date_time_utc, boxscore_data_finalized) VALUES ('0022300001', 3, '2023-10-24T23:30:00Z', 0)"
         )
 
         # Team 1: 240 minutes total across 8 players (30 min each)
@@ -857,7 +858,7 @@ class TestMinutesBasedFinalization:
         cursor = conn.cursor()
 
         cursor.execute(
-            "INSERT INTO Games (game_id, status, boxscore_data_finalized) VALUES ('0022300001', 3, 0)"
+            "INSERT INTO Games (game_id, status, date_time_utc, boxscore_data_finalized) VALUES ('0022300001', 3, '2023-10-24T23:30:00Z', 0)"
         )
 
         # Team 1: Only 200 minutes (under threshold)
@@ -893,7 +894,7 @@ class TestMinutesBasedFinalization:
         cursor = conn.cursor()
 
         cursor.execute(
-            "INSERT INTO Games (game_id, status, boxscore_data_finalized) VALUES ('0022300001', 2, 0)"
+            "INSERT INTO Games (game_id, status, date_time_utc, boxscore_data_finalized) VALUES ('0022300001', 2, '2023-10-24T23:30:00Z', 0)"
         )
 
         # Add plenty of minutes but status=2 (In Progress)

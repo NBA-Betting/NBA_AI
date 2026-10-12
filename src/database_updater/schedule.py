@@ -43,6 +43,8 @@ from src.utils import (
 DB_PATH = config["database"]["path"]
 NBA_API_BASE_URL = config["nba_api"]["schedule_endpoint"]
 NBA_API_HEADERS = config["nba_api"]["schedule_headers"]
+# cdn.nba.com (live scoreboard) needs the nba.com Referer these carry
+NBA_API_LIVE_HEADERS = config["nba_api"]["pbp_live_headers"]
 SCHEDULE_CACHE_CURRENT_MINUTES = (
     5  # Cache duration for current season (games change frequently)
 )
@@ -254,7 +256,7 @@ def sync_live_game_status(db_path=DB_PATH):
     try:
         from nba_api.live.nba.endpoints import scoreboard
 
-        board = scoreboard.ScoreBoard()
+        board = scoreboard.ScoreBoard(headers=NBA_API_LIVE_HEADERS)
         games_data = board.get_dict()
         live_games = games_data.get("scoreboard", {}).get("games", [])
 
@@ -267,8 +269,9 @@ def sync_live_game_status(db_path=DB_PATH):
             status = game.get("gameStatus")  # 1=Not Started, 2=In Progress, 3=Final
             status_text = game.get("gameStatusText", "")
 
-            if game_id and status:
-                updates.append((status, status_text, game_id))
+            # Postponements are left to the schedule API
+            if game_id and status and status_text.strip() != "PPD":
+                updates.append((status, status_text, game_id, status))
 
         if not updates:
             return 0
@@ -276,7 +279,9 @@ def sync_live_game_status(db_path=DB_PATH):
         with get_db(db_path) as conn:
             cursor = conn.cursor()
             cursor.executemany(
-                "UPDATE Games SET status = ?, status_text = ? WHERE game_id = ?",
+                # Status never goes backwards (the schedule API keeps the max)
+                "UPDATE Games SET status = ?, status_text = ? "
+                "WHERE game_id = ? AND status <= ?",
                 updates,
             )
             updated_count = cursor.rowcount
@@ -521,7 +526,9 @@ def save_schedule(games, season, db_path=DB_PATH, stage_logger=None):
                 home_team=excluded.home_team,
                 away_team=excluded.away_team,
                 status=MAX(Games.status, excluded.status),
-                status_text=excluded.status_text,
+                -- Keep the live text ("Q3 5:42", "Final") over a lagging schedule
+                status_text=CASE WHEN excluded.status < Games.status
+                    THEN Games.status_text ELSE excluded.status_text END,
                 season=excluded.season,
                 season_type=excluded.season_type
             """

@@ -1640,6 +1640,8 @@ class SeasonHealthChecker:
                 WHERE g.season = ? AND g.pre_game_data_finalized = 1
                 AND g.game_data_finalized = 0 AND g.status = 3
                 AND g.season_type IN ('Regular Season', 'Post Season')
+                -- Finalized no sooner than 8h after tip (SETTLE_HOURS)
+                AND g.date_time_utc <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-8 hours')
                 """,
                 (self.season,),
             )

@@ -57,6 +57,11 @@ from src.utils import log_execution_time, lookup_basic_game_info
 DB_PATH = config["database"]["path"]
 # An unfinished game this old no longer holds back its teams' later games
 BLOCKING_STALE_DAYS = 3
+# A game's PBP and box score are finalized (never refetched) no sooner than
+# this long after tip: the 6pm ET run sees afternoon games minutes after the
+# final, before the NBA's post-game stat corrections. The 10am run is >8h after
+# the previous night's latest tips.
+SETTLE_HOURS = 8
 
 
 def _validate_pbp(game_ids, db_path=DB_PATH, suppress_no_final_state=False):
@@ -1311,6 +1316,13 @@ def get_games_with_incomplete_pre_game_data(season, db_path=DB_PATH):
     return [row[0] for row in results]
 
 
+def _settled_before() -> str:
+    """Tip times at or before this are SETTLE_HOURS old (UTC, stored format)."""
+    return (datetime.now(timezone.utc) - timedelta(hours=SETTLE_HOURS)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
 def _mark_pbp_games_finalized(game_ids, db_path=DB_PATH):
     """
     Marks games as having finalized PBP/GameStates data:
@@ -1327,6 +1339,7 @@ def _mark_pbp_games_finalized(game_ids, db_path=DB_PATH):
         list: Game IDs that were marked as finalized.
     """
     finalized = []
+    settled_before = _settled_before()
 
     with get_db(db_path) as conn:
         cursor = conn.cursor()
@@ -1337,15 +1350,16 @@ def _mark_pbp_games_finalized(game_ids, db_path=DB_PATH):
                 """
                 SELECT 
                     (SELECT COUNT(*) FROM PbP_Logs WHERE game_id = ?) > 0 as has_pbp,
-                    (SELECT COUNT(*) FROM GameStates WHERE game_id = ? AND is_final_state = 1) > 0 as has_final_state
+                    (SELECT COUNT(*) FROM GameStates WHERE game_id = ? AND is_final_state = 1) > 0 as has_final_state,
+                    (SELECT date_time_utc FROM Games WHERE game_id = ?) <= ? as settled
                 """,
-                (game_id, game_id),
+                (game_id, game_id, game_id, settled_before),
             )
 
             row = cursor.fetchone()
-            has_pbp, has_final_state = row
+            has_pbp, has_final_state, settled = row
 
-            if has_pbp and has_final_state:
+            if has_pbp and has_final_state and settled:
                 cursor.execute(
                     "UPDATE Games SET game_data_finalized = 1 WHERE game_id = ?",
                     (game_id,),
@@ -1376,6 +1390,7 @@ def _mark_boxscore_games_finalized(game_ids, db_path=DB_PATH):
         list: Game IDs that were marked as finalized.
     """
     finalized = []
+    settled_before = _settled_before()
 
     with get_db(db_path) as conn:
         cursor = conn.cursor()
@@ -1387,19 +1402,21 @@ def _mark_boxscore_games_finalized(game_ids, db_path=DB_PATH):
                 SELECT 
                     (SELECT COUNT(*) FROM PlayerBox WHERE game_id = ?) as player_count,
                     (SELECT COUNT(*) FROM TeamBox WHERE game_id = ?) as team_count,
-                    (SELECT status FROM Games WHERE game_id = ?) as game_status
+                    (SELECT status FROM Games WHERE game_id = ?) as game_status,
+                    (SELECT date_time_utc FROM Games WHERE game_id = ?) <= ? as settled
                 """,
-                (game_id, game_id, game_id),
+                (game_id, game_id, game_id, game_id, settled_before),
             )
 
             row = cursor.fetchone()
             if not row:
                 continue
 
-            player_count, team_count, game_status = row
+            player_count, team_count, game_status, settled = row
 
             # Basic requirements: players exist, both teams, game is final
-            if player_count < 16 or team_count != 2 or game_status != 3:
+            # and SETTLE_HOURS past tip
+            if player_count < 16 or team_count != 2 or game_status != 3 or not settled:
                 continue
 
             # Check if both teams have sufficient minutes (239+ indicates complete game)
