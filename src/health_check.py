@@ -598,6 +598,54 @@ class SeasonHealthChecker:
                         query_time_ms=qtime,
                     )
 
+            # 4. Recent games should come from the live feed (actions carry
+            # timeActual). The stats feed is a silent per-game fallback, and
+            # cdn.nba.com refused us unnoticed from May to Oct 2026.
+            result, qtime = self._timed_query(
+                cursor,
+                """
+                SELECT g.game_id, instr(p.log_data, '"timeActual"') > 0
+                FROM Games g
+                JOIN PbP_Logs p ON p.game_id = g.game_id
+                WHERE g.season = ? AND g.status = 3
+                AND g.season_type IN ('Regular Season', 'Post Season')
+                AND g.date_time_utc >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')
+                AND p.play_id = (
+                    SELECT MIN(play_id) FROM PbP_Logs WHERE game_id = g.game_id
+                )
+                """,
+                (self.season,),
+            )
+            fallback = [gid for gid, live in result if not live]
+            if not result:
+                self._add_result(
+                    stage,
+                    "source",
+                    "pbp_live_feed",
+                    CheckStatus.SKIP,
+                    "No games in the last 7 days",
+                )
+            elif fallback:
+                self._add_result(
+                    stage,
+                    "source",
+                    "pbp_live_feed",
+                    CheckStatus.WARN,
+                    f"{len(fallback)}/{len(result)} games in the last 7 days have "
+                    "stats-feed PbP (cdn.nba.com live feed failing?)",
+                    details={"games": fallback[:10]},
+                    query_time_ms=qtime,
+                )
+            else:
+                self._add_result(
+                    stage,
+                    "source",
+                    "pbp_live_feed",
+                    CheckStatus.PASS,
+                    f"All {len(result)} games in the last 7 days have live-feed PbP",
+                    query_time_ms=qtime,
+                )
+
     # -------------------------------------------------------------------------
     # GameStates Checks
     # -------------------------------------------------------------------------

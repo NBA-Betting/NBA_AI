@@ -32,6 +32,8 @@ nba_api:
     Cache-Control: "max-age=0"
     Connection: "keep-alive"
     Host: "cdn.nba.com"
+    # cdn.nba.com answers 403 without an nba.com Referer (since May 2026)
+    Referer: "https://www.nba.com/"
     User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36"
   pbp_stats_headers:
     Host: "stats.nba.com"
