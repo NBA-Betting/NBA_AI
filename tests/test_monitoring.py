@@ -1,4 +1,4 @@
-"""Daily alerting (scripts/daily_health_alert.py) and the nightly backup of
+"""Daily alerting (scripts/daily_health_alert.py) and the weekly backup of
 irreplaceable tables (scripts/backup_precious_tables.py)."""
 
 import gzip
@@ -6,6 +6,7 @@ import importlib.util
 import os
 import sqlite3
 import time
+from datetime import date, timedelta
 
 import pytest
 
@@ -113,8 +114,8 @@ def test_stale_or_missing_backups_alert(tmp_path, monkeypatch):
     latest = tmp_path / "precious_20261001.sqlite.gz"
     latest.write_bytes(b"")
     assert alert.backup_alerts() == []
-    three_days_ago = time.time() - 3 * 86400
-    os.utime(latest, (three_days_ago, three_days_ago))
+    nine_days_ago = time.time() - 9 * 86400
+    os.utime(latest, (nine_days_ago, nine_days_ago))
     assert "days old" in alert.backup_alerts()[0]
 
 
@@ -146,8 +147,9 @@ def test_backup_survives_a_crashed_run(source_db, tmp_path):
 
 
 def test_rotation_keeps_recent_and_month_start_backups(tmp_path):
-    days = [f"202609{d:02d}" for d in range(1, 31)] + [
-        f"202610{d:02d}" for d in range(1, 11)
+    # Weekly (Sunday) backups, Aug 2 .. Oct 11, after older daily ones
+    days = ["20260731"] + [
+        (date(2026, 8, 2) + timedelta(weeks=w)).strftime("%Y%m%d") for w in range(11)
     ]
     for day in days:
         (tmp_path / f"precious_{day}.sqlite.gz").write_bytes(b"")
@@ -155,6 +157,6 @@ def test_rotation_keeps_recent_and_month_start_backups(tmp_path):
     backup.rotate(tmp_path)
 
     kept = sorted(p.name[9:17] for p in tmp_path.glob("precious_*.sqlite.gz"))
-    assert "20260901" in kept and "20261001" in kept  # month starts kept forever
-    assert "20260902" not in kept  # oldest dailies rotated out
-    assert len(kept) == backup.KEEP_DAILY + 2
+    assert "20260731" in kept and "20260802" in kept  # each month's first kept
+    assert "20260809" not in kept and "20260816" not in kept  # rotated out
+    assert len(kept) == backup.KEEP + 2

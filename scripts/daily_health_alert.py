@@ -13,7 +13,7 @@ overall success. This wrapper makes regressions loud without daily noise:
   checks, the shortfall: expected - actual).
 - Pipeline runs (PipelineRuns) since the last check that ended with errors,
   or never finished, always alert: the orchestrator's own failures are
-  otherwise only in the cron log. So does a nightly backup older than 2 days.
+  otherwise only in the cron log. So does a weekly backup older than 8 days.
 - Alerts append to logs/ALERTS.log AND print to stdout (so they land in the
   cron log too). A desktop notification is attempted best-effort.
 
@@ -147,13 +147,13 @@ def _changed(prev_actual, curr_actual) -> bool:
 
 # A run still marked running after this long crashed or hung
 RUN_STUCK_AFTER = timedelta(hours=3)
-# Newest precious-table backup (scripts/backup_precious_tables.py, nightly)
+# Newest precious-table backup (scripts/backup_precious_tables.py, weekly)
 BACKUP_DIR = PROJECT_ROOT / "data" / "backups" / "daily"
-BACKUP_MAX_AGE = timedelta(days=2)
+BACKUP_MAX_AGE = timedelta(days=8)
 
 
 def backup_alerts() -> list[str]:
-    """Alert if the nightly backup of irreplaceable tables has stopped."""
+    """Alert if the weekly backup of irreplaceable tables has stopped."""
     backups = sorted(BACKUP_DIR.glob("precious_*.sqlite.gz"))
     if not backups:
         return ["[CRITICAL] backups: no precious-table backups found"]
