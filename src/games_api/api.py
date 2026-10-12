@@ -129,7 +129,16 @@ def games():
             try:
                 validate_game_ids(game_ids_list)
             except ValueError as ve:
-                return jsonify({"error": str(ve)}), 400
+                # Fixed text: exception messages don't go back to callers
+                logging.warning("Invalid game_ids: %s", ve)
+                return (
+                    jsonify(
+                        {
+                            "error": "Invalid game IDs. Each must be a 10-digit string starting with '00', e.g. '0022100001'."
+                        }
+                    ),
+                    400,
+                )
 
             # Ensure all game_ids belong to the valid seasons
             valid_seasons = get_valid_seasons()

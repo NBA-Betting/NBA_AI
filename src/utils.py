@@ -609,7 +609,7 @@ def validate_game_ids(game_ids):
             )
 
     if invalid_game_ids:
-        # Echo a few, shortened: the message can go back to API callers
+        # Echo a few, shortened: invalid IDs can be arbitrary user input
         shown = ", ".join(repr(str(g)[:20]) for g in invalid_game_ids[:5])
         more = f" (+{len(invalid_game_ids) - 5} more)" if len(invalid_game_ids) > 5 else ""
         raise ValueError(
