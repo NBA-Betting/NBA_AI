@@ -47,7 +47,7 @@ class MLPPredictor(BaseMLPredictor):
             ValueError: If checkpoint files cannot be loaded.
         """
         for model_path in self.model_paths:
-            checkpoint = torch.load(model_path, weights_only=False)
+            checkpoint = torch.load(model_path, weights_only=True)
 
             # Handle both old and new checkpoint formats
             hidden_sizes = checkpoint.get("hidden_sizes", [64, 32])

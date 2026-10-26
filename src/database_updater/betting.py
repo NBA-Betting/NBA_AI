@@ -80,9 +80,9 @@ DB_PATH = config["database"]["path"]
 
 # ESPN API configuration
 ESPN_SCOREBOARD_URL = (
-    "http://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+    "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 )
-ESPN_SUMMARY_URL = "http://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
+ESPN_SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
 
 # Fetching thresholds
 FUTURE_CUTOFF_DAYS = 2  # Don't fetch for games more than 2 days out
