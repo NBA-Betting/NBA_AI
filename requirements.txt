@@ -42,7 +42,7 @@ pytest==9.0.3
 pytest-cov==7.0.0
 
 # Visualization
-matplotlib==3.9.1
+matplotlib>=3.9.1
 
 # Removed unused dependencies:
 # - wandb (experiment tracking - removed, not needed)

@@ -78,7 +78,7 @@ All models are evaluated against the spread (ATS) using Vegas closing lines. The
 
 ### Requirements
 
-- Python 3.10+
+- Python 3.11+
 - PyTorch (required for MLP predictor; optional for others)
 - ~2GB disk space (starter database expands to ~1.6GB)
 
