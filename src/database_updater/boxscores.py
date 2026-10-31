@@ -358,10 +358,10 @@ def get_boxscores(
                     pbar.update(1)
     else:
         # Sequential with adaptive rate limiting to avoid NBA API throttling.
-        # The API consistently blocks after ~15 rapid requests, so we pause
-        # every 10 requests to stay well under the threshold.
-        burst_size = 10
-        cooldown = 10  # seconds between bursts
+        # The API blocks after a few hundred quick requests, so we pause
+        # every 5 requests to stay well under the threshold.
+        burst_size = 5
+        cooldown = 20  # seconds between bursts: ~12 requests/min
         logging.info(
             f"Catch-up mode: {n} games, fetching {burst_size} at a time "
             f"with {cooldown}s cooldown"

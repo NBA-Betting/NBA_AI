@@ -209,8 +209,8 @@ def get_pbp(game_ids, pbp_endpoint="both", stage_logger=None):
                         pbar.update(1)
     else:
         # Sequential with burst pauses to avoid NBA API throttling.
-        burst_size = 10
-        cooldown = 10  # seconds between bursts
+        burst_size = 5
+        cooldown = 20  # seconds between bursts: ~12 requests/min
         logging.info(
             f"PBP catch-up mode: {n} games, fetching {burst_size} at a time "
             f"with {cooldown}s cooldown"
