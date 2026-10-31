@@ -46,14 +46,26 @@ def update_player_attributes(db_path):
                 """)]
 
     records = []
+    failures = 0
     for person_id in missing:
+        time.sleep(REQUEST_PAUSE)  # before every call, failed ones included
         try:
             info = commonplayerinfo.CommonPlayerInfo(
                 player_id=person_id, timeout=REQUEST_TIMEOUT
             ).get_data_frames()[0]
             stage_logger.log_api_call()
+            failures = 0
         except Exception as e:
             logging.warning(f"PlayerAttributes fetch failed for {person_id}: {e}")
+            # Consecutive failures mean the API is throttling; the rest are
+            # still missing, so the next run picks them up
+            failures += 1
+            if failures == 3:
+                logging.warning(
+                    "PlayerAttributes stopped after 3 consecutive failures "
+                    "(likely NBA API throttling)"
+                )
+                break
             continue
         if info.empty:
             continue
@@ -83,7 +95,6 @@ def update_player_attributes(db_path):
                 birth_year,
             )
         )
-        time.sleep(REQUEST_PAUSE)
 
     if records:
         with get_db(db_path) as conn:

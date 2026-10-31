@@ -39,14 +39,26 @@ def update_coaches(season, db_path):
         ).fetchall()
 
     added = 0
+    failures = 0
     for (team_id,) in missing:
+        time.sleep(REQUEST_PAUSE)  # before every call, failed ones included
         try:
             dfs = commonteamroster.CommonTeamRoster(
                 team_id=str(team_id), season=api_season, timeout=REQUEST_TIMEOUT
             ).get_data_frames()
             stage_logger.log_api_call()
+            failures = 0
         except Exception as e:
             logging.warning(f"Coaches fetch failed for {team_id} {api_season}: {e}")
+            # Consecutive failures mean the API is throttling; the rest are
+            # still missing, so the next run picks them up
+            failures += 1
+            if failures == 3:
+                logging.warning(
+                    "Coaches stopped after 3 consecutive failures "
+                    "(likely NBA API throttling)"
+                )
+                break
             continue
         if len(dfs) >= 2 and not dfs[1].empty:
             records = [
@@ -73,7 +85,6 @@ def update_coaches(season, db_path):
                 )
                 added += cur.rowcount
                 conn.commit()
-        time.sleep(REQUEST_PAUSE)
 
     stage_logger.set_counts(added=added, updated=0, removed=0)
     stage_logger.log_complete()

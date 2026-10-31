@@ -295,7 +295,7 @@ def sync_live_game_status(db_path=DB_PATH):
         return updated_count
 
     except Exception as e:
-        logging.debug(f"Could not sync live scoreboard: {e}")
+        logging.warning(f"Could not sync live scoreboard: {e}")
         return 0
 
 
