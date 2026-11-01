@@ -14,7 +14,7 @@
 
 #### Using AI to predict the outcomes of NBA games.
 
-This project predicts NBA game spreads and winners using a combination of deep learning models and traditional ML. Unlike my previous project, [NBA Betting](https://github.com/NBA-Betting/NBA_Betting/tree/main), which focused on extensive data collection and feature engineering, this project focuses on building advanced prediction models that learn directly from play-by-play data, box scores, and player tracking — minimizing manual feature engineering in favor of letting the models find the signal.
+This project predicts NBA game spreads and winners using a combination of deep learning models and traditional ML. Unlike my previous project, [NBA Betting](https://github.com/NBA-Betting/NBA_Betting/tree/main), which focused on extensive data collection and feature engineering, this project focuses on building advanced prediction models that learn directly from play-by-play data and box scores — minimizing manual feature engineering in favor of letting the models find the signal.
 
 The system runs a fully automated daily pipeline that collects game data, updates player ability models, and generates pre-game predictions for all upcoming games using multiple prediction engines. A Flask web app displays predictions alongside Vegas lines, with a dashboard for tracking model performance over time.
 
@@ -22,7 +22,7 @@ The system runs a fully automated daily pipeline that collects game data, update
 
 The system has three main layers:
 
-* **Data Collection** — Automatically collects game data, box scores, play-by-play, injury reports, and betting lines from the NBA API and ESPN into a SQLite database.
+* **Data Collection** — Automatically collects game data, box scores, play-by-play, injury reports, and betting lines from the NBA API, ESPN and Covers into a SQLite database.
 
 * **Prediction Models** — Multiple prediction engines analyze the data and generate pre-game spread and winner predictions. Includes custom deep learning models, traditional ML models, and an ensemble.
 

@@ -178,7 +178,7 @@
             >NBA Betting</a
           >, which focused on extensive data collection and feature engineering,
           this project focuses on building advanced prediction models that learn
-          directly from play-by-play data, box scores, and player tracking &mdash;
+          directly from play-by-play data and box scores &mdash;
           minimizing manual feature engineering in favor of letting the models
           find the signal.
         </p>
@@ -199,7 +199,7 @@
           <li>
             <strong>Data Collection</strong> &mdash; Automatically collects game
             data, box scores, play-by-play, injury reports, and betting lines
-            from the NBA API and ESPN into a SQLite database.
+            from the NBA API, ESPN and Covers into a SQLite database.
           </li>
           <li>
             <strong>Prediction Models</strong> &mdash; Multiple prediction
@@ -337,6 +337,15 @@
             log-odds space.
           </li>
         </ul>
+
+        <h3>Performance</h3>
+
+        <p>
+          All models are evaluated against the spread (ATS) using Vegas closing
+          lines. The dashboard shows each model's live record (predictions made
+          before tip-off) and a 2025-26 backtest that replays the season
+          through each model's live code with pre-game information only.
+        </p>
       </div>
 
       <!-- Quick Start -->
@@ -345,7 +354,7 @@
 
         <h3>Requirements</h3>
         <ul>
-          <li>Python 3.10+</li>
+          <li>Python 3.11+</li>
           <li>PyTorch (required for MLP predictor; optional for others)</li>
           <li>~2GB disk space (starter database expands to ~1.6GB)</li>
         </ul>
@@ -384,7 +393,9 @@ cp .env.example .env</code></pre>
 
         <h3>3. Run the Web App</h3>
 
-        <pre><code>python start_app.py</code></pre>
+        <pre><code>python start_app.py
+# If port 5000 is already in use (for example, by macOS AirPlay Receiver):
+python start_app.py --port 5001</code></pre>
 
         <p>
           Visit <code>http://localhost:5000</code> to view games and
@@ -473,7 +484,10 @@ cp .env.example .env</code></pre>
         <p>
           The deep learning models (<strong>Phase5</strong> and
           <strong>Phase3</strong>) are not included due to size. To use them,
-          train your own using the scripts in <code>scripts/</code>. To retrain
+          train your own using the scripts in <code>scripts/</code>. Training them
+          needs the full historical database (every season since 2001-02 plus
+          the training-only tables such as RAPM and lineups); the starter
+          database has two seasons and none of those tables. To retrain
           the legacy models on updated data:
         </p>
 
