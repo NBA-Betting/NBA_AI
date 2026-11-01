@@ -37,6 +37,8 @@ from src.database import get_db
 from src.utils import StageLogger, log_execution_time
 
 DB_PATH = config["database"]["path"]
+# cdn.nba.com (live box score) needs the nba.com Referer these carry
+NBA_API_LIVE_HEADERS = config["nba_api"]["pbp_live_headers"]
 
 
 def convert_minutes_to_float(min_str):
@@ -267,7 +269,9 @@ def get_boxscore_with_fallback(
             # Try live endpoint for in-progress games
             try:
                 logging.debug(f"Fetching live boxscore for {game_id}")
-                boxscore = LiveBoxScore.BoxScore(game_id=game_id).get_dict()
+                boxscore = LiveBoxScore.BoxScore(
+                    game_id=game_id, headers=NBA_API_LIVE_HEADERS
+                ).get_dict()
                 return parse_live_boxscore(boxscore, game_id)
             except Exception as live_err:
                 logging.debug(
