@@ -1147,8 +1147,46 @@ class SeasonHealthChecker:
                 )
                 return
 
+            # Phase3 deliberately skips a game until both teams have played
+            # 3 games this season (min_history_games), so it is measured only
+            # over games it can predict
+            prior_games = """
+                (SELECT COUNT(*) FROM Games h
+                 WHERE h.season = g.season AND h.status = 3
+                 AND h.season_type IN ('Regular Season', 'Post Season')
+                 AND h.date_time_utc < g.date_time_utc
+                 AND g.{side} IN (h.home_team, h.away_team)) >= 3"""
+            phase3_only = (
+                " AND " + prior_games.format(side="home_team")
+                + " AND " + prior_games.format(side="away_team")
+            )
+
             # Check each predictor
+            all_eligible = eligible_games
             for predictor in predictors:
+                extra = phase3_only if predictor == "Phase3" else ""
+                eligible_games = all_eligible
+                if extra:
+                    result, _ = self._timed_query(
+                        cursor,
+                        """
+                        SELECT COUNT(*) FROM Games g
+                        WHERE g.season = ? AND g.pre_game_data_finalized = 1
+                        AND g.season_type IN ('Regular Season', 'Post Season')
+                        AND g.date_time_utc <= ?
+                        """ + extra,
+                        (self.season, now_utc),
+                    )
+                    eligible_games = result[0][0]
+                    if eligible_games == 0:
+                        self._add_result(
+                            stage,
+                            "completeness",
+                            f"predictions_{predictor}",
+                            CheckStatus.SKIP,
+                            f"{predictor}: no games past the 3-game minimum yet",
+                        )
+                        continue
                 result, qtime = self._timed_query(
                     cursor,
                     """
@@ -1159,7 +1197,7 @@ class SeasonHealthChecker:
                     AND p.predictor = ?
                     AND g.season_type IN ('Regular Season', 'Post Season')
                     AND g.date_time_utc <= ?
-                    """,
+                    """ + extra,
                     (self.season, predictor, now_utc),
                 )
                 pred_games = result[0][0]
