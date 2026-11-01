@@ -8,7 +8,6 @@ Submodules:
     - tokenizer: Event tokenization from PBP + GameStates
     - sequence_builder: Historical game sequence construction
     - dataset: PyTorch Dataset for training
-    - dataloader: Batching utilities
     - models: Neural network architectures
     - training: Training loop, loss functions, metrics
     - evaluation: Evaluation and ablation study tools

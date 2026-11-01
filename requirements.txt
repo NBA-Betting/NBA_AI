@@ -39,7 +39,6 @@ python-json-logger==4.0.0
 
 # Testing
 pytest==9.0.3
-pytest-cov==7.0.0
 
 # Visualization
 matplotlib>=3.9.1
