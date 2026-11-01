@@ -10,8 +10,8 @@ NBA API, but some tables cannot be reconstructed if lost:
 - InjuryReports: pre-game injury snapshots, also point-in-time.
 - PipelineRuns: run history/audit trail.
 
-Retention: the newest 8 backups (two months of weekly runs), plus the first
-backup of every month, kept forever (they are small).
+Retention: the newest 8 backups (two months of weekly runs). Longer-term
+history lives in the single full-DB backup taken at a season boundary.
 
 Usage:
     python scripts/backup_precious_tables.py [--db PATH] [--outdir PATH]
@@ -75,16 +75,11 @@ def backup(db_path: str, outdir: Path) -> Path:
 
 
 def rotate(outdir: Path):
-    """Keep the newest KEEP backups and the first backup of every month."""
+    """Keep the newest KEEP backups."""
     backups = sorted(outdir.glob("precious_*.sqlite.gz"))
-    month_firsts = {}
-    for p in backups:
-        month_firsts.setdefault(p.name[9:15], p)  # precious_YYYYMM
-    keep = set(backups[-KEEP:]) | set(month_firsts.values())
-    for old in backups:
-        if old not in keep:
-            old.unlink()
-            logger.info("Rotated out old backup: %s", old.name)
+    for old in backups[:-KEEP]:
+        old.unlink()
+        logger.info("Rotated out old backup: %s", old.name)
 
 
 def main():
