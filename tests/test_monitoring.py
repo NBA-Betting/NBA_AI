@@ -146,7 +146,7 @@ def test_backup_survives_a_crashed_run(source_db, tmp_path):
             assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 2
 
 
-def test_rotation_keeps_recent_and_month_start_backups(tmp_path):
+def test_rotation_keeps_newest_backups(tmp_path):
     # Weekly (Sunday) backups, Aug 2 .. Oct 11, after older daily ones
     days = ["20260731"] + [
         (date(2026, 8, 2) + timedelta(weeks=w)).strftime("%Y%m%d") for w in range(11)
@@ -157,6 +157,4 @@ def test_rotation_keeps_recent_and_month_start_backups(tmp_path):
     backup.rotate(tmp_path)
 
     kept = sorted(p.name[9:17] for p in tmp_path.glob("precious_*.sqlite.gz"))
-    assert "20260731" in kept and "20260802" in kept  # each month's first kept
-    assert "20260809" not in kept and "20260816" not in kept  # rotated out
-    assert len(kept) == backup.KEEP + 2
+    assert kept == sorted(days)[-backup.KEEP:]
