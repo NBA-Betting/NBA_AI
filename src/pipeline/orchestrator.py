@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import logging
 import sys
 import time
@@ -460,13 +461,17 @@ class PipelineOrchestrator:
             predictors_to_run.append("Linear")
         if (PROJECT_ROOT / "models" / "tree" / "home_model.json").exists():
             predictors_to_run.append("Tree")
-        if (PROJECT_ROOT / "models" / "mlp" / "model.pth").exists():
+        # MLP, Phase5 and Phase3 need PyTorch, which is an optional install
+        has_torch = importlib.util.find_spec("torch") is not None
+        if not has_torch:
+            logger.info("PyTorch not installed: skipping MLP, Phase5 and Phase3")
+        if has_torch and (PROJECT_ROOT / "models" / "mlp" / "model.pth").exists():
             predictors_to_run.append("MLP")
 
         # Deep learning models (need checkpoints)
-        if (PROJECT_ROOT / "models" / "phase5" / "l3l4.pt").exists():
+        if has_torch and (PROJECT_ROOT / "models" / "phase5" / "l3l4.pt").exists():
             predictors_to_run.append("Phase5")
-        if (PROJECT_ROOT / "models" / "phase3" / "model.pt").exists():
+        if has_torch and (PROJECT_ROOT / "models" / "phase3" / "model.pt").exists():
             predictors_to_run.append("Phase3")
 
         # Ensemble (needs at least 2 component models to have predictions)
