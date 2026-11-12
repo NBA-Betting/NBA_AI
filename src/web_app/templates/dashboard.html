@@ -7,7 +7,7 @@
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-2">
         <div>
             <h2 class="mb-1">Prediction Results</h2>
-            <p class="text-muted mb-0">Graded against Vegas closing lines, $100 bets at -110</p>
+            <p class="text-muted mb-0">Accuracy against Vegas closing lines on the same games</p>
         </div>
         <div class="d-flex align-items-center gap-2">
             <select id="recordSelect" class="form-select form-select-sm w-auto" aria-label="Record"></select>
@@ -31,23 +31,23 @@
         <div class="row mb-4 g-3">
             <div class="col-md-3 col-6">
                 <div class="card summary-card h-100">
-                    <div class="card-value" id="atsRecord"></div>
-                    <div class="card-label">ATS Record</div>
-                    <div class="card-detail" id="atsPct"></div>
-                </div>
-            </div>
-            <div class="col-md-3 col-6">
-                <div class="card summary-card h-100">
-                    <div class="card-value" id="roi"></div>
-                    <div class="card-label">ROI</div>
-                    <div class="card-detail" id="roiDetail"></div>
-                </div>
-            </div>
-            <div class="col-md-3 col-6">
-                <div class="card summary-card h-100">
-                    <div class="card-value" id="mae"></div>
-                    <div class="card-label">Spread MAE</div>
+                    <div class="card-value" id="maeGap"></div>
+                    <div class="card-label">Spread MAE vs Vegas</div>
                     <div class="card-detail" id="maeDetail"></div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card summary-card h-100">
+                    <div class="card-value" id="brier"></div>
+                    <div class="card-label">Win Prob Brier</div>
+                    <div class="card-detail" id="brierDetail"></div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card summary-card h-100">
+                    <div class="card-value" id="atsPct"></div>
+                    <div class="card-label">ATS (95% range)</div>
+                    <div class="card-detail" id="atsDetail"></div>
                 </div>
             </div>
             <div class="col-md-3 col-6">
@@ -64,7 +64,7 @@
             <div class="col-lg-7">
                 <div class="card h-100">
                     <div class="card-body">
-                        <h6 class="card-title">Cumulative P&amp;L</h6>
+                        <h6 class="card-title">Cumulative ATS P&amp;L ($100 at -110)</h6>
                         <div class="chart-container"><canvas id="plChart"></canvas></div>
                     </div>
                 </div>
@@ -79,9 +79,10 @@
                             <thead>
                                 <tr>
                                     <th>Model</th>
-                                    <th class="text-end">ATS</th>
-                                    <th class="text-end">ROI</th>
                                     <th class="text-end">MAE</th>
+                                    <th class="text-end">vs Vegas</th>
+                                    <th class="text-end">Brier</th>
+                                    <th class="text-end">ATS</th>
                                 </tr>
                             </thead>
                             <tbody id="comparisonBody"></tbody>

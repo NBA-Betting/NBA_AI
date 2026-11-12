@@ -93,23 +93,31 @@ function loadDashboard() {
 }
 
 function populateSummary(summary) {
+  // Lower is better for both accuracy numbers; Vegas is the bar
+  setText("maeGap", signed(summary.mae_vs_vegas, 2));
   setText(
-    "atsRecord",
+    "maeDetail",
+    `points (model ${summary.mae.toFixed(2)}, Vegas ${summary.vegas_mae.toFixed(2)})`,
+  );
+  if (summary.brier === null) {
+    setText("brier", "—");
+    setText("brierDetail", "no Vegas moneylines for these games");
+  } else {
+    setText("brier", summary.brier.toFixed(3));
+    setText(
+      "brierDetail",
+      `Vegas ${summary.vegas_brier.toFixed(3)} on ${summary.n_brier} games`,
+    );
+  }
+
+  setText("atsPct", `${summary.ats_pct}% ± ${summary.ats_range}`);
+  setText(
+    "atsDetail",
     `${summary.ats_wins}-${summary.ats_losses}` +
-      (summary.ats_pushes > 0 ? `-${summary.ats_pushes}` : ""),
+      (summary.ats_pushes > 0 ? `-${summary.ats_pushes}` : "") +
+      `, ROI ${summary.roi >= 0 ? "+" : ""}${summary.roi}%. ~50% is expected;` +
+      ` breakeven ${BREAKEVEN_ATS}%`,
   );
-  setText(
-    "atsPct",
-    `${summary.ats_pct}% (breakeven ${BREAKEVEN_ATS}%, always home ${summary.always_home_ats_pct}%)`,
-  );
-
-  const roi = document.getElementById("roi");
-  roi.textContent = `${summary.roi >= 0 ? "+" : ""}${summary.roi}%`;
-  roi.classList.add(summary.roi >= 0 ? "text-profit" : "text-loss");
-  setText("roiDetail", `${dollars(summary.profit)} on $100 bets`);
-
-  setText("mae", summary.mae.toFixed(2));
-  setText("maeDetail", `points (Vegas: ${summary.vegas_mae.toFixed(2)})`);
   setText("nGames", summary.n_games);
   setText(
     "nGamesDetail",
@@ -185,12 +193,10 @@ function renderComparison(comparison, record, selected) {
       }
       const cells = [
         [row.predictor, ""],
-        [`${row.ats_pct.toFixed(1)}%`, "text-end"],
-        [
-          `${row.roi >= 0 ? "+" : ""}${row.roi.toFixed(1)}%`,
-          `text-end ${row.roi >= 0 ? "text-profit" : "text-loss"}`,
-        ],
         [row.mae.toFixed(2), "text-end"],
+        [signed(row.mae_vs_vegas, 2), "text-end"],
+        [row.brier === null ? "—" : row.brier.toFixed(3), "text-end"],
+        [`${row.ats_pct.toFixed(1)}%`, "text-end"],
       ];
       for (const [text, className] of cells) {
         const td = document.createElement("td");

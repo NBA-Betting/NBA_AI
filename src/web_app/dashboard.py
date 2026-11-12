@@ -11,9 +11,12 @@ Results are shown per record, each an honest set of past predictions:
   models/backtests/. Older stored predictions were made by models trained on
   those games, so they aren't shown.
 
-Every prediction is graded against the closing line (ATS at -110) and the
-actual margin. The model comparison scores all predictors on the games they
-all predicted.
+Predictions are scored first on accuracy against Vegas on the same games:
+spread MAE minus the closing line's MAE, and win-probability Brier score
+against the no-vig closing moneyline. Against the spread (ATS at -110) is
+shown too, with a 95% range: every model, like the closing line itself, sits
+near 50%, so short ATS runs are mostly noise. The model comparison scores all
+predictors on the games they all predicted.
 
 Routes:
 - /dashboard: Renders the dashboard page (filled in by static/js/dashboard.js)
@@ -22,6 +25,7 @@ Routes:
 
 import json
 import logging
+import math
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, render_template, request
@@ -121,16 +125,22 @@ def load_live_record(season=None):
             if home_pts is None or away_pts is None:
                 continue
             spread = home_pts - away_pts
-        games[gid] = {
-            # NBA schedule dates are Eastern; an evening tip-off is already
-            # the next day in UTC
-            "date": to_eastern_date(dt),
-            "home": home,
-            "away": away,
-            "home_score": home_score,
-            "away_score": away_score,
-            "closing_spread": closing,
-        }
+        game = games.setdefault(
+            gid,
+            {
+                # NBA schedule dates are Eastern; an evening tip-off is already
+                # the next day in UTC
+                "date": to_eastern_date(dt),
+                "home": home,
+                "away": away,
+                "home_score": home_score,
+                "away_score": away_score,
+                "closing_spread": closing,
+                "win_probs": {},
+            },
+        )
+        if prediction_set.get("pred_home_win_pct") is not None:
+            game["win_probs"][predictor] = prediction_set["pred_home_win_pct"]
         predictions.setdefault(predictor, {})[gid] = spread
     return games, predictions
 
@@ -145,7 +155,38 @@ def load_backtest_record(name):
         predictor: {gid: p[0] for gid, p in by_game.items() if gid in games}
         for predictor, by_game in data["predictions"].items()
     }
+    for predictor, by_game in data["predictions"].items():
+        for gid, p in by_game.items():
+            if gid in games and len(p) > 1 and p[1] is not None:
+                games[gid].setdefault("win_probs", {})[predictor] = p[1]
     return games, predictions
+
+
+def _no_vig_home_prob(ml_home, ml_away):
+    """Home win probability from American moneylines, vig removed."""
+
+    def implied(ml):
+        return 100 / (ml + 100) if ml > 0 else -ml / (-ml + 100)
+
+    home, away = implied(ml_home), implied(ml_away)
+    return home / (home + away)
+
+
+def attach_vegas_probs(games):
+    """Add each game's no-vig closing-moneyline home win probability (ESPN
+    closing moneylines; Covers has none) as games[gid]["vegas_prob"]."""
+    if not games:
+        return
+    ids = list(games)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""SELECT game_id, espn_closing_ml_home, espn_closing_ml_away FROM Betting
+            WHERE game_id IN ({",".join("?" * len(ids))})
+              AND espn_closing_ml_home IS NOT NULL AND espn_closing_ml_away IS NOT NULL""",
+            ids,
+        ).fetchall()
+    for gid, ml_home, ml_away in rows:
+        games[gid]["vegas_prob"] = _no_vig_home_prob(ml_home, ml_away)
 
 
 def ats_result(pred_spread, closing_spread, margin):
@@ -162,10 +203,11 @@ def ats_result(pred_spread, closing_spread, margin):
     return "W" if (pred_spread > -closing_spread) == (margin_vs_line > 0) else "L"
 
 
-def grade_games(games, spreads):
+def grade_games(games, spreads, predictor=None):
     """
     Grade a predictor's spreads against the closing line (ats_result) and
-    the final margin, in date order.
+    the final margin, in date order, with its win probability and Vegas's
+    where known.
     """
     graded = []
     for gid in sorted(spreads, key=lambda g: (games[g]["date"], g)):
@@ -187,13 +229,17 @@ def grade_games(games, spreads):
                 "home_covered": None if result == "P" else margin_vs_line > 0,
                 "abs_error": round(abs(spread - margin), 1),
                 "vegas_abs_error": abs(g["closing_spread"] + margin),
+                "win_prob": g.get("win_probs", {}).get(predictor),
+                "vegas_prob": g.get("vegas_prob"),
+                "home_won": margin > 0,
             }
         )
     return graded
 
 
 def summarize(graded):
-    """ATS record, ROI at -110 and spread MAE (with baselines) for graded games."""
+    """Accuracy vs Vegas (spread MAE, win-prob Brier), plus the ATS record with
+    its 95% range and ROI at -110, for graded games."""
     wins = sum(g["ats_result"] == "W" for g in graded)
     losses = sum(g["ats_result"] == "L" for g in graded)
     decided = wins + losses
@@ -202,7 +248,27 @@ def summarize(graded):
     def pct(x, of):
         return round(x / of * 100, 1) if of else 0.0
 
+    mae = sum(g["abs_error"] for g in graded) / n if n else 0.0
+    vegas_mae = sum(g["vegas_abs_error"] for g in graded) / n if n else 0.0
+    # Brier on the games with both a model and a Vegas probability
+    probs = [g for g in graded if g["win_prob"] is not None and g["vegas_prob"] is not None]
+
+    def brier(key):
+        if not probs:
+            return None
+        return round(sum((g[key] - g["home_won"]) ** 2 for g in probs) / len(probs), 4)
+
     return {
+        "mae_vs_vegas": round(mae - vegas_mae, 2),
+        "brier": brier("win_prob"),
+        "vegas_brier": brier("vegas_prob"),
+        "n_brier": len(probs),
+        # Half-width of the 95% range of the ATS win rate, percentage points
+        "ats_range": (
+            round(1.96 * math.sqrt(wins * losses / decided**3) * 100, 1)
+            if decided
+            else 0.0
+        ),
         "n_games": n,
         "ats_wins": wins,
         "ats_losses": losses,
@@ -213,10 +279,8 @@ def summarize(graded):
         ),
         "profit": round(wins * WIN_PAYOUT - losses * 100, 2),
         "roi": pct(wins * WIN_PAYOUT - losses * 100, decided * 100),
-        "mae": round(sum(g["abs_error"] for g in graded) / n, 2) if n else 0.0,
-        "vegas_mae": (
-            round(sum(g["vegas_abs_error"] for g in graded) / n, 2) if n else 0.0
-        ),
+        "mae": round(mae, 2),
+        "vegas_mae": round(vegas_mae, 2),
     }
 
 
@@ -242,7 +306,9 @@ def compare_predictors(games, predictions):
         {
             "predictor": p,
             **summarize(
-                grade_games(games, {g: s for g, s in spreads.items() if g in common})
+                grade_games(
+                    games, {g: s for g, s in spreads.items() if g in common}, p
+                )
             ),
         }
         for p, spreads in included.items()
@@ -280,6 +346,7 @@ def fetch_dashboard_data(record_id=None, predictor=None):
         )
     if not predictions:
         return {"records": records, "record": record and record["id"], "summary": None}
+    attach_vegas_probs(games)
 
     predictors = sorted(predictions)
     if predictor not in predictions:
@@ -287,7 +354,7 @@ def fetch_dashboard_data(record_id=None, predictor=None):
         predictor = default if default in predictions else predictors[0]
 
     comparison, n_common, excluded = compare_predictors(games, predictions)
-    graded = grade_games(games, predictions[predictor])
+    graded = grade_games(games, predictions[predictor], predictor)
     return {
         "records": records,
         "record": record["id"],

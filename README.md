@@ -69,7 +69,7 @@ The system runs multiple prediction engines, each taking a different approach to
 
 ### Performance
 
-All models are evaluated against the spread (ATS) using Vegas closing lines. The dashboard shows each model's live record (predictions made before tip-off) and a 2025-26 backtest that replays the season through each model's live code with pre-game information only.
+Models are scored on accuracy against Vegas on the same games: spread MAE compared with the closing line's, and win-probability Brier score compared with the no-vig closing moneyline. No model beats the closing line, so the useful question is how close each gets. Against-the-spread results are shown with a 95% range; like the closing line itself, every model sits near 50%. The dashboard shows each model's live record (predictions made before tip-off) and a 2025-26 backtest that replays the season through each model's live code with pre-game information only.
 
 <!-- Regenerate with: python scripts/generate_readme_chart.py -->
 <!-- ![Prediction Engine Performance Metrics](docs/images/predictor_performance.png) -->
