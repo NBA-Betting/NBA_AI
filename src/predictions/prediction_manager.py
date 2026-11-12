@@ -272,6 +272,36 @@ def save_predictions(predictions, predictor_name, db_path=DB_PATH):
             data,
         )
 
+        # Predictions keeps one row per game and predictor; also append every
+        # pre-tip prediction, with the line showing at that moment, so earlier
+        # runs (10am vs 6pm) and the line each was made against are kept.
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS PredictionLog (
+                game_id TEXT NOT NULL,
+                predictor TEXT NOT NULL,
+                prediction_datetime TEXT NOT NULL,
+                prediction_set TEXT NOT NULL,
+                line_spread REAL,
+                line_total REAL,
+                PRIMARY KEY (game_id, predictor, prediction_datetime)
+            )
+            """
+        )
+        pre_tip = [
+            row
+            for row in data
+            if row[0] in game_times and game_times[row[0]] > prediction_datetime
+        ]
+        cursor.executemany(
+            """
+            INSERT OR IGNORE INTO PredictionLog
+            SELECT ?, ?, ?, ?, b.espn_current_spread, b.espn_current_total
+            FROM (SELECT 1) LEFT JOIN Betting b ON b.game_id = ?
+            """,
+            [(*row, row[0]) for row in pre_tip],
+        )
+
         conn.commit()
 
     logging.debug("Predictions saved successfully.")

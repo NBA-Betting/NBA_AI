@@ -6,6 +6,7 @@ Most of the database (PBP, boxscores, game states) can be refetched from the
 NBA API, but some tables cannot be reconstructed if lost:
 - Predictions: pre-game predictions are point-in-time; once a game is played
   they can never be honestly regenerated.
+- PredictionLog: every pre-tip prediction run, with the line at that time.
 - Betting: closing lines are scraped live and not available historically.
 - InjuryReports: pre-game injury snapshots, also point-in-time.
 - PipelineRuns: run history/audit trail.
@@ -31,7 +32,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import DB_PATH
 
-PRECIOUS_TABLES = ["Predictions", "Betting", "InjuryReports", "PipelineRuns"]
+PRECIOUS_TABLES = [
+    "Predictions",
+    "PredictionLog",
+    "Betting",
+    "InjuryReports",
+    "PipelineRuns",
+]
 KEEP = 8
 
 logging.basicConfig(
@@ -56,7 +63,14 @@ def backup(db_path: str, outdir: Path) -> Path:
     conn = sqlite3.connect(raw_path)
     try:
         conn.execute("ATTACH DATABASE ? AS src", (f"file:{db_path}?mode=ro",))
+        existing = {
+            r[0]
+            for r in conn.execute("SELECT name FROM src.sqlite_master WHERE type = 'table'")
+        }
         for table in PRECIOUS_TABLES:
+            if table not in existing:
+                logger.warning("  %s: not in the database yet, skipped", table)
+                continue
             conn.execute(f"CREATE TABLE {table} AS SELECT * FROM src.{table}")
             n = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             logger.info("  %s: %s rows", table, f"{n:,}")
