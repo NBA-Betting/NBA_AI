@@ -14,6 +14,8 @@ overall success. This wrapper makes regressions loud without daily noise:
 - Pipeline runs (PipelineRuns) since the last check that ended with errors,
   or never finished, always alert: the orchestrator's own failures are
   otherwise only in the cron log. So does a weekly backup older than 8 days.
+- Once a day, scripts/parity_check.py re-predicts yesterday's games through
+  the backtest path and flags engines whose live spreads drifted from it.
 - Alerts append to logs/ALERTS.log AND print to stdout (so they land in the
   cron log too). A desktop notification is attempted best-effort.
 
@@ -31,6 +33,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -190,7 +193,32 @@ def pipeline_run_alerts(last_seen: str | None) -> tuple[list[str], str | None]:
     return alerts, newest
 
 
-def save_state(report: dict, alerted_at: dict, last_run: str | None):
+PARITY_TIMEOUT = 1800  # seconds
+
+
+def parity_alerts(last_date: str | None) -> tuple[list[str], str | None]:
+    """Run the live-vs-backtest parity check for yesterday (Eastern), once a
+    day. Returns (alert lines, date checked)."""
+    yesterday = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=1)).strftime(
+        "%Y-%m-%d"
+    )
+    if last_date == yesterday:
+        return [], last_date
+    cmd = [str(PYTHON), str(PROJECT_ROOT / "scripts" / "parity_check.py"), "--date", yesterday]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=PARITY_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        return [f"[WARN] parity: check for {yesterday} timed out"], yesterday
+    if proc.returncode not in (0, 1):
+        return [f"[WARN] parity: check for {yesterday} failed to run (exit {proc.returncode})"], yesterday
+    return [line for line in proc.stdout.splitlines() if line.startswith("[WARN]")], yesterday
+
+
+def save_state(
+    report: dict, alerted_at: dict, last_run: str | None, last_parity: str | None = None
+):
     issues = {
         issue_key(r): {
             "status": r["status"],
@@ -207,6 +235,7 @@ def save_state(report: dict, alerted_at: dict, last_run: str | None):
             {
                 "updated": datetime.now().isoformat(),
                 "last_pipeline_run": last_run,
+                "last_parity_date": last_parity,
                 "issues": issues,
             },
             indent=2,
@@ -256,8 +285,9 @@ def main():
         datetime.now(timezone.utc) - timedelta(days=1)
     ).strftime("%Y-%m-%d %H:%M:%S")
     run_alerts, last_run = pipeline_run_alerts(last_seen)
-    alerts = run_alerts + backup_alerts() + alerts
-    save_state(report, alerted_at, last_run)
+    parity, last_parity = parity_alerts(prev_state.get("last_parity_date"))
+    alerts = run_alerts + backup_alerts() + parity + alerts
+    save_state(report, alerted_at, last_run, last_parity)
 
     summary = report.get("summary", {})
     print(
