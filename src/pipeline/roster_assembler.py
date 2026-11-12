@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 NEW_PLAYER_MINUTES = 5.0
 # Historical mode: how far ahead an arrival's first game for the team may be
 ARRIVAL_WINDOW_DAYS = 30
+# Live prediction runs (cron 7am and 3pm PT). Historical mode reads the injury
+# reports published before the last run ahead of tip, where that history exists.
+LIVE_RUN_HOURS_ET = (10, 18)
+EASTERN = ZoneInfo("America/New_York")
 
 
 class RosterAssembler:
@@ -101,9 +105,20 @@ class RosterAssembler:
                     .astimezone(ZoneInfo("America/New_York"))
                     .date()
                 )
-                if game_date not in injuries_by_date:
-                    injuries_by_date[game_date] = self._load_injuries(conn, game_date)
-                injuries = injuries_by_date[game_date]
+                injuries = None
+                if self.historical:
+                    injuries = self._load_injuries_as_of(
+                        conn,
+                        game_date,
+                        (home_team, away_team),
+                        last_run_before_tip(game["date_time_utc"]),
+                    )
+                if injuries is None:
+                    if game_date not in injuries_by_date:
+                        injuries_by_date[game_date] = self._load_injuries(
+                            conn, game_date
+                        )
+                    injuries = injuries_by_date[game_date]
                 home_out = {p["player_id"] for p in home_roster} & injuries["out"]
                 away_out = {p["player_id"] for p in away_roster} & injuries["out"]
                 home_questionable = injuries["questionable"]
@@ -350,6 +365,45 @@ class RosterAssembler:
                 members.add(pid)
         return members
 
+    def _load_injuries_as_of(
+        self, conn, game_date, teams: tuple[str, str], cutoff_utc: str
+    ) -> dict[str, set[int]] | None:
+        """Statuses from each team's latest report published by cutoff_utc (a
+        team with none by then has no known injuries), or None for game dates
+        the report history doesn't cover (older games)."""
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'InjuryReportSubmissions'"
+        ).fetchone() or not conn.execute(
+            "SELECT 1 FROM InjuryReportSubmissions WHERE game_date = ? LIMIT 1",
+            (game_date.isoformat(),),
+        ).fetchone():
+            return None
+        latest = conn.execute(
+            """
+            SELECT team, MAX(report_time_utc) FROM InjuryReportSubmissions
+            WHERE game_date = ? AND team IN (?, ?) AND report_time_utc <= ?
+            GROUP BY team
+            """,
+            (game_date.isoformat(), *teams, cutoff_utc),
+        ).fetchall()
+        result: dict[str, set[int]] = {"out": set(), "questionable": set()}
+        for team, report_time in latest:
+            rows = conn.execute(
+                """
+                SELECT nba_player_id, status FROM InjuryReportHistory
+                WHERE game_date = ? AND team = ? AND report_time_utc = ?
+                AND nba_player_id IS NOT NULL
+                """,
+                (game_date.isoformat(), team, report_time),
+            ).fetchall()
+            for pid, status in rows:
+                status_lower = (status or "").lower()
+                if status_lower in ("out", "doubtful"):
+                    result["out"].add(int(pid))
+                elif status_lower == "questionable":
+                    result["questionable"].add(int(pid))
+        return result
+
     def _load_injuries(self, conn, game_date) -> dict[str, set[int]]:
         """
         Injury statuses for a game date (Eastern): the latest report covering
@@ -377,3 +431,15 @@ class RosterAssembler:
                 result["questionable"].add(int(pid))
 
         return result
+
+
+def last_run_before_tip(tip_utc: str) -> str:
+    """UTC time of the last live prediction run before a game's tip (the tip
+    itself for a game before the first run)."""
+    tip = datetime.fromisoformat(tip_utc.replace("Z", "+00:00")).astimezone(EASTERN)
+    runs = [
+        tip.replace(hour=h, minute=0, second=0, microsecond=0)
+        for h in LIVE_RUN_HOURS_ET
+    ]
+    cutoff = max((r for r in runs if r < tip), default=tip)
+    return cutoff.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -28,8 +28,9 @@ import re
 import sqlite3
 import time
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pdfplumber
@@ -405,6 +406,18 @@ def parse_injury_pdf(pdf_content: bytes) -> pd.DataFrame:
     return df
 
 
+def _report_time_utc(date_str: str, time_fmt: str) -> str:
+    """A report slot ("07_00PM", "0630PM", "07PM") on an Eastern date, in UTC."""
+    digits = time_fmt[:-2].replace("_", "")
+    hour, minute = int(digits[:2]), int(digits[2:] or 0)
+    if time_fmt.endswith("PM") and hour != 12:
+        hour += 12
+    eastern = datetime.strptime(date_str, "%Y-%m-%d").replace(
+        hour=hour, minute=minute, tzinfo=ZoneInfo("America/New_York")
+    )
+    return eastern.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def fetch_injury_report(date: datetime) -> tuple[pd.DataFrame, str]:
     """Fetch and parse injury report for a specific date.
 
@@ -443,6 +456,7 @@ def fetch_injury_report(date: datetime) -> tuple[pd.DataFrame, str]:
                 ):
                     df["report_date"] = date_str
                     df.attrs["report_date"] = date_str
+                    df.attrs["report_time_utc"] = _report_time_utc(date_str, time_fmt)
                     logging.debug(
                         f"Injury PDF for {date_str}: fetched {time_fmt} with {len(df)} records"
                     )
@@ -811,8 +825,49 @@ def _rematch_unmatched_players(db_path: str = DB_PATH) -> int:
         conn.executemany(
             "UPDATE InjuryReports SET nba_player_id = ? WHERE id = ?", updates
         )
+        _ensure_injury_history_tables(conn)
+        history = conn.execute(
+            "SELECT DISTINCT player_name, team FROM InjuryReportHistory "
+            "WHERE nba_player_id IS NULL"
+        ).fetchall()
+        conn.executemany(
+            "UPDATE InjuryReportHistory SET nba_player_id = ? "
+            "WHERE player_name = ? AND team = ? AND nba_player_id IS NULL",
+            [
+                (person_id, name, team)
+                for name, team in history
+                if (person_id := match_player_id(player_lookup, name, team))
+            ],
+        )
         conn.commit()
     return len(updates)
+
+
+def _ensure_injury_history_tables(conn):
+    """Every fetched report, kept with its publication time (InjuryReports keeps
+    only the latest per game). A submission row marks a team that reported at
+    that time, so a report with no injuries still counts as the latest."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS InjuryReportSubmissions (
+            game_date TEXT NOT NULL,
+            team TEXT NOT NULL,
+            report_time_utc TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            PRIMARY KEY (game_date, team, report_time_utc)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS InjuryReportHistory (
+            game_date TEXT NOT NULL,
+            team TEXT NOT NULL,
+            report_time_utc TEXT NOT NULL,
+            nba_player_id INTEGER,
+            player_name TEXT NOT NULL,
+            status TEXT,
+            category TEXT,
+            PRIMARY KEY (game_date, team, report_time_utc, player_name)
+        )"""
+    )
 
 
 def _ensure_injury_unique_constraint(db_path: str = DB_PATH):
@@ -889,7 +944,24 @@ def save_injury_records(df: pd.DataFrame, db_path: str = DB_PATH) -> dict:
         )
 
     added = updated = 0
+    report_time_utc = df.attrs.get("report_time_utc")
     with get_db(db_path) as conn:
+        if report_time_utc:
+            _ensure_injury_history_tables(conn)
+            fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            conn.executemany(
+                "INSERT OR IGNORE INTO InjuryReportSubmissions VALUES (?, ?, ?, ?)",
+                [(g, t, report_time_utc, fetched_at) for g, t in submitted],
+            )
+            conn.executemany(
+                "INSERT OR IGNORE INTO InjuryReportHistory VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (g, t, report_time_utc, r["nba_player_id"], r["player_name"])
+                    + (r["status"], r["category"])
+                    for (g, t), records in rows_by_team.items()
+                    for r in records
+                ],
+            )
         for game_date, team in sorted(submitted):
             stored = conn.execute(
                 """SELECT MAX(report_timestamp), COUNT(*) FROM InjuryReports

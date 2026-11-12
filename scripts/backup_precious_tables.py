@@ -9,6 +9,7 @@ NBA API, but some tables cannot be reconstructed if lost:
 - PredictionLog: every pre-tip prediction run, with the line at that time.
 - Betting: closing lines are scraped live and not available historically.
 - InjuryReports: pre-game injury snapshots, also point-in-time.
+- InjuryReportHistory/Submissions: every fetched report with its publication time.
 - PipelineRuns: run history/audit trail.
 
 Retention: the newest 8 backups (two months of weekly runs). Longer-term
@@ -37,6 +38,8 @@ PRECIOUS_TABLES = [
     "PredictionLog",
     "Betting",
     "InjuryReports",
+    "InjuryReportHistory",
+    "InjuryReportSubmissions",
     "PipelineRuns",
 ]
 KEEP = 8
