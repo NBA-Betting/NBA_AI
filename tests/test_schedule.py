@@ -135,64 +135,65 @@ class TestScheduleCache:
 class TestScheduleFlagPreservation:
     """Tests for flag preservation during schedule updates."""
 
-    def test_save_schedule_preserves_flags(self):
-        """Updating schedule should preserve existing flags.
-
-        This test uses the actual database to verify flag preservation works
-        with real schema. It reads existing data, doesn't modify anything.
-        """
-        from src.config import config
-
-        db_path = config["database"]["path"]
-
-        # Find a game with all flags set to 1
-        with get_db(db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
+    @pytest.fixture
+    def games_db(self):
+        """Temporary database with one finalized game (never the production DB)."""
+        db = tempfile.NamedTemporaryFile(delete=False, suffix=".sqlite")
+        with get_db(db.name) as conn:
+            conn.execute(
                 """
-                SELECT game_id, date_time_utc, home_team, away_team, status, season, season_type
-                FROM Games 
-                WHERE game_data_finalized = 1 
-                AND boxscore_data_finalized = 1 
-                AND pre_game_data_finalized = 1
-                LIMIT 1
+                CREATE TABLE Games (
+                    game_id TEXT NOT NULL PRIMARY KEY,
+                    date_time_utc TEXT NOT NULL,
+                    home_team TEXT NOT NULL,
+                    away_team TEXT NOT NULL,
+                    status INTEGER NOT NULL,
+                    status_text TEXT,
+                    season TEXT NOT NULL,
+                    season_type TEXT NOT NULL,
+                    pre_game_data_finalized BOOLEAN NOT NULL DEFAULT 0,
+                    game_data_finalized BOOLEAN NOT NULL DEFAULT 0,
+                    boxscore_data_finalized BOOLEAN NOT NULL DEFAULT 0
+                )
             """
             )
-            result = cursor.fetchone()
+            conn.execute(
+                "INSERT INTO Games VALUES ('0022400001', '2024-10-22T23:30:00Z', 'BOS', 'NYK', "
+                "3, 'Final', '2024-2025', 'Regular Season', 1, 1, 1)"
+            )
+            conn.commit()
 
-        if not result:
-            pytest.skip("No games with all flags set - cannot test preservation")
+        yield db.name
 
-        game_id, date_time, home, away, status, season, season_type = result
+        import os
 
-        # Create mock game data matching this game
+        os.unlink(db.name)
+
+    def test_save_schedule_preserves_flags(self, games_db):
+        """Updating schedule should preserve existing flags."""
         game_data = [
             {
-                "gameId": game_id,
-                "season": season,
-                "gameDateTimeUTC": date_time,
-                "homeTeam": home,
-                "awayTeam": away,
-                "gameStatus": status,
+                "gameId": "0022400001",
+                "season": "2024-2025",
+                "gameDateTimeUTC": "2024-10-22T23:30:00Z",
+                "homeTeam": "BOS",
+                "awayTeam": "NYK",
+                "gameStatus": 3,
                 "gameStatusText": "Final",
-                "seasonType": season_type,
+                "seasonType": "Regular Season",
             }
         ]
 
-        # Save schedule (should preserve flags)
-        schedule.save_schedule(game_data, season, db_path)
+        assert schedule.save_schedule(game_data, "2024-2025", games_db)
 
-        # Verify flags still set to 1
-        with get_db(db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
+        with get_db(games_db) as conn:
+            flags = conn.execute(
                 """
                 SELECT game_data_finalized, boxscore_data_finalized, pre_game_data_finalized
                 FROM Games WHERE game_id = ?
             """,
-                (game_id,),
-            )
-            flags = cursor.fetchone()
+                ("0022400001",),
+            ).fetchone()
 
         assert flags == (
             1,
