@@ -100,13 +100,14 @@ class RosterAssembler:
 
                 # Apply injury subtraction. Matched by player ID: a player is on
                 # only one roster, so the report's team label isn't needed.
-                game_date = (
-                    datetime.fromisoformat(game["date_time_utc"].replace("Z", "+00:00"))
-                    .astimezone(ZoneInfo("America/New_York"))
-                    .date()
+                tip = datetime.fromisoformat(
+                    game["date_time_utc"].replace("Z", "+00:00")
                 )
+                game_date = tip.astimezone(ZoneInfo("America/New_York")).date()
                 injuries = None
-                if self.historical:
+                # A game that hasn't tipped is a live prediction (the Ensemble
+                # runs its components in historical mode): use the latest report.
+                if self.historical and tip <= datetime.now(tip.tzinfo):
                     injuries = self._load_injuries_as_of(
                         conn,
                         game_date,
