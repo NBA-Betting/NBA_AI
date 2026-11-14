@@ -113,6 +113,7 @@ class RosterAssembler:
                         game_date,
                         (home_team, away_team),
                         last_run_before_tip(game["date_time_utc"]),
+                        game["date_time_utc"],
                     )
                 if injuries is None:
                     if game_date not in injuries_by_date:
@@ -367,25 +368,28 @@ class RosterAssembler:
         return members
 
     def _load_injuries_as_of(
-        self, conn, game_date, teams: tuple[str, str], cutoff_utc: str
+        self, conn, game_date, teams: tuple[str, str], cutoff_utc: str, tip_utc: str
     ) -> dict[str, set[int]] | None:
         """Statuses from each team's latest report published by cutoff_utc (a
         team with none by then has no known injuries), or None for game dates
-        the report history doesn't cover (older games)."""
+        the report history doesn't cover (older games). Only reports fetched
+        before tip count: one fetched later was not available to a live run."""
         if not conn.execute(
             "SELECT 1 FROM sqlite_master WHERE name = 'InjuryReportSubmissions'"
         ).fetchone() or not conn.execute(
-            "SELECT 1 FROM InjuryReportSubmissions WHERE game_date = ? LIMIT 1",
-            (game_date.isoformat(),),
+            "SELECT 1 FROM InjuryReportSubmissions "
+            "WHERE game_date = ? AND fetched_at < ? LIMIT 1",
+            (game_date.isoformat(), tip_utc),
         ).fetchone():
             return None
         latest = conn.execute(
             """
             SELECT team, MAX(report_time_utc) FROM InjuryReportSubmissions
             WHERE game_date = ? AND team IN (?, ?) AND report_time_utc <= ?
+            AND fetched_at < ?
             GROUP BY team
             """,
-            (game_date.isoformat(), *teams, cutoff_utc),
+            (game_date.isoformat(), *teams, cutoff_utc, tip_utc),
         ).fetchall()
         result: dict[str, set[int]] = {"out": set(), "questionable": set()}
         for team, report_time in latest:
