@@ -211,6 +211,8 @@ def parity_alerts(last_date: str | None) -> tuple[list[str], str | None]:
         )
     except subprocess.TimeoutExpired:
         return [f"[WARN] parity: check for {yesterday} timed out"], yesterday
+    # The check's own summary line, so the cron log shows it ran
+    print(proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else "Parity: no output")
     if proc.returncode not in (0, 1):
         return [f"[WARN] parity: check for {yesterday} failed to run (exit {proc.returncode})"], yesterday
     return [line for line in proc.stdout.splitlines() if line.startswith("[WARN]")], yesterday
