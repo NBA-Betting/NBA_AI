@@ -6,8 +6,8 @@ Every finished regular-season and postseason game since 2001-02 is described
 as of its tip-off by the same code that live predictions use:
   - TeamFeatureComputer: L3 team features, L4 game context, coach inputs
   - RosterAssembler(historical=True): pre-game rosters. Not the players who
-    logged minutes, whose count tracks the final margin (blowouts empty the
-    bench) and leaked the result into training.
+    logged minutes: their count tracks the final margin (blowouts empty the
+    bench), which would leak the result into training.
   - L1Store: each roster player's L1 state before the game
 plus targets and, for Phase B, frozen L2 team vectors and roster summaries.
 
