@@ -701,6 +701,7 @@ def _find_dates_missing_data(dates: list, db_path: str = DB_PATH) -> list:
     We DON'T retry dates where:
     - status='not_found' (404 - legitimate off-day, no games)
     - status='not_yet_submitted' (teams haven't submitted yet)
+    - no games were played (the report only covers the next day's games)
 
     Args:
         dates: List of datetime objects to check
@@ -748,8 +749,12 @@ def _find_dates_missing_data(dates: list, db_path: str = DB_PATH) -> list:
         )
         dates_with_data = {row[0] for row in cursor.fetchall()}
 
-        # Find dates that are cached as success but have no data
-        missing_data_dates = cached_success_dates - dates_with_data
+        # Find game days that are cached as success but have no data. A report
+        # on a day without games lists only the next day's games, and that
+        # day's own report then replaces those rows, so it never has any
+        missing_data_dates = {
+            d for d in cached_success_dates - dates_with_data if _has_games(d, db_path)
+        }
 
         if missing_data_dates:
             logging.debug(
